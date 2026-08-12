@@ -3,6 +3,7 @@ import uuid
 import time
 import threading
 import subprocess
+import json
 import requests
 
 from fastapi import FastAPI, HTTPException
@@ -32,7 +33,7 @@ class Segment(BaseModel):
 class RenderRequest(BaseModel):
     video_url: str
     caption_text: str
-    segments: List[Segment]
+    segments: str
 
 
 @app.get("/")
@@ -110,6 +111,11 @@ def render(req: RenderRequest):
     output_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_final.mp4")
 
     try:
+        segments_list = json.loads(req.segments)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"segments field wasn't valid JSON: {e}")
+
+    try:
         resp = requests.get(req.video_url, stream=True, timeout=60)
         resp.raise_for_status()
         with open(source_path, "wb") as f:
@@ -122,7 +128,7 @@ def render(req: RenderRequest):
         render_video(
             source_path=source_path,
             caption_text=req.caption_text,
-            segments=[s.model_dump() for s in req.segments],
+            segments=segments_list,
             output_path=output_path,
         )
     except Exception as e:

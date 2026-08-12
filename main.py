@@ -30,7 +30,7 @@ def download(req: DownloadRequest):
 
     ydl_opts = {
         "outtmpl": output_path,
-        "format": "mp4/bestvideo+bestaudio/best",
+        "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "noplaylist": True,
@@ -45,9 +45,9 @@ def download(req: DownloadRequest):
     if not os.path.exists(output_path):
         raise HTTPException(status_code=422, detail="Download finished but no file was produced.")
 
-    # Delete the file after 10 minutes — plenty of time for Creatomate to fetch it
+    # Delete the file after 20 minutes — plenty of time for Creatomate to fetch it
     def cleanup():
-        time.sleep(600)
+        time.sleep(1200)
         if os.path.exists(output_path):
             os.remove(output_path)
 

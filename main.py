@@ -110,10 +110,7 @@ def render(req: RenderRequest):
     source_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_source.mp4")
     output_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_final.mp4")
 
-    try:
-        segments_list = json.loads(req.segments)
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=422, detail=f"segments field wasn't valid JSON: {e}")
+    segments_list = [s.model_dump() for s in req.segments]
 
     try:
         resp = requests.get(req.video_url, stream=True, timeout=60)

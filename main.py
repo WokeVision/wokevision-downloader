@@ -24,16 +24,9 @@ class DownloadRequest(BaseModel):
     url: str
 
 
-class Segment(BaseModel):
-    start: float
-    end: float
-    text: str
-
-
 class RenderRequest(BaseModel):
     video_url: str
     caption_text: str
-    segments: List[Segment]
 
 
 @app.get("/")
@@ -110,8 +103,6 @@ def render(req: RenderRequest):
     source_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_source.mp4")
     output_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_final.mp4")
 
-    segments_list = [s.model_dump() for s in req.segments]
-
     try:
         resp = requests.get(req.video_url, stream=True, timeout=60)
         resp.raise_for_status()
@@ -125,7 +116,6 @@ def render(req: RenderRequest):
         render_video(
             source_path=source_path,
             caption_text=req.caption_text,
-            segments=segments_list,
             output_path=output_path,
         )
     except Exception as e:

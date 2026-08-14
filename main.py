@@ -33,7 +33,7 @@ class Segment(BaseModel):
 class RenderRequest(BaseModel):
     video_url: str
     caption_text: str
-    segments: str
+    segments: List[Segment]
 
 
 @app.get("/")

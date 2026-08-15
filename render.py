@@ -8,7 +8,7 @@ CANVAS_H = 1280
 FONT_DIR = "/app/fonts"
 ASSET_DIR = "/app/assets"
 
-CAPTION_FONT_PATH = os.path.join(FONT_DIR, "Inter-Bold.ttf")
+CAPTION_FONT_PATH = os.path.join(FONT_DIR, "SFProText.ttf")
 CAPTION_COLOR = "#000000"
 
 # Video box: 3:4 aspect ratio, centered horizontally, positioned to leave
@@ -153,6 +153,9 @@ def render_video(source_path: str, caption_text: str, output_path: str):
         output_path,
     ]
 
+    print("FFMPEG COMMAND:", " ".join(cmd), flush=True)
     result = subprocess.run(cmd, capture_output=True)
+    stderr_text = result.stderr.decode(errors="ignore")
+    print("FFMPEG STDERR:", stderr_text, flush=True)
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.decode(errors="ignore")[-1500:])
+        raise RuntimeError(stderr_text[-4000:])

@@ -1,5 +1,3 @@
-
-Main · PY
 import os
 import uuid
 import time

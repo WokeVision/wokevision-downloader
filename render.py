@@ -49,7 +49,8 @@ EMOJI_PATTERN = re.compile(
 
 def strip_hashtags(text: str) -> str:
     text = HASHTAG_PATTERN.sub("", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = text.strip().strip('"').strip("'").strip()
+    return re.sub(r"\s+", " ", text)
 
 
 def codepoints_for(emoji: str) -> str:
@@ -139,7 +140,8 @@ def build_caption_filters(caption_text, start_label, next_input_index):
     filters = []
     inputs = []
     last_label = start_label
-    idx = next_input_index
+    input_index = next_input_index  # only advances when a new -i is actually added
+    label_id = 0  # unique label numbering, independent of input_index
 
     for line_idx, line_tokens in enumerate(lines_tokens):
         widths = [token_width(t, font, font_size) for t in line_tokens]
@@ -149,37 +151,37 @@ def build_caption_filters(caption_text, start_label, next_input_index):
         line_y = caption_top_y + line_idx * line_height
 
         for tok, w in zip(line_tokens, widths):
+            label_id += 1
             if EMOJI_PATTERN.fullmatch(tok):
                 img_path = get_emoji_image(tok)
                 if img_path:
                     emoji_size = font_size
                     emoji_y = line_y + round(font_size * 0.12)
                     inputs += ["-i", img_path]
-                    scaled_label = f"emoscaled{idx}"
-                    out_label = f"stage{idx}"
-                    filters.append(f"[{idx}:v]scale={emoji_size}:{emoji_size}[{scaled_label}];")
+                    scaled_label = f"emoscaled{label_id}"
+                    out_label = f"stage{label_id}"
+                    filters.append(f"[{input_index}:v]scale={emoji_size}:{emoji_size}[{scaled_label}];")
                     filters.append(
                         f"[{last_label}][{scaled_label}]overlay={round(cur_x)}:{round(emoji_y)}[{out_label}];"
                     )
                     last_label = out_label
-                    idx += 1
+                    input_index += 1
             else:
                 escaped = (
                     tok.replace("\\", "\\\\")
                     .replace(":", "\\:")
                     .replace("'", "\u2019")
                 )
-                out_label = f"stage{idx}"
+                out_label = f"stage{label_id}"
                 filters.append(
                     f"[{last_label}]drawtext=fontfile='{CAPTION_FONT_PATH}':text='{escaped}':"
                     f"fontcolor={CAPTION_COLOR}:fontsize={font_size}:x={round(cur_x)}:y={round(line_y)}[{out_label}];"
                 )
                 last_label = out_label
-                idx += 1
             cur_x += w + space_w
 
     filters.append(f"[{last_label}]null[final]")
-    return filters, inputs, idx
+    return filters, inputs, input_index
 
 
 def render_video(source_path: str, caption_text: str, output_path: str):

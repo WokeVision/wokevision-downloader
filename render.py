@@ -1,19 +1,21 @@
 import os
 import re
+import uuid
 import subprocess
 import requests
-from PIL import Image, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 CANVAS_W = 720
 CANVAS_H = 1280
 
 FONT_DIR = "/app/fonts"
 ASSET_DIR = "/app/assets"
+TMP_DIR = "/tmp/downloads"
 EMOJI_CACHE_DIR = "/tmp/emoji_cache"
 TWEMOJI_CDN = "https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/{cp}.png"
 
 CAPTION_FONT_PATH = os.path.join(FONT_DIR, "SFProText.ttf")
-CAPTION_COLOR = "#000000"
+CAPTION_COLOR = (0, 0, 0, 255)
 
 VIDEO_W = round(0.82 * CANVAS_W)
 VIDEO_H = round(VIDEO_W * 4 / 3)
@@ -34,10 +36,8 @@ WATERMARK_WIDTH_RATIO = 0.85
 WATERMARK_OPACITY = 0.5
 
 HASHTAG_PATTERN = re.compile(r"#\w+")
+QUOTE_STRIP_CHARS = "\"'\u2018\u2019\u201C\u201D"
 
-# Matches a single emoji "run" - one or more emoji codepoints combined with
-# variation selectors / ZWJ / skin tone modifiers (e.g. a flag, or a person +
-# skin tone), so a multi-part emoji is treated as one atomic token.
 EMOJI_PATTERN = re.compile(
     "("
     "(?:[\U0001F1E6-\U0001F1FF]{2})"
@@ -49,7 +49,7 @@ EMOJI_PATTERN = re.compile(
 
 def strip_hashtags(text: str) -> str:
     text = HASHTAG_PATTERN.sub("", text)
-    text = text.strip().strip('"').strip("'").strip()
+    text = text.strip().strip(QUOTE_STRIP_CHARS).strip()
     return re.sub(r"\s+", " ", text)
 
 
@@ -122,7 +122,9 @@ def measure_and_wrap_tokens(tokens, font_path, max_width_px, max_font, min_font,
     return min_font, lines, line_height, font
 
 
-def build_caption_filters(caption_text, start_label, next_input_index):
+def build_caption_image(caption_text):
+    """Render the full caption (text + inline emoji) onto one transparent
+    PNG with proper baseline alignment, sized to fit the video's width."""
     caption_text = strip_hashtags(caption_text)
     spaced = EMOJI_PATTERN.sub(lambda m: f" {m.group(0)} ", caption_text)
     spaced = re.sub(r"\s+", " ", spaced).strip()
@@ -134,54 +136,38 @@ def build_caption_filters(caption_text, start_label, next_input_index):
         CAPTION_MAX_FONT, CAPTION_MIN_FONT, CAPTION_MAX_LINES,
     )
     space_w = font.getlength(" ")
-    text_block_h = line_height * len(lines_tokens)
-    caption_top_y = VIDEO_Y - CAPTION_GAP - text_block_h
+    ascent, _descent = font.getmetrics()
+    canvas_h = line_height * len(lines_tokens)
 
-    filters = []
-    inputs = []
-    last_label = start_label
-    input_index = next_input_index  # only advances when a new -i is actually added
-    label_id = 0  # unique label numbering, independent of input_index
+    canvas = Image.new("RGBA", (VIDEO_W, canvas_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
 
     for line_idx, line_tokens in enumerate(lines_tokens):
         widths = [token_width(t, font, font_size) for t in line_tokens]
         gap_total = space_w * (len(line_tokens) - 1) if len(line_tokens) > 1 else 0
         total_w = sum(widths) + gap_total
-        cur_x = (CANVAS_W - total_w) / 2
-        line_y = caption_top_y + line_idx * line_height
+        cur_x = (VIDEO_W - total_w) / 2
+        baseline_y = line_idx * line_height + ascent
 
         for tok, w in zip(line_tokens, widths):
-            label_id += 1
             if EMOJI_PATTERN.fullmatch(tok):
                 img_path = get_emoji_image(tok)
                 if img_path:
-                    emoji_size = font_size
-                    emoji_y = line_y + round(font_size * 0.12)
-                    inputs += ["-i", img_path]
-                    scaled_label = f"emoscaled{label_id}"
-                    out_label = f"stage{label_id}"
-                    filters.append(f"[{input_index}:v]scale={emoji_size}:{emoji_size}[{scaled_label}];")
-                    filters.append(
-                        f"[{last_label}][{scaled_label}]overlay={round(cur_x)}:{round(emoji_y)}[{out_label}];"
-                    )
-                    last_label = out_label
-                    input_index += 1
+                    try:
+                        with Image.open(img_path) as em:
+                            em = em.convert("RGBA").resize((font_size, font_size), Image.LANCZOS)
+                            emoji_y = int(baseline_y - font_size * 0.85)
+                            canvas.paste(em, (round(cur_x), emoji_y), em)
+                    except Exception:
+                        pass
             else:
-                escaped = (
-                    tok.replace("\\", "\\\\")
-                    .replace(":", "\\:")
-                    .replace("'", "\u2019")
-                )
-                out_label = f"stage{label_id}"
-                filters.append(
-                    f"[{last_label}]drawtext=fontfile='{CAPTION_FONT_PATH}':text='{escaped}':"
-                    f"fontcolor={CAPTION_COLOR}:fontsize={font_size}:x={round(cur_x)}:y={round(line_y)}[{out_label}];"
-                )
-                last_label = out_label
+                draw.text((cur_x, baseline_y), tok, font=font, fill=CAPTION_COLOR, anchor="ls")
             cur_x += w + space_w
 
-    filters.append(f"[{last_label}]null[final]")
-    return filters, inputs, input_index
+    os.makedirs(TMP_DIR, exist_ok=True)
+    path = os.path.join(TMP_DIR, f"caption_{uuid.uuid4()}.png")
+    canvas.save(path)
+    return path, VIDEO_W, canvas_h
 
 
 def render_video(source_path: str, caption_text: str, output_path: str):
@@ -189,6 +175,10 @@ def render_video(source_path: str, caption_text: str, output_path: str):
     watermark_path = os.path.join(ASSET_DIR, "watermark.png")
     have_logo = os.path.exists(logo_path)
     have_watermark = os.path.exists(watermark_path)
+
+    caption_img_path, cap_w, cap_h = build_caption_image(caption_text)
+    caption_x = VIDEO_X
+    caption_y = VIDEO_Y - CAPTION_GAP - cap_h
 
     inputs = ["-i", source_path]
     filters = [
@@ -227,9 +217,10 @@ def render_video(source_path: str, caption_text: str, output_path: str):
         last_label = "stage_wm"
         next_input_index += 1
 
-    caption_filters, caption_inputs, _ = build_caption_filters(caption_text, last_label, next_input_index)
-    filters += caption_filters
-    inputs += caption_inputs
+    inputs += ["-i", caption_img_path]
+    filters.append(f"[{next_input_index}:v]format=rgba[capimg];")
+    filters.append(f"[{last_label}][capimg]overlay={caption_x}:{caption_y}[final]")
+    next_input_index += 1
 
     filter_complex = "".join(filters)
 
@@ -250,5 +241,9 @@ def render_video(source_path: str, caption_text: str, output_path: str):
     result = subprocess.run(cmd, capture_output=True)
     stderr_text = result.stderr.decode(errors="ignore")
     print("FFMPEG STDERR:", stderr_text, flush=True)
+
+    if os.path.exists(caption_img_path):
+        os.remove(caption_img_path)
+
     if result.returncode != 0:
         raise RuntimeError(stderr_text[-4000:])

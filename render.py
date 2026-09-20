@@ -77,13 +77,20 @@ def unicode_name_slug(emoji: str):
 
 
 def get_emoji_image(emoji: str):
+    # Strip the invisible "emoji-style" variation selector before name
+    # lookups -- GPT-generated text almost always includes it (e.g. the
+    # warning sign becomes U+26A0 + U+FE0F), but our name tables are keyed
+    # by the plain base character.
+    base_emoji = emoji.replace("\uFE0F", "")
+
     # 1. Check the user's own local emoji pack first, using the standard
     #    "gemoji" shortcode name (e.g. "sweat_smile") -- this is the naming
     #    convention their files actually use.
-    gemoji_name = CODEPOINT_TO_NAME.get(emoji)
+    gemoji_name = CODEPOINT_TO_NAME.get(base_emoji)
     if gemoji_name:
         local_path = os.path.join(EMOJI_PACK_DIR, f"{gemoji_name}.png")
         if os.path.exists(local_path):
+            print(f"EMOJI: {emoji!r} -> local pack ({gemoji_name}.png)", flush=True)
             return local_path
 
     # 2. Some packs instead use the official Unicode character name -- try
@@ -92,16 +99,19 @@ def get_emoji_image(emoji: str):
     if slug:
         local_path = os.path.join(EMOJI_PACK_DIR, f"{slug}.png")
         if os.path.exists(local_path):
+            print(f"EMOJI: {emoji!r} -> local pack ({slug}.png)", flush=True)
             return local_path
 
     # 3. Fall back to Twemoji (fetched once, then cached) for anything not
     #    covered by the local pack.
     cp = codepoints_for(emoji)
     if not cp:
+        print(f"EMOJI: {emoji!r} -> no codepoints resolved, skipping", flush=True)
         return None
     os.makedirs(EMOJI_CACHE_DIR, exist_ok=True)
     cache_path = os.path.join(EMOJI_CACHE_DIR, f"{cp}.png")
     if os.path.exists(cache_path):
+        print(f"EMOJI: {emoji!r} -> Twemoji cache ({cp}.png)", flush=True)
         return cache_path
     url = TWEMOJI_CDN.format(cp=cp)
     try:
@@ -109,9 +119,13 @@ def get_emoji_image(emoji: str):
         if resp.status_code == 200 and resp.content:
             with open(cache_path, "wb") as f:
                 f.write(resp.content)
+            print(f"EMOJI: {emoji!r} -> fetched from Twemoji ({cp}.png)", flush=True)
             return cache_path
-    except Exception:
-        pass
+        else:
+            print(f"EMOJI: {emoji!r} -> Twemoji returned status {resp.status_code} for {cp}.png", flush=True)
+    except Exception as e:
+        print(f"EMOJI: {emoji!r} -> Twemoji fetch failed: {e}", flush=True)
+    print(f"EMOJI: {emoji!r} -> NOT FOUND anywhere, will render as blank gap", flush=True)
     return None
 
 

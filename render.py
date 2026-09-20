@@ -279,7 +279,7 @@ def render_video(source_path: str, caption_text: str, output_path: str):
         "-filter_complex", filter_complex,
         "-map", "[final]",
         "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-c:a", "aac",
         "-movflags", "+faststart",
         "-shortest",

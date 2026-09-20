@@ -1,9 +1,12 @@
 import os
 import re
 import uuid
+import unicodedata
 import subprocess
 import requests
 from PIL import Image, ImageDraw, ImageFont
+
+from emoji_names import CODEPOINT_TO_NAME
 
 CANVAS_W = 720
 CANVAS_H = 1280
@@ -11,6 +14,7 @@ CANVAS_H = 1280
 FONT_DIR = "/app/fonts"
 ASSET_DIR = "/app/assets"
 TMP_DIR = "/tmp/downloads"
+EMOJI_PACK_DIR = "/app/emoji_pack"
 EMOJI_CACHE_DIR = "/tmp/emoji_cache"
 TWEMOJI_CDN = "https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/{cp}.png"
 
@@ -58,7 +62,40 @@ def codepoints_for(emoji: str) -> str:
     return "-".join(cps)
 
 
+def unicode_name_slug(emoji: str):
+    """For a simple single-codepoint emoji, return its official Unicode name
+    as a lowercase_underscore slug (e.g. 'crystal_ball'). Returns None for
+    multi-codepoint sequences (skin tones, flags, ZWJ combos) or unnamed chars."""
+    base = emoji.replace("\uFE0F", "")
+    if len(base) != 1:
+        return None
+    try:
+        name = unicodedata.name(base)
+    except ValueError:
+        return None
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
 def get_emoji_image(emoji: str):
+    # 1. Check the user's own local emoji pack first, using the standard
+    #    "gemoji" shortcode name (e.g. "sweat_smile") -- this is the naming
+    #    convention their files actually use.
+    gemoji_name = CODEPOINT_TO_NAME.get(emoji)
+    if gemoji_name:
+        local_path = os.path.join(EMOJI_PACK_DIR, f"{gemoji_name}.png")
+        if os.path.exists(local_path):
+            return local_path
+
+    # 2. Some packs instead use the official Unicode character name -- try
+    #    that naming style too before giving up on the local pack.
+    slug = unicode_name_slug(emoji)
+    if slug:
+        local_path = os.path.join(EMOJI_PACK_DIR, f"{slug}.png")
+        if os.path.exists(local_path):
+            return local_path
+
+    # 3. Fall back to Twemoji (fetched once, then cached) for anything not
+    #    covered by the local pack.
     cp = codepoints_for(emoji)
     if not cp:
         return None
@@ -123,8 +160,6 @@ def measure_and_wrap_tokens(tokens, font_path, max_width_px, max_font, min_font,
 
 
 def build_caption_image(caption_text):
-    """Render the full caption (text + inline emoji) onto one transparent
-    PNG with proper baseline alignment, sized to fit the video's width."""
     caption_text = strip_hashtags(caption_text)
     spaced = EMOJI_PATTERN.sub(lambda m: f" {m.group(0)} ", caption_text)
     spaced = re.sub(r"\s+", " ", spaced).strip()

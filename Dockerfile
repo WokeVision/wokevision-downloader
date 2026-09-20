@@ -6,8 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fontconf
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py render.py .
+COPY main.py render.py emoji_names.py .
 COPY assets ./assets
 COPY fonts ./fonts
+COPY emoji_pack ./emoji_pack
 
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]

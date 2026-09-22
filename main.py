@@ -1,6 +1,7 @@
 import os
 import uuid
 import time
+import shutil
 import threading
 import subprocess
 import json
@@ -53,8 +54,13 @@ def download(req: DownloadRequest):
 
     # Use real login cookies if available, so sites like YouTube that block
     # anonymous downloads (e.g. "Sign in to confirm you're not a bot") work.
+    # yt-dlp tries to rewrite the cookie file after use to persist refreshed
+    # session tokens, but Render's Secret Files are mounted read-only -- so
+    # we copy it to a writable location first and use that copy instead.
     if os.path.exists(COOKIES_FILE):
-        ydl_opts["cookiefile"] = COOKIES_FILE
+        writable_cookies = os.path.join(DOWNLOAD_DIR, "cookies.txt")
+        shutil.copyfile(COOKIES_FILE, writable_cookies)
+        ydl_opts["cookiefile"] = writable_cookies
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

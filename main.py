@@ -6,41 +6,43 @@ import subprocess
 import json
 import traceback
 import requests
- 
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import yt_dlp
- 
+
 from render import render_video
- 
+
 app = FastAPI()
- 
+
 DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
- 
- 
+
+COOKIES_FILE = "/etc/secrets/cookies.txt"
+
+
 class DownloadRequest(BaseModel):
     url: str
- 
- 
+
+
 class RenderRequest(BaseModel):
     video_url: str
     caption_text: str
- 
- 
+
+
 @app.get("/")
 def health():
     return {"status": "ok"}
- 
- 
+
+
 @app.post("/download")
 def download(req: DownloadRequest):
     file_id = str(uuid.uuid4())
     raw_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_raw.mp4")
     final_path = os.path.join(DOWNLOAD_DIR, f"{file_id}.mp4")
- 
+
     ydl_opts = {
         "outtmpl": raw_path,
         "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best",
@@ -48,16 +50,21 @@ def download(req: DownloadRequest):
         "quiet": True,
         "noplaylist": True,
     }
- 
+
+    # Use real login cookies if available, so sites like YouTube that block
+    # anonymous downloads (e.g. "Sign in to confirm you're not a bot") work.
+    if os.path.exists(COOKIES_FILE):
+        ydl_opts["cookiefile"] = COOKIES_FILE
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([req.url])
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Could not download video: {e}")
- 
+
     if not os.path.exists(raw_path):
         raise HTTPException(status_code=422, detail="Download finished but no file was produced.")
- 
+
     try:
         subprocess.run(
             ["ffmpeg", "-y", "-i", raw_path, "-c", "copy", "-movflags", "+faststart", final_path],
@@ -72,35 +79,35 @@ def download(req: DownloadRequest):
     finally:
         if os.path.exists(raw_path):
             os.remove(raw_path)
- 
+
     if not os.path.exists(final_path):
         raise HTTPException(status_code=422, detail="Video processing finished but no output file was produced.")
- 
+
     def cleanup():
         time.sleep(1200)
         if os.path.exists(final_path):
             os.remove(final_path)
- 
+
     threading.Thread(target=cleanup, daemon=True).start()
- 
+
     base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
     return {"video_url": f"{base_url}/files/{file_id}.mp4"}
- 
- 
+
+
 @app.get("/files/{filename}")
 def get_file(filename: str):
     path = os.path.join(DOWNLOAD_DIR, filename)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="File not found or expired")
     return FileResponse(path, media_type="video/mp4", headers={"Content-Disposition": "inline"})
- 
- 
+
+
 @app.post("/render")
 def render(req: RenderRequest):
     file_id = str(uuid.uuid4())
     source_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_source.mp4")
     output_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_final.mp4")
- 
+
     try:
         resp = requests.get(req.video_url, stream=True, timeout=60)
         resp.raise_for_status()
@@ -109,7 +116,7 @@ def render(req: RenderRequest):
                 f.write(chunk)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Could not fetch video_url: {e}")
- 
+
     try:
         render_video(
             source_path=source_path,
@@ -122,20 +129,19 @@ def render(req: RenderRequest):
         if os.path.exists(source_path):
             os.remove(source_path)
         raise HTTPException(status_code=422, detail=f"Render failed:\n{tb[-3000:]}")
- 
+
     if os.path.exists(source_path):
         os.remove(source_path)
- 
+
     if not os.path.exists(output_path):
         raise HTTPException(status_code=422, detail="Render finished but no output file was produced.")
- 
+
     def cleanup():
         time.sleep(1200)
         if os.path.exists(output_path):
             os.remove(output_path)
- 
+
     threading.Thread(target=cleanup, daemon=True).start()
- 
+
     base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
     return {"render_url": f"{base_url}/files/{file_id}_final.mp4"}
- 

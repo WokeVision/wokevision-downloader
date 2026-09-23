@@ -50,6 +50,14 @@ def download(req: DownloadRequest):
         "merge_output_format": "mp4",
         "quiet": True,
         "noplaylist": True,
+        # YouTube's default "web" client is the one most likely to break
+        # when YouTube tweaks its internal API. Falling back through the
+        # Android and iOS app clients often keeps working when web doesn't.
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web", "ios"],
+            }
+        },
     }
 
     # Use real login cookies if available, so sites like YouTube that block

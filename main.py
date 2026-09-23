@@ -50,12 +50,14 @@ def download(req: DownloadRequest):
         "merge_output_format": "mp4",
         "quiet": True,
         "noplaylist": True,
-        # YouTube's default "web" client is the one most likely to break
-        # when YouTube tweaks its internal API. Falling back through the
-        # Android and iOS app clients often keeps working when web doesn't.
+        # YouTube is currently mid-rollout on a new streaming protocol
+        # ("SABR") that's breaking several player clients across yt-dlp.
+        # When cookies are supplied, yt-dlp's maintainers currently
+        # recommend this specific client combination as the working
+        # fallback (rather than the general android/ios guess).
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web", "ios"],
+                "player_client": ["default", "web_embedded"],
             }
         },
     }

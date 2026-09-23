@@ -50,16 +50,6 @@ def download(req: DownloadRequest):
         "merge_output_format": "mp4",
         "quiet": True,
         "noplaylist": True,
-        # YouTube is currently mid-rollout on a new streaming protocol
-        # ("SABR") that's breaking several player clients across yt-dlp.
-        # When cookies are supplied, yt-dlp's maintainers currently
-        # recommend this specific client combination as the working
-        # fallback (rather than the general android/ios guess).
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["default", "web_embedded"],
-            }
-        },
     }
 
     # Use real login cookies if available, so sites like YouTube that block

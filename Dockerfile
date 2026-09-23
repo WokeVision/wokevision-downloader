@@ -1,7 +1,14 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fontconfig \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fontconfig curl unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp needs a real JavaScript runtime to solve YouTube's anti-bot
+# challenges (part of YouTube's 2026 infrastructure changes) -- without
+# one, extraction fails regardless of client/cookie settings.
+RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y
+ENV DENO_INSTALL="/root/.deno"
+ENV PATH="$DENO_INSTALL/bin:$PATH"
 
 WORKDIR /app
 COPY requirements.txt .

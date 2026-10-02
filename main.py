@@ -1,10 +1,11 @@
 import os
 import uuid
 import time
+import shutil
 import threading
 import traceback
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -32,35 +33,19 @@ def _cleanup_later(path: str, delay: int = 1200):
     threading.Thread(target=_run, daemon=True).start()
 
 
-@app.get("/")
-def index():
-    return FileResponse("static/index.html")
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-@app.post("/process")
-def process(req: ProcessRequest):
-    file_id = str(uuid.uuid4())
-    final_source_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_source.mp4")
+def _run_pipeline(final_source_path: str, meta: dict, file_id: str):
+    """Shared steps once a source video is on disk, regardless of whether it
+    got there via download or direct upload: transcribe -> caption -> render
+    -> respond."""
     output_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_final.mp4")
 
-    # 1. Download (with fallback chain -- see downloader.py)
-    try:
-        meta = download_video(req.url, final_source_path)
-    except DownloadError as e:
-        raise HTTPException(status_code=422, detail=f"Could not download video: {e}")
-
-    # 2. Transcribe (best-effort -- empty string if no OPENAI_API_KEY)
+    # Transcribe (best-effort -- empty string if no OPENAI_API_KEY)
     transcript = transcribe_audio(final_source_path)
 
-    # 3. Generate the on-screen caption + full Instagram caption
+    # Generate the on-screen caption + full Instagram caption
     on_screen_caption, full_caption = generate_caption(transcript, meta)
 
-    # 4. Render (crop, logo/watermark overlay, caption image overlay)
+    # Render (crop, logo/watermark overlay, caption image overlay)
     try:
         render_video(
             source_path=final_source_path,
@@ -89,6 +74,67 @@ def process(req: ProcessRequest):
         "caption": full_caption,
         "download_method": meta.get("method", ""),
     }
+
+
+@app.get("/")
+def index():
+    return FileResponse("static/index.html")
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/process")
+def process(req: ProcessRequest):
+    file_id = str(uuid.uuid4())
+    final_source_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_source.mp4")
+
+    # Download (with fallback chain -- see downloader.py). YouTube in
+    # particular can fail here even with every fallback exhausted, because
+    # YouTube rate-limits/blocks the hosting provider's IP range at the
+    # network level -- that's not something any amount of retrying from this
+    # server can fix. When that happens, the error message below points
+    # people at /process-file as a direct workaround.
+    try:
+        meta = download_video(req.url, final_source_path)
+    except DownloadError as e:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Could not download video: {e}\n\n"
+                "If this is a YouTube link, this usually means YouTube is "
+                "currently blocking this server's IP address rather than "
+                "anything wrong with the link -- download the video "
+                "yourself (e.g. with a browser extension) and upload the "
+                "file directly instead."
+            ),
+        )
+
+    return _run_pipeline(final_source_path, meta, file_id)
+
+
+@app.post("/process-file")
+async def process_file(file: UploadFile = File(...)):
+    """Direct upload path: skips the download step entirely. Use this when a
+    link can't be fetched automatically (most often YouTube, when the host's
+    IP is being rate-limited) -- download the video yourself and upload the
+    file here instead."""
+    file_id = str(uuid.uuid4())
+    final_source_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_source.mp4")
+
+    try:
+        with open(final_source_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+    finally:
+        await file.close()
+
+    if not os.path.exists(final_source_path) or os.path.getsize(final_source_path) == 0:
+        raise HTTPException(status_code=422, detail="Upload failed: no file data received.")
+
+    meta = {"title": os.path.splitext(file.filename or "")[0], "description": "", "method": "direct upload"}
+    return _run_pipeline(final_source_path, meta, file_id)
 
 
 @app.get("/files/{filename}")

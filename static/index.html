@@ -54,6 +54,10 @@
   .row textarea { flex: 1; }
   .row button.copy { width: auto; margin-top: 0; padding: 10px 14px; }
   a.dl { display: inline-block; margin-top: 10px; font-size: 14px; }
+  .divider { display: flex; align-items: center; gap: 12px; margin: 28px 0; color: #999; font-size: 13px; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #ddd; }
+  .note { font-size: 13px; color: #666; margin-top: 10px; line-height: 1.4; }
+  input[type="file"] { width: 100%; box-sizing: border-box; padding: 10px; border: 1px dashed #ccc; border-radius: 8px; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -63,6 +67,18 @@
   <form id="form">
     <input type="text" id="url" placeholder="https://..." required />
     <button type="submit" id="submitBtn">Process video</button>
+  </form>
+
+  <div class="divider">or</div>
+
+  <form id="uploadForm">
+    <input type="file" id="fileInput" accept="video/*" required />
+    <button type="submit" id="uploadBtn">Upload video file</button>
+    <p class="note">
+      Use this if a link fails to download (most common with YouTube, when
+      it's blocking this server rather than anything wrong with the link) --
+      download the video yourself and upload the file here instead.
+    </p>
   </form>
 
   <div id="status"></div>
@@ -120,6 +136,41 @@
       const box = document.getElementById("captionBox");
       box.select();
       document.execCommand("copy");
+    });
+
+    const uploadForm = document.getElementById("uploadForm");
+    const uploadBtn = document.getElementById("uploadBtn");
+
+    uploadForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fileInput = document.getElementById("fileInput");
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      uploadBtn.disabled = true;
+      resultEl.style.display = "none";
+      statusEl.textContent = "Uploading and processing... this can take a minute or two.";
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const resp = await fetch("/process-file", { method: "POST", body: formData });
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error(data.detail || "Something went wrong.");
+        }
+
+        statusEl.textContent = "Done.";
+        const preview = document.getElementById("preview");
+        preview.src = data.video_url;
+        document.getElementById("downloadLink").href = data.video_url;
+        document.getElementById("captionBox").value = data.caption || "";
+        resultEl.style.display = "block";
+      } catch (err) {
+        statusEl.textContent = "Error: " + err.message;
+      } finally {
+        uploadBtn.disabled = false;
+      }
     });
   </script>
 </body>

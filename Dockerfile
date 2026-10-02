@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fontconfig curl unzip git \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fontconfig curl unzip git fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # yt-dlp needs a real JavaScript runtime to solve YouTube's anti-bot
@@ -24,10 +24,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py render.py emoji_names.py downloader.py transcribe.py caption.py .
 COPY assets ./assets
 COPY fonts ./fonts
-# Open-license (OFL) fallback font, used automatically if SFProText.ttf
-# hasn't been uploaded to fonts/ -- keeps the service working either way.
-RUN curl -fsSL -o ./fonts/Fallback.ttf \
-    https://raw.githubusercontent.com/google/fonts/main/apache/roboto/static/Roboto-Bold.ttf
+# Fallback font (from the fonts-dejavu-core package installed above), used
+# automatically if SFProText.ttf hasn't been uploaded to fonts/ -- keeps the
+# service working either way, with no network fetch needed at build time.
+RUN cp /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf ./fonts/Fallback.ttf
 COPY emoji_pack ./emoji_pack
 COPY static ./static
 COPY start.sh .

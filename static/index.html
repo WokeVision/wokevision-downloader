@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WokeVision Video Editor</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 560px;
+    margin: 48px auto;
+    padding: 0 20px;
+    color: #111;
+    background: #fff;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  p.sub { color: #666; margin-top: 0; margin-bottom: 28px; font-size: 14px; }
+  input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px 14px;
+    font-size: 15px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+  }
+  button {
+    margin-top: 12px;
+    width: 100%;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    background: #111;
+    color: #fff;
+    cursor: pointer;
+  }
+  button:disabled { background: #999; cursor: not-allowed; }
+  #status { margin-top: 16px; font-size: 14px; color: #444; white-space: pre-wrap; }
+  #result { margin-top: 24px; display: none; }
+  video { width: 100%; max-width: 320px; border-radius: 10px; display: block; margin-bottom: 16px; }
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 110px;
+    padding: 10px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-family: inherit;
+  }
+  .row { display: flex; gap: 8px; align-items: flex-start; }
+  .row textarea { flex: 1; }
+  .row button.copy { width: auto; margin-top: 0; padding: 10px 14px; }
+  a.dl { display: inline-block; margin-top: 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+  <h1>WokeVision Video Editor</h1>
+  <p class="sub">Paste a link from YouTube, TikTok, Instagram, X or Threads.</p>
+
+  <form id="form">
+    <input type="text" id="url" placeholder="https://..." required />
+    <button type="submit" id="submitBtn">Process video</button>
+  </form>
+
+  <div id="status"></div>
+
+  <div id="result">
+    <video id="preview" controls></video>
+    <a class="dl" id="downloadLink" download="wokevision.mp4">Download video</a>
+    <h3 style="margin-top:24px;">Caption</h3>
+    <div class="row">
+      <textarea id="captionBox" readonly></textarea>
+      <button class="copy" id="copyBtn" type="button">Copy</button>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById("form");
+    const statusEl = document.getElementById("status");
+    const resultEl = document.getElementById("result");
+    const submitBtn = document.getElementById("submitBtn");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const url = document.getElementById("url").value.trim();
+      if (!url) return;
+
+      submitBtn.disabled = true;
+      resultEl.style.display = "none";
+      statusEl.textContent = "Processing... this can take a minute or two, especially the first request after the server has been idle.";
+
+      try {
+        const resp = await fetch("/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error(data.detail || "Something went wrong.");
+        }
+
+        statusEl.textContent = "Done.";
+        const preview = document.getElementById("preview");
+        preview.src = data.video_url;
+        document.getElementById("downloadLink").href = data.video_url;
+        document.getElementById("captionBox").value = data.caption || "";
+        resultEl.style.display = "block";
+      } catch (err) {
+        statusEl.textContent = "Error: " + err.message;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+    document.getElementById("copyBtn").addEventListener("click", () => {
+      const box = document.getElementById("captionBox");
+      box.select();
+      document.execCommand("copy");
+    });
+  </script>
+</body>
+</html>

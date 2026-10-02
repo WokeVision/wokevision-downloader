@@ -2,6 +2,8 @@
 set -e
 
 # Start the PO-token provider in the background on its default port.
+# This gives yt-dlp what it needs to satisfy YouTube's "proof of origin"
+# check without needing any logged-in cookies.
 cd /opt/pot-provider/server
 deno run --no-prompt --allow-env --allow-net --allow-ffi=. --allow-read=. --allow-sys ./src/main.ts --port 4416 &
 

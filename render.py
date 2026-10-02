@@ -18,7 +18,19 @@ EMOJI_PACK_DIR = "/app/emoji_pack"
 EMOJI_CACHE_DIR = "/tmp/emoji_cache"
 TWEMOJI_CDN = "https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/{cp}.png"
 
-CAPTION_FONT_PATH = os.path.join(FONT_DIR, "SFProText.ttf")
+def _resolve_caption_font():
+    """Use the user-supplied font if it was uploaded; otherwise fall back to
+    a bundled open-license font so the service still works without it."""
+    own_font = os.path.join(FONT_DIR, "SFProText.ttf")
+    if os.path.exists(own_font):
+        return own_font
+    fallback = os.path.join(FONT_DIR, "Fallback.ttf")
+    if os.path.exists(fallback):
+        return fallback
+    return own_font  # will raise a clear error at render time if neither exists
+
+
+CAPTION_FONT_PATH = _resolve_caption_font()
 CAPTION_COLOR = (0, 0, 0, 255)
 
 VIDEO_W = round(0.82 * CANVAS_W)

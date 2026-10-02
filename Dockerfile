@@ -21,10 +21,15 @@ RUN git clone --single-branch --branch 2.0.0 \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py render.py emoji_names.py .
+COPY main.py render.py emoji_names.py downloader.py transcribe.py caption.py .
 COPY assets ./assets
 COPY fonts ./fonts
+# Open-license (OFL) fallback font, used automatically if SFProText.ttf
+# hasn't been uploaded to fonts/ -- keeps the service working either way.
+RUN curl -fsSL -o ./fonts/Fallback.ttf \
+    https://raw.githubusercontent.com/google/fonts/main/apache/roboto/static/Roboto-Bold.ttf
 COPY emoji_pack ./emoji_pack
+COPY static ./static
 COPY start.sh .
 RUN chmod +x start.sh
 

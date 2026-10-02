@@ -1,19 +1,17 @@
 import os
 import uuid
 import time
-import shutil
 import threading
-import subprocess
-import json
 import traceback
-import requests
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import List, Optional
-import yt_dlp
 
+from downloader import download_video, DownloadError
+from transcribe import transcribe_audio
+from caption import generate_caption
 from render import render_video
 
 app = FastAPI()
@@ -21,83 +19,76 @@ app = FastAPI()
 DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-COOKIES_FILE = "/etc/secrets/cookies.txt"
 
-
-class DownloadRequest(BaseModel):
+class ProcessRequest(BaseModel):
     url: str
 
 
-class RenderRequest(BaseModel):
-    video_url: str
-    caption_text: str
+def _cleanup_later(path: str, delay: int = 1200):
+    def _run():
+        time.sleep(delay)
+        if os.path.exists(path):
+            os.remove(path)
+    threading.Thread(target=_run, daemon=True).start()
 
 
 @app.get("/")
+def index():
+    return FileResponse("static/index.html")
+
+
+@app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-@app.post("/download")
-def download(req: DownloadRequest):
+@app.post("/process")
+def process(req: ProcessRequest):
     file_id = str(uuid.uuid4())
-    raw_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_raw.mp4")
-    final_path = os.path.join(DOWNLOAD_DIR, f"{file_id}.mp4")
+    final_source_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_source.mp4")
+    output_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_final.mp4")
 
-    ydl_opts = {
-        "outtmpl": raw_path,
-        "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best",
-        "merge_output_format": "mp4",
-        "quiet": True,
-        "noplaylist": True,
-    }
-
-    # Use real login cookies if available, so sites like YouTube that block
-    # anonymous downloads (e.g. "Sign in to confirm you're not a bot") work.
-    # yt-dlp tries to rewrite the cookie file after use to persist refreshed
-    # session tokens, but Render's Secret Files are mounted read-only -- so
-    # we copy it to a writable location first and use that copy instead.
-    if os.path.exists(COOKIES_FILE):
-        writable_cookies = os.path.join(DOWNLOAD_DIR, "cookies.txt")
-        shutil.copyfile(COOKIES_FILE, writable_cookies)
-        ydl_opts["cookiefile"] = writable_cookies
-
+    # 1. Download (with fallback chain -- see downloader.py)
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([req.url])
-    except Exception as e:
+        meta = download_video(req.url, final_source_path)
+    except DownloadError as e:
         raise HTTPException(status_code=422, detail=f"Could not download video: {e}")
 
-    if not os.path.exists(raw_path):
-        raise HTTPException(status_code=422, detail="Download finished but no file was produced.")
+    # 2. Transcribe (best-effort -- empty string if no OPENAI_API_KEY)
+    transcript = transcribe_audio(final_source_path)
 
+    # 3. Generate the on-screen caption + full Instagram caption
+    on_screen_caption, full_caption = generate_caption(transcript, meta)
+
+    # 4. Render (crop, logo/watermark overlay, caption image overlay)
     try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", raw_path, "-c", "copy", "-movflags", "+faststart", final_path],
-            check=True,
-            capture_output=True,
+        render_video(
+            source_path=final_source_path,
+            caption_text=on_screen_caption,
+            output_path=output_path,
         )
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Could not process video for streaming: {e.stderr.decode(errors='ignore')[:300]}",
-        )
-    finally:
-        if os.path.exists(raw_path):
-            os.remove(raw_path)
+    except Exception:
+        tb = traceback.format_exc()
+        print("RENDER TRACEBACK:", tb, flush=True)
+        if os.path.exists(final_source_path):
+            os.remove(final_source_path)
+        raise HTTPException(status_code=422, detail=f"Render failed:\n{tb[-2000:]}")
 
-    if not os.path.exists(final_path):
-        raise HTTPException(status_code=422, detail="Video processing finished but no output file was produced.")
+    if os.path.exists(final_source_path):
+        os.remove(final_source_path)
 
-    def cleanup():
-        time.sleep(1200)
-        if os.path.exists(final_path):
-            os.remove(final_path)
+    if not os.path.exists(output_path):
+        raise HTTPException(status_code=422, detail="Render finished but no output file was produced.")
 
-    threading.Thread(target=cleanup, daemon=True).start()
+    _cleanup_later(output_path)
 
     base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
-    return {"video_url": f"{base_url}/files/{file_id}.mp4"}
+    return {
+        "video_url": f"{base_url}/files/{file_id}_final.mp4",
+        "on_screen_caption": on_screen_caption,
+        "caption": full_caption,
+        "download_method": meta.get("method", ""),
+    }
 
 
 @app.get("/files/{filename}")
@@ -108,46 +99,6 @@ def get_file(filename: str):
     return FileResponse(path, media_type="video/mp4", headers={"Content-Disposition": "inline"})
 
 
-@app.post("/render")
-def render(req: RenderRequest):
-    file_id = str(uuid.uuid4())
-    source_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_source.mp4")
-    output_path = os.path.join(DOWNLOAD_DIR, f"{file_id}_final.mp4")
-
-    try:
-        resp = requests.get(req.video_url, stream=True, timeout=60)
-        resp.raise_for_status()
-        with open(source_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Could not fetch video_url: {e}")
-
-    try:
-        render_video(
-            source_path=source_path,
-            caption_text=req.caption_text,
-            output_path=output_path,
-        )
-    except Exception:
-        tb = traceback.format_exc()
-        print("RENDER TRACEBACK:", tb, flush=True)
-        if os.path.exists(source_path):
-            os.remove(source_path)
-        raise HTTPException(status_code=422, detail=f"Render failed:\n{tb[-3000:]}")
-
-    if os.path.exists(source_path):
-        os.remove(source_path)
-
-    if not os.path.exists(output_path):
-        raise HTTPException(status_code=422, detail="Render finished but no output file was produced.")
-
-    def cleanup():
-        time.sleep(1200)
-        if os.path.exists(output_path):
-            os.remove(output_path)
-
-    threading.Thread(target=cleanup, daemon=True).start()
-
-    base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
-    return {"render_url": f"{base_url}/files/{file_id}_final.mp4"}
+# Serves the submission page's own static assets, if any are added later
+# (CSS/JS files). The page itself is served by the "/" route above.
+app.mount("/static", StaticFiles(directory="static"), name="static")

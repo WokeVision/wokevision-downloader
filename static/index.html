@@ -299,6 +299,14 @@
     resize: vertical;
   }
 
+  .charCount {
+    font-size: 12px;
+    color: var(--text-faint);
+    text-align: right;
+    margin-top: 5px;
+  }
+  .charCount.over { color: var(--accent); font-weight: 600; }
+
   .actionRow {
     display: flex;
     gap: 8px;
@@ -457,14 +465,6 @@
     </div>
   </div>
 
-  <div class="card" id="platformStatusCard">
-    <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Platforms</h3>
-    <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
-      Live connection status -- tap Connect/Reconnect to fix one.
-    </p>
-    <div id="platformStatusList"></div>
-  </div>
-
   <div class="card" id="statusCard">
     <div class="progressHead">
       <span class="label" id="stageLabel">Queued</span>
@@ -494,13 +494,25 @@
       <div class="card captionCard">
         <h3>Posting caption</h3>
         <p class="hint">For the post itself -- Instagram, YouTube, X, TikTok, Threads &amp; Facebook.</p>
-        <textarea id="captionBox" readonly></textarea>
+        <textarea id="captionBox"></textarea>
+        <div class="charCount" id="captionCharCount"></div>
         <div class="actionRow">
           <button class="secondary" id="copyBtn" type="button">Copy caption</button>
           <button class="secondary" id="changePostingCaptionBtn" type="button">Change caption</button>
           <span class="inlineSpinner" id="postingCaptionSpinner">Refreshing...</span>
         </div>
       </div>
+    </div>
+
+    <!-- Platforms always sit at the bottom -- connecting/checking status and
+         actually publishing are both things done last, right before or at
+         upload time, once the video and captions are already sorted. -->
+    <div class="card" id="platformStatusCard">
+      <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Platforms</h3>
+      <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
+        Live connection status -- tap Connect/Reconnect to fix one.
+      </p>
+      <div id="platformStatusList"></div>
     </div>
 
     <div class="card">
@@ -583,8 +595,23 @@
     document.getElementById("downloadLink").href = data.video_url;
     document.getElementById("onScreenBox").value = data.on_screen_caption || "";
     document.getElementById("captionBox").value = data.caption || "";
+    updateCaptionCharCount();
     resultEl.style.display = "block";
   }
+
+  // Posting caption is user-editable, so show a live character count
+  // against the same minimum-across-platforms limit caption.py enforces
+  // server-side (X/Twitter's standard 280-char post limit -- the shortest
+  // of any platform this caption goes out to).
+  const POSTING_CAPTION_MAX_CHARS = 280;
+  const captionBox = document.getElementById("captionBox");
+  const captionCharCount = document.getElementById("captionCharCount");
+  function updateCaptionCharCount() {
+    const len = captionBox.value.length;
+    captionCharCount.textContent = `${len} / ${POSTING_CAPTION_MAX_CHARS}`;
+    captionCharCount.classList.toggle("over", len > POSTING_CAPTION_MAX_CHARS);
+  }
+  captionBox.addEventListener("input", updateCaptionCharCount);
 
   function showError(message) {
     statusCard.classList.add("active");
@@ -711,6 +738,7 @@
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
       document.getElementById("captionBox").value = data.posting_caption || "";
+      updateCaptionCharCount();
     } catch (err) {
       alert("Error: " + err.message);
     } finally {

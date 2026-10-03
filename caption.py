@@ -38,12 +38,57 @@ very last character. Do not put a full stop, period, or any other \
 punctuation between the last word and the emoji (e.g. "Libs are shaking \
 🤡" not "Libs are shaking. 🤡"). Do not use more than one emoji."""
 
-POSTING_RULES = """Write the caption that goes out with this video when it's posted \
-simultaneously to Instagram, YouTube, X, TikTok, Threads and Facebook. \
-2-4 sentences, savage and sharp, building on the on-screen hook rather \
-than repeating it. No hashtags inside the caption body itself -- those \
-come separately. Then give 5-8 relevant hashtags (a mix of broad reach \
-tags and topic-specific ones)."""
+# Platform minimums the posting caption is built against, so ONE caption
+# works unedited on every platform it goes out to (Instagram, YouTube, X,
+# TikTok, Threads, Facebook) -- always the most restrictive limit of the
+# bunch, never an average or a per-platform variant:
+#   - POSTING_CAPTION_MAX_CHARS: X/Twitter's standard (non-Premium) post
+#     limit, 280 characters -- by far the shortest of the lot (Threads 500,
+#     Instagram/TikTok ~2,200, YouTube ~5,000).
+#   - POSTING_HASHTAG_COUNT: Threads caps a post at exactly ONE topic
+#     tag/hashtag -- every other platform allows more, so one tag is the
+#     largest count that still fits everywhere without editing.
+POSTING_CAPTION_MAX_CHARS = int(os.environ.get("POSTING_CAPTION_MAX_CHARS", "280"))
+POSTING_HASHTAG_COUNT = int(os.environ.get("POSTING_HASHTAG_COUNT", "1"))
+
+# The explicit copywriter brief for the posting caption specifically --
+# separate from BRAND_VOICE (used for the on-screen hook) because this is
+# what actually ships as the post description, so it carries the fuller
+# direction: match the @wokevision_ Instagram page's own tone, end on an
+# engagement line, and fit every platform's limits unedited.
+POSTING_VOICE = os.environ.get("CAPTION_STYLE_PROMPT_POSTING", """You are the social media copywriter for @wokevision_. Your job is to write \
+highly engaging descriptions with proper formatting, in the tone of voice, \
+and political stance of content, captions and descriptions of the \
+@wokevision_ Instagram page: sharp, openly sarcastic political and cultural \
+commentary -- edgy, savage, unapologetic, dripping with sarcasm aimed at \
+liberal hypocrisy and performative politics, like a politically engaged \
+friend who's done being polite about it, not a brand account. Confident and \
+cutting, never hedged, never "on the other hand." Specific jabs beat \
+generic ones. Never attack people over protected traits (race, religion, \
+sexuality, disability, etc.) -- the target is ideas, hypocrisy and public \
+figures' actions, not who someone is.""")
+
+POSTING_RULES = f"""Write the caption/description that goes out with this video when it's \
+posted simultaneously to Instagram, YouTube, X, TikTok, Threads and \
+Facebook. Properly formatted, genuinely engaging, on-brand -- not generic.
+
+End the caption with exactly ONE short line that is either a question or a \
+statement built to drive engagement -- for example (don't just reuse these \
+verbatim every time): "Do you agree with them?", "What do you think about \
+this?", "Is this a bit too far?", "Should we all be thinking like this?", \
+"What would you do in their situation?", "This is too cold.", "Protect \
+this person at all costs.", "I wouldn't want to get into it with them." \
+That line is immediately followed by exactly ONE emoji that amplifies it \
+-- the very last character, no punctuation between the line and the emoji.
+
+Include exactly {POSTING_HASHTAG_COUNT} hashtag. (Threads allows only one \
+topic tag per post -- one hashtag is the most that still works, unedited, \
+on every platform this goes out to.)
+
+The ENTIRE caption -- body, the question/statement line, and the hashtag \
+all included -- must fit within {POSTING_CAPTION_MAX_CHARS} characters \
+total. That's X's standard post limit, the shortest of any platform this \
+goes out to, so nothing needs trimming per platform."""
 
 COMBINED_SYSTEM = BRAND_VOICE + f"""
 
@@ -51,13 +96,15 @@ You have two things to write for the same video, in one response.
 
 1) ON-SCREEN HOOK: {ON_SCREEN_RULES}
 
-2) POSTING CAPTION: {POSTING_RULES}
+2) POSTING CAPTION: {POSTING_VOICE}
+
+{POSTING_RULES}
 
 Respond ONLY with JSON: {{"on_screen": "...", "caption": "...", "hashtags": ["#...", "#..."]}}"""
 
 ON_SCREEN_SYSTEM = BRAND_VOICE + f"\n\nYour job right now: {ON_SCREEN_RULES}\n\nRespond ONLY with JSON: {{\"on_screen\": \"...\"}}"
 
-POSTING_SYSTEM = BRAND_VOICE + f"\n\nYour job right now: {POSTING_RULES}\n\nRespond ONLY with JSON: {{\"caption\": \"...\", \"hashtags\": [\"#...\", \"#...\"]}}"
+POSTING_SYSTEM = POSTING_VOICE + f"\n\nYour job right now: {POSTING_RULES}\n\nRespond ONLY with JSON: {{\"caption\": \"...\", \"hashtags\": [\"#...\"]}}"
 
 # Fallback emoji, confirmed present in the local emoji_pack/ so the on-screen
 # caption always renders a real image instead of silently dropping a
@@ -99,6 +146,41 @@ def _enforce_single_trailing_emoji(text: str) -> str:
 
     emoji = found[0] if found else random.choice(FALLBACK_EMOJI)
     return f"{stripped} {emoji}"
+
+
+def _trim_to_chars(text: str, limit: int) -> str:
+    """Hard-trims to `limit` characters, backing up to the last whitespace
+    so it doesn't cut off mid-word. Last-resort safety net -- the prompt
+    already asks for this, this just guarantees it."""
+    text = text or ""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    if " " in cut:
+        cut = cut[: cut.rfind(" ")]
+    return cut.rstrip()
+
+
+def _assemble_posting_caption(body: str, hashtags: list) -> str:
+    """Joins the caption body with its hashtag(s) and guarantees the result
+    fits POSTING_CAPTION_MAX_CHARS and carries exactly POSTING_HASHTAG_COUNT
+    hashtags -- regardless of what the model actually returned -- so the
+    same caption is always safe to post unedited on every platform."""
+    body = (body or "").strip()
+    tags = [h.strip() for h in (hashtags or []) if h and h.strip()][:POSTING_HASHTAG_COUNT]
+    if len(tags) < POSTING_HASHTAG_COUNT:
+        tags.append("#WokeVision")
+    tags = tags[:POSTING_HASHTAG_COUNT]
+    tag_str = " ".join(tags)
+
+    separator = "\n\n"
+    budget = POSTING_CAPTION_MAX_CHARS - len(separator) - len(tag_str)
+    if budget < 0:
+        # The hashtag alone blows the budget (shouldn't happen at normal
+        # lengths) -- there's nothing sensible left to show but the tag.
+        return tag_str[:POSTING_CAPTION_MAX_CHARS]
+    body = _trim_to_chars(body, budget)
+    return f"{body}{separator}{tag_str}".strip()
 
 
 def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
@@ -148,9 +230,7 @@ def generate_captions(transcript: str, meta: dict) -> tuple:
     try:
         data = _call_openai(COMBINED_SYSTEM, _build_context(transcript, meta))
         on_screen = _enforce_single_trailing_emoji((data.get("on_screen") or "").strip() or title)
-        body = (data.get("caption") or "").strip()
-        hashtags = " ".join(h for h in data.get("hashtags", []) if h)
-        posting = f"{body}\n\n{hashtags}".strip() or fallback_posting
+        posting = _assemble_posting_caption(data.get("caption"), data.get("hashtags")) or fallback_posting
         return on_screen, posting
     except Exception as e:
         print(f"CAPTION GEN FAILED: {e}", flush=True)
@@ -193,9 +273,7 @@ def generate_posting_caption(transcript: str, meta: dict, on_screen_caption: str
 
     try:
         data = _call_openai(POSTING_SYSTEM, _build_context(transcript, meta, note))
-        body = (data.get("caption") or "").strip()
-        hashtags = " ".join(h for h in data.get("hashtags", []) if h)
-        return f"{body}\n\n{hashtags}".strip() or fallback
+        return _assemble_posting_caption(data.get("caption"), data.get("hashtags")) or fallback
     except Exception as e:
         print(f"POSTING CAPTION GEN FAILED: {e}", flush=True)
         return fallback

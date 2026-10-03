@@ -231,7 +231,23 @@ def build_caption_image(caption_text):
     return path, VIDEO_W, canvas_h
 
 
-def render_video(source_path: str, caption_text: str, output_path: str):
+def _probe_duration(path: str):
+    """Source video duration in seconds, used to turn ffmpeg's raw
+    out_time_ms progress updates into a fraction complete. Returns None if
+    ffprobe can't determine it (progress then just can't be computed, same
+    as not passing progress_cb at all)."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, text=True, timeout=30,
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return None
+
+
+def render_video(source_path: str, caption_text: str, output_path: str, progress_cb=None):
     logo_path = os.path.join(ASSET_DIR, "logo.png")
     watermark_path = os.path.join(ASSET_DIR, "watermark.png")
     have_logo = os.path.exists(logo_path)
@@ -284,6 +300,7 @@ def render_video(source_path: str, caption_text: str, output_path: str):
     next_input_index += 1
 
     filter_complex = "".join(filters)
+    duration = _probe_duration(source_path) if progress_cb else None
 
     cmd = [
         "ffmpeg", "-y",
@@ -295,16 +312,38 @@ def render_video(source_path: str, caption_text: str, output_path: str):
         "-c:a", "aac",
         "-movflags", "+faststart",
         "-shortest",
+        "-nostats", "-progress", "pipe:1",
         output_path,
     ]
 
     print("FFMPEG COMMAND:", " ".join(cmd), flush=True)
-    result = subprocess.run(cmd, capture_output=True)
-    stderr_text = result.stderr.decode(errors="ignore")
+
+    # Run with -progress pipe:1, which emits clean "key=value" lines (rather
+    # than the human-readable stats line meant for a terminal) -- this is
+    # what lets us report real render progress instead of a guess.
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    log_lines = []
+    for line in proc.stdout:
+        line = line.strip()
+        log_lines.append(line)
+        if progress_cb and duration and "=" in line:
+            key, _, value = line.partition("=")
+            if key == "out_time_ms":
+                try:
+                    progress_cb(min(int(value) / 1_000_000 / duration, 1.0))
+                except ValueError:
+                    pass
+            elif key == "progress" and value == "end":
+                progress_cb(1.0)
+    proc.wait()
+    stderr_text = "\n".join(log_lines)
     print("FFMPEG STDERR:", stderr_text, flush=True)
 
     if os.path.exists(caption_img_path):
         os.remove(caption_img_path)
 
-    if result.returncode != 0:
+    if proc.returncode != 0:
         raise RuntimeError(stderr_text[-4000:])

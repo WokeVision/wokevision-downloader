@@ -22,7 +22,7 @@ def _writable_cookies():
     return None
 
 
-def _attempt_ytdlp(url, raw_path, opts_extra):
+def _attempt_ytdlp(url, raw_path, opts_extra, progress_cb=None):
     ydl_opts = {
         "outtmpl": raw_path,
         "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best",
@@ -31,6 +31,16 @@ def _attempt_ytdlp(url, raw_path, opts_extra):
         "noplaylist": True,
         "noprogress": True,
     }
+    if progress_cb:
+        def _hook(d):
+            if d.get("status") == "downloading":
+                total = d.get("total_bytes") or d.get("total_bytes_estimate")
+                downloaded = d.get("downloaded_bytes")
+                if total and downloaded:
+                    progress_cb(min(downloaded / total, 1.0))
+            elif d.get("status") == "finished":
+                progress_cb(1.0)
+        ydl_opts["progress_hooks"] = [_hook]
     ydl_opts.update(opts_extra)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -76,12 +86,17 @@ def _finish(raw_path: str, final_path: str):
         raise DownloadError("ffmpeg finished but no output file was produced")
 
 
-def download_video(url: str, final_path: str) -> dict:
+def download_video(url: str, final_path: str, progress_cb=None) -> dict:
     """Downloads `url` to `final_path` as a faststart mp4. Returns a metadata
     dict with 'title', 'description' and 'method' (whichever attempt
     succeeded). Tries several independent strategies in order -- YouTube in
     particular changes its anti-bot defenses often enough that no single
-    approach can be trusted to "always work"."""
+    approach can be trusted to "always work".
+
+    progress_cb, if given, is called with a float in [0, 1] as bytes come in
+    -- real download progress, not a simulated estimate. It may be called
+    several times across different fallback attempts if earlier ones fail
+    partway through."""
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     raw_path = final_path + ".raw.mp4"
     cookies = _writable_cookies()
@@ -113,7 +128,7 @@ def download_video(url: str, final_path: str) -> dict:
         try:
             if os.path.exists(raw_path):
                 os.remove(raw_path)
-            info = _attempt_ytdlp(url, raw_path, extra)
+            info = _attempt_ytdlp(url, raw_path, extra, progress_cb=progress_cb)
             if os.path.exists(raw_path):
                 _finish(raw_path, final_path)
                 return {

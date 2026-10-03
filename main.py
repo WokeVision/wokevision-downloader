@@ -6,7 +6,7 @@ import threading
 import traceback
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
-from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -15,6 +15,7 @@ from transcribe import transcribe_audio
 from caption import generate_captions, generate_on_screen_caption, generate_posting_caption
 from render import render_video
 import db
+import auth
 from platforms import instagram, threads, youtube, x, tiktok
 
 app = FastAPI()
@@ -29,6 +30,34 @@ def _startup():
         db.init_db()
     except Exception as e:
         print(f"DB INIT FAILED (platform connections will be unavailable): {e}", flush=True)
+
+
+# --- Access control: everything behind a passkey, except what genuinely has
+# to stay open (the login page itself, the auth ceremony endpoints, server-
+# to-server video fetches from the platform APIs, TikTok's domain
+# verification file, and the health check). Without PUBLIC_PATHS, a
+# half-configured deploy (missing SETUP_CODE/SESSION_SECRET) would lock
+# everyone out including the owner, so auth.configured() gates the whole
+# thing -- if it's not set up yet, the app behaves exactly as before.
+PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/")
+PUBLIC_PATHS = {"/login", "/health", "/tiktokf2TEyaKWItLVEN7IU6Sr0Fyd4eBclual.txt"}
+
+
+@app.middleware("http")
+async def _require_passkey_session(request: Request, call_next):
+    if not auth.configured():
+        return await call_next(request)
+    path = request.url.path
+    if path in PUBLIC_PATHS or any(path.startswith(p) for p in PUBLIC_PATH_PREFIXES):
+        return await call_next(request)
+
+    token = request.cookies.get(auth.SESSION_COOKIE)
+    if auth.verify_session_token(token):
+        return await call_next(request)
+
+    if request.method == "GET" and "text/html" in (request.headers.get("accept") or ""):
+        return RedirectResponse(url="/login")
+    return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
 
 
 # Platforms that are wired up for real vs. still placeholders in the UI.
@@ -180,11 +209,14 @@ def _estimate_eta_seconds(job: dict) -> float:
     return round(time_left_in_stage + time_left_future_stages)
 
 
-# How long a finished job's source/output files stick around on disk, so the
-# "change caption" buttons can re-render or re-write a caption without the
-# user having to re-download or re-upload anything. Matches the existing
-# output-file cleanup window.
-KEEP_ALIVE_SECONDS = 1200
+# How long a finished job's source/output files stick around on local disk,
+# so the "change caption" buttons -- and now History -- can re-render, or
+# play back an old video preview, without the user having to re-download or
+# re-upload anything. This is local ephemeral disk, not persistent storage:
+# a restart/redeploy wipes it regardless of this number. History's captions
+# and publish results live in the database and survive forever either way;
+# only the video preview itself depends on this window.
+KEEP_ALIVE_SECONDS = 24 * 60 * 60
 
 
 def _set_job(job_id, **fields):
@@ -233,6 +265,29 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
     }
 
 
+def _save_history(job_id: str, meta: dict, on_screen_caption: str, posting_caption: str, transcript: str = ""):
+    """Records this render as a history entry the editor can click back to
+    later. Best-effort -- a history-save failure should never take down the
+    actual video pipeline, so this only ever logs. The source file isn't
+    guaranteed to still exist by the time this is read back (see
+    KEEP_ALIVE_SECONDS) -- /history/{id} reports that at read time rather
+    than assuming it here."""
+    try:
+        title = (meta or {}).get("title") or on_screen_caption or "Untitled"
+        db.save_history_entry(
+            entry_id=job_id,
+            title=title[:200],
+            video_filename=f"{job_id}_final.mp4",
+            source_filename=f"{job_id}_source.mp4",
+            on_screen_caption=on_screen_caption,
+            posting_caption=posting_caption,
+            transcript=transcript or "",
+            meta=meta or {},
+        )
+    except Exception as e:
+        print(f"HISTORY SAVE FAILED ({job_id}): {e}", flush=True)
+
+
 def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
     """Shared steps once a source video is on disk, regardless of whether it
     got there via download or direct upload: transcribe -> caption -> render
@@ -274,6 +329,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
             posting_caption=posting_caption,
             result=_result_for(job_id, meta, on_screen_caption, posting_caption),
         )
+        _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
     except Exception as e:
         tb = traceback.format_exc()
         print("PIPELINE FAILED:", tb, flush=True)
@@ -332,6 +388,7 @@ def _run_regenerate_video(job_id: str):
             posting_caption=posting_caption,
             result=_result_for(job_id, meta, on_screen_caption, posting_caption),
         )
+        _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
     except Exception as e:
         tb = traceback.format_exc()
         print("REGENERATE VIDEO FAILED:", tb, flush=True)
@@ -359,6 +416,10 @@ def _run_regenerate_caption(job_id: str):
             posting_caption=posting_caption,
             result=_result_for(job_id, meta, on_screen_caption, posting_caption),
         )
+        try:
+            db.update_history_caption(job_id, posting_caption=posting_caption)
+        except Exception as e:
+            print(f"HISTORY UPDATE FAILED ({job_id}): {e}", flush=True)
     except Exception as e:
         tb = traceback.format_exc()
         print("REGENERATE CAPTION FAILED:", tb, flush=True)
@@ -391,6 +452,77 @@ def _run_download_then_pipeline(job_id: str, url: str, final_source_path: str):
 @app.get("/")
 def index():
     return FileResponse("static/index.html")
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse("static/login.html")
+
+
+class PasskeyRegisterStart(BaseModel):
+    setup_code: str
+
+
+class PasskeyRegisterFinish(BaseModel):
+    token: str
+    setup_code: str
+    credential: dict
+
+
+class PasskeyLoginFinish(BaseModel):
+    token: str
+    credential: dict
+
+
+@app.post("/auth/register/options")
+def auth_register_options(req: PasskeyRegisterStart):
+    try:
+        return auth.start_registration(req.setup_code)
+    except auth.AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/auth/register/verify")
+def auth_register_verify(req: PasskeyRegisterFinish):
+    try:
+        auth.finish_registration(req.token, req.setup_code, req.credential)
+    except auth.AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(
+        auth.SESSION_COOKIE, auth.make_session_token(),
+        max_age=auth.SESSION_TTL_SECONDS, httponly=True, secure=True, samesite="lax",
+    )
+    return resp
+
+
+@app.post("/auth/login/options")
+def auth_login_options():
+    try:
+        return auth.start_login()
+    except auth.AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/auth/login/verify")
+def auth_login_verify(req: PasskeyLoginFinish):
+    try:
+        session_token = auth.finish_login(req.token, req.credential)
+    except auth.AuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(
+        auth.SESSION_COOKIE, session_token,
+        max_age=auth.SESSION_TTL_SECONDS, httponly=True, secure=True, samesite="lax",
+    )
+    return resp
+
+
+@app.post("/auth/logout")
+def auth_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.SESSION_COOKIE)
+    return resp
 
 
 @app.get("/health")
@@ -588,11 +720,12 @@ class PublishRequest(BaseModel):
     platforms: list[str]
 
 
-def _run_publish(publish_job_id: str, platforms: list, video_url: str, caption: str):
+def _run_publish(publish_job_id: str, history_id: str, platforms: list, video_url: str, caption: str):
     """Runs one publish_video() call per platform, each in its own thread,
     so a slow platform (or one that's genuinely stuck) never blocks the
     others -- and the job's per-platform results are visible to a poller
     as soon as each one finishes, rather than all-at-once at the end."""
+    import datetime
     def _do(platform):
         module = PLATFORM_MODULES.get(platform)
         if not module:
@@ -606,6 +739,12 @@ def _run_publish(publish_job_id: str, platforms: list, video_url: str, caption: 
                 result = {"status": "done", "ok": False, "error": str(e)}
         with JOBS_LOCK:
             PUBLISH_JOBS[publish_job_id]["results"][platform] = result
+        try:
+            db.update_history_publish_results(history_id, {
+                platform: {**result, "at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+            })
+        except Exception as e:
+            print(f"HISTORY PUBLISH-RESULT SAVE FAILED ({history_id}/{platform}): {e}", flush=True)
 
     workers = [threading.Thread(target=_do, args=(p,), daemon=True) for p in platforms]
     for t in workers:
@@ -636,7 +775,7 @@ def publish(req: PublishRequest):
             "results": {platform: {"status": "pending"} for platform in req.platforms},
         }
     threading.Thread(
-        target=_run_publish, args=(publish_job_id, req.platforms, video_url, caption), daemon=True
+        target=_run_publish, args=(publish_job_id, req.job_id, req.platforms, video_url, caption), daemon=True
     ).start()
     return {"publish_job_id": publish_job_id}
 
@@ -648,6 +787,82 @@ def get_publish_job(publish_job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Unknown publish job id")
     return job
+
+
+# --- History: every past edit, clickable back into the editor --------------
+
+@app.get("/history")
+def list_history():
+    entries = db.list_history()
+    out = []
+    for e in entries:
+        out.append({
+            "id": str(e["id"]),
+            "created_at": e["created_at"].isoformat() if e.get("created_at") else None,
+            "title": e.get("title"),
+            "on_screen_caption": e.get("on_screen_caption"),
+            "video_available": bool(e.get("video_filename")) and os.path.exists(os.path.join(DOWNLOAD_DIR, e["video_filename"])),
+            "publish_results": e.get("publish_results") or {},
+        })
+    return {"history": out}
+
+
+@app.get("/history/{entry_id}")
+def get_history(entry_id: str):
+    e = db.get_history_entry(entry_id)
+    if not e:
+        raise HTTPException(status_code=404, detail="Unknown history entry")
+    video_path = os.path.join(DOWNLOAD_DIR, e["video_filename"]) if e.get("video_filename") else None
+    source_path = os.path.join(DOWNLOAD_DIR, e["source_filename"]) if e.get("source_filename") else None
+    video_available = bool(video_path and os.path.exists(video_path))
+    source_available = bool(source_path and os.path.exists(source_path))
+    base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    return {
+        "id": str(e["id"]),
+        "created_at": e["created_at"].isoformat() if e.get("created_at") else None,
+        "title": e.get("title"),
+        "on_screen_caption": e.get("on_screen_caption"),
+        "posting_caption": e.get("posting_caption"),
+        "video_available": video_available,
+        "source_available": source_available,
+        "video_url": f"{base_url}/files/{e['video_filename']}" if video_available else None,
+        "publish_results": e.get("publish_results") or {},
+    }
+
+
+@app.post("/history/{entry_id}/reopen")
+def reopen_history(entry_id: str):
+    """Re-seeds JOBS[entry_id] from the stored history row (if it isn't
+    already an active in-memory job -- e.g. after a server restart), so the
+    existing /jobs, /publish, and regenerate-* routes all work against a
+    history entry exactly as they would against a freshly-processed one."""
+    with JOBS_LOCK:
+        already_loaded = entry_id in JOBS
+    if already_loaded:
+        return {"ok": True}
+
+    e = db.get_history_entry(entry_id)
+    if not e:
+        raise HTTPException(status_code=404, detail="Unknown history entry")
+
+    source_path = os.path.join(DOWNLOAD_DIR, e["source_filename"]) if e.get("source_filename") else None
+    if not source_path or not os.path.exists(source_path):
+        source_path = None
+
+    meta = e.get("meta") or {}
+    on_screen_caption = e.get("on_screen_caption") or ""
+    posting_caption = e.get("posting_caption") or ""
+    with JOBS_LOCK:
+        JOBS[entry_id] = {
+            "stage": "done", "stage_label": "Done", "progress": 1.0, "status": "done", "eta_seconds": 0,
+            "transcript": e.get("transcript") or "",
+            "meta": meta,
+            "source_path": source_path,
+            "on_screen_caption": on_screen_caption,
+            "posting_caption": posting_caption,
+            "result": _result_for(entry_id, meta, on_screen_caption, posting_caption),
+        }
+    return {"ok": True}
 
 
 # Serves the submission page's own static assets, if any are added later

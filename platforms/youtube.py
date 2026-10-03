@@ -242,6 +242,20 @@ def publish_video(video_url: str, caption: str) -> dict:
         source_resp.close()
         raise YouTubeError("YouTube didn't return an upload session URL.")
 
+    # `requests` can't determine the length of a raw urllib3 socket stream
+    # on its own (it has no __len__/len/fileno it can use), so passing
+    # source_resp.raw straight through as `data=` makes requests fall back
+    # to adding "Transfer-Encoding: chunked" -- IN ADDITION to the
+    # Content-Length we set explicitly below, since prepare_body() never
+    # removes a caller-supplied header. Having both on the same request is
+    # invalid HTTP, and Google's frontend rejects it outright with a
+    # generic "Error 400 (Bad Request)!!1" HTML page -- not a YouTube API
+    # error at all, which is why it happens on every upload regardless of
+    # video size. Giving the raw stream an explicit `.len` lets requests'
+    # super_len() succeed, so it sends a normal Content-Length request
+    # instead of switching to chunked.
+    source_resp.raw.len = int(content_length)
+
     upload_resp = requests.put(
         upload_session_url,
         data=source_resp.raw,

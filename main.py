@@ -602,6 +602,7 @@ def _run_publish(publish_job_id: str, platforms: list, video_url: str, caption: 
                 outcome = module.publish_video(video_url, caption)
                 result = {"status": "done", "ok": True, **outcome}
             except Exception as e:
+                print(f"PUBLISH FAILED ({platform}): {e}", flush=True)
                 result = {"status": "done", "ok": False, "error": str(e)}
         with JOBS_LOCK:
             PUBLISH_JOBS[publish_job_id]["results"][platform] = result

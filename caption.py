@@ -45,11 +45,14 @@ punctuation between the last word and the emoji (e.g. "Libs are shaking \
 #   - POSTING_CAPTION_MAX_CHARS: X/Twitter's standard (non-Premium) post
 #     limit, 280 characters -- by far the shortest of the lot (Threads 500,
 #     Instagram/TikTok ~2,200, YouTube ~5,000).
-#   - POSTING_HASHTAG_COUNT: Threads caps a post at exactly ONE topic
-#     tag/hashtag -- every other platform allows more, so one tag is the
-#     largest count that still fits everywhere without editing.
+#   - POSTING_HASHTAG_COUNT: 5. Threads' "one topic tag" limit only applies
+#     to its special clickable topic-tag feature -- plain #hashtag text
+#     written directly in a post's body (which is what this app posts) is
+#     not limited to one there, and Instagram/X/TikTok/YouTube all allow
+#     5+ comfortably, so 5 is the count that matches how these posts have
+#     actually been used (e.g. cross-posted from Instagram to Threads).
 POSTING_CAPTION_MAX_CHARS = int(os.environ.get("POSTING_CAPTION_MAX_CHARS", "280"))
-POSTING_HASHTAG_COUNT = int(os.environ.get("POSTING_HASHTAG_COUNT", "1"))
+POSTING_HASHTAG_COUNT = int(os.environ.get("POSTING_HASHTAG_COUNT", "5"))
 
 # The explicit copywriter brief for the posting caption specifically --
 # separate from BRAND_VOICE (used for the on-screen hook) because this is
@@ -81,9 +84,9 @@ this person at all costs.", "I wouldn't want to get into it with them." \
 That line is immediately followed by exactly ONE emoji that amplifies it \
 -- the very last character, no punctuation between the line and the emoji.
 
-Include exactly {POSTING_HASHTAG_COUNT} hashtag. (Threads allows only one \
-topic tag per post -- one hashtag is the most that still works, unedited, \
-on every platform this goes out to.)
+Include exactly {POSTING_HASHTAG_COUNT} hashtags, each a separate \
+#WokeVision-style tag relevant to the content -- this count works unedited \
+on every platform this goes out to.
 
 The ENTIRE caption -- body, the question/statement line, and the hashtag \
 all included -- must fit within {POSTING_CAPTION_MAX_CHARS} characters \
@@ -168,8 +171,16 @@ def _assemble_posting_caption(body: str, hashtags: list) -> str:
     same caption is always safe to post unedited on every platform."""
     body = (body or "").strip()
     tags = [h.strip() for h in (hashtags or []) if h and h.strip()][:POSTING_HASHTAG_COUNT]
-    if len(tags) < POSTING_HASHTAG_COUNT:
-        tags.append("#WokeVision")
+    # Pad with generic fallback tags (never a duplicate) until there are
+    # exactly POSTING_HASHTAG_COUNT, regardless of how many the model
+    # returned -- a single fallback tag used to only ever fill one slot.
+    fallback_pool = ["#WokeVision", "#Politics", "#News", "#Viral", "#Trending", "#FYP"]
+    fallback_iter = iter(t for t in fallback_pool if t not in tags)
+    while len(tags) < POSTING_HASHTAG_COUNT:
+        try:
+            tags.append(next(fallback_iter))
+        except StopIteration:
+            tags.append("#WokeVision")
     tags = tags[:POSTING_HASHTAG_COUNT]
     tag_str = " ".join(tags)
 

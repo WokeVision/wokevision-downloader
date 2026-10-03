@@ -244,7 +244,7 @@
     margin-top: 10px;
   }
 
-  #result, #publishToCard { display: none; }
+  #result { display: none; }
 
   video {
     width: 100%;
@@ -505,26 +505,16 @@
     </div>
   </div>
 
-  <!-- Platforms always sit at the bottom of whatever's currently showing --
-       connecting/checking status and actually publishing are both things
-       done last, right before or at upload time, once the video and
-       captions are already sorted. The status card (platformStatusCard)
-       stays visible regardless of job state, since fixing a dropped
-       connection is useful any time -- only the publish-to toggles
-       (publishToCard) need an actual finished video to make sense, so that
-       one is hidden/shown together with #result above. -->
-  <div class="card" id="platformStatusCard">
+  <!-- Platforms: one single, permanent section -- always on screen (not
+       tied to whether a video has finished processing), always showing
+       every platform immediately (no empty/loading flash while
+       /connections resolves -- see PLATFORM_PLACEHOLDERS below), with
+       live connection status, Connect/Reconnect links, the per-upload
+       toggles and the Upload button all in the same place. -->
+  <div class="card" id="platformsCard">
     <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Platforms</h3>
     <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
-      Live connection status -- tap Connect/Reconnect to fix one.
-    </p>
-    <div id="platformStatusList"></div>
-  </div>
-
-  <div class="card" id="publishToCard">
-    <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Publish to</h3>
-    <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
-      Toggle on whichever platforms this video should go out to, then upload.
+      Toggle on whichever platforms this video should go out to, then upload. Tap Connect/Reconnect to fix a dropped connection.
     </p>
     <div id="platformList"></div>
     <button class="primary" id="uploadToPlatformsBtn" type="button">Upload</button>
@@ -536,7 +526,6 @@
 <script>
   const statusCard = document.getElementById("statusCard");
   const resultEl = document.getElementById("result");
-  const publishToCard = document.getElementById("publishToCard");
   const progressFill = document.getElementById("progressFill");
   const stageLabel = document.getElementById("stageLabel");
   const etaLabel = document.getElementById("etaLabel");
@@ -583,7 +572,6 @@
 
   function resetUI() {
     resultEl.style.display = "none";
-    publishToCard.style.display = "none";
     errorBox.style.display = "none";
     statusCard.classList.add("active");
     progressFill.style.width = "0%";
@@ -604,7 +592,6 @@
     document.getElementById("captionBox").value = data.caption || "";
     updateCaptionCharCount();
     resultEl.style.display = "block";
-    publishToCard.style.display = "block";
   }
 
   // Posting caption is user-editable, so show a live character count
@@ -782,10 +769,9 @@
     }
   });
 
-  // --- Publish to: platform connections, toggles, status lights --------
+  // --- Platforms: single permanent section, connections + toggles -------
 
   const platformList = document.getElementById("platformList");
-  const platformStatusList = document.getElementById("platformStatusList");
   const uploadToPlatformsBtn = document.getElementById("uploadToPlatformsBtn");
   const publishResults = document.getElementById("publishResults");
   const connectBanner = document.getElementById("connectBanner");
@@ -795,15 +781,26 @@
   // the user's selection.
   const toggledOn = new Set();
 
-  // Renders the connections list into a given container. `withToggles`
-  // controls whether a working connection gets an Apple-style "include in
-  // this upload" switch (used in the per-video "Publish to" card, which
-  // only makes sense once a video exists) or is just shown as connected
-  // with no control (used in the always-visible top-of-page status card).
-  // Either way, a platform that isn't connected (or has gone unhealthy)
-  // always gets a Connect/Reconnect link, since fixing that is useful
-  // whether or not a video is currently loaded.
-  function renderPlatformList(container, connections, withToggles) {
+  // Shown immediately on page load, before the first /connections fetch
+  // resolves, so the Platforms section never shows an empty/loading state
+  // -- it just shows "Checking..." for each platform and then fills in
+  // real status a moment later. Mirrors PLATFORM_ORDER/PLATFORM_LABELS in
+  // main.py; harmless if a platform gets added there without updating this
+  // (it'll just be missing from the placeholder frame for one refresh).
+  const PLATFORM_PLACEHOLDERS = [
+    { platform: "instagram", label: "Instagram" },
+    { platform: "threads", label: "Threads" },
+    { platform: "youtube", label: "YouTube Shorts" },
+    { platform: "tiktok", label: "TikTok" },
+    { platform: "x", label: "X" },
+  ].map((p) => ({ ...p, checking: true, available: true, connected: false, ok: false, status_label: "Checking..." }));
+
+  // Renders the connections list, with an Apple-style "include in this
+  // upload" toggle on every working connection. A platform that isn't
+  // connected (or has gone unhealthy) gets a Connect/Reconnect link
+  // instead. `checking: true` rows (the placeholder frame, before the
+  // first real fetch resolves) get neither -- just a neutral status line.
+  function renderPlatformList(container, connections) {
     container.innerHTML = "";
     connections.forEach((c) => {
       const row = document.createElement("div");
@@ -826,7 +823,10 @@
       row.appendChild(dot);
       row.appendChild(info);
 
-      if (c.available && c.ok && withToggles) {
+      if (c.checking) {
+        // Still waiting on the first real /connections response -- no
+        // control to show yet, just the "Checking..." label above.
+      } else if (c.available && c.ok) {
         // Working connection -> Apple-style toggle for "include in this upload".
         const label = document.createElement("label");
         label.className = "switch";
@@ -843,8 +843,7 @@
         label.appendChild(track);
         row.appendChild(label);
       } else if (c.available && !c.ok) {
-        // Not connected (or connection errored) -> a Connect/Reconnect
-        // link, shown in both the status card and the publish card.
+        // Not connected (or connection errored) -> a Connect/Reconnect link.
         const btn = document.createElement("button");
         btn.className = "connectLink";
         btn.type = "button";
@@ -853,10 +852,9 @@
           window.location.href = `/connections/${c.platform}/start`;
         });
         row.appendChild(btn);
-        if (withToggles) toggledOn.delete(c.platform);
-      } else if (withToggles) {
-        // Not built yet (YouTube/TikTok/X, for now) -- only relevant to
-        // the toggle list.
+        toggledOn.delete(c.platform);
+      } else {
+        // Not built yet.
         toggledOn.delete(c.platform);
       }
 
@@ -864,23 +862,24 @@
     });
   }
 
+  // Render the placeholder frame immediately, before the first fetch even
+  // starts, so there's never an empty or "loading" moment.
+  renderPlatformList(platformList, PLATFORM_PLACEHOLDERS);
+
   async function loadConnections() {
     try {
       const resp = await fetch("/connections");
       const data = await resp.json();
       const connections = data.connections || [];
-      renderPlatformList(platformStatusList, connections, false);
-      renderPlatformList(platformList, connections, true);
+      renderPlatformList(platformList, connections);
     } catch (err) {
-      const msg = '<p class="note">Couldn\'t load platform connections.</p>';
-      platformStatusList.innerHTML = msg;
-      platformList.innerHTML = msg;
+      platformList.innerHTML = '<p class="note">Couldn\'t load platform connections.</p>';
     }
   }
 
-  // Keep the always-visible status card fresh on its own, independent of
-  // anything video-related -- a connection can drop (expired token, etc.)
-  // while the page just sits open.
+  // Keep the Platforms section fresh on its own, independent of anything
+  // video-related -- a connection can drop (expired token, etc.) while the
+  // page just sits open.
   setInterval(loadConnections, 60000);
 
   // Renders the current state of a publish job's per-platform results --
@@ -920,7 +919,10 @@
   }
 
   uploadToPlatformsBtn.addEventListener("click", async () => {
-    if (!currentJobId) return;
+    if (!currentJobId) {
+      alert("Process a video first, then come back here to publish it.");
+      return;
+    }
     const platforms = Array.from(toggledOn);
     if (platforms.length === 0) {
       alert("Toggle on at least one platform first.");

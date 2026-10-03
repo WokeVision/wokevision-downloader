@@ -2,361 +2,641 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>WokeVision Video Editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0A0A0C" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="icon" href="/static/assets/logo-mark.png" />
+<link rel="apple-touch-icon" href="/static/assets/logo-mark.png" />
+<title>WokeVision Editor</title>
 <style>
-  :root { color-scheme: light dark; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 560px;
-    margin: 48px auto;
-    padding: 0 20px;
-    color: #111;
-    background: #fff;
+  :root {
+    color-scheme: dark;
+    --bg: #0A0A0C;
+    --surface: rgba(255, 255, 255, 0.055);
+    --surface-strong: rgba(255, 255, 255, 0.09);
+    --border: rgba(255, 255, 255, 0.10);
+    --text: #F5F5F7;
+    --text-dim: rgba(245, 245, 247, 0.56);
+    --text-faint: rgba(245, 245, 247, 0.34);
+    --accent: #FF2B3C;
+    --accent-dim: rgba(255, 43, 60, 0.16);
+    --radius-lg: 20px;
+    --radius-md: 14px;
+    --radius-sm: 10px;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
   }
-  h1 { font-size: 22px; margin-bottom: 4px; }
-  p.sub { color: #666; margin-top: 0; margin-bottom: 28px; font-size: 14px; }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    padding: calc(28px + var(--safe-top)) 18px calc(48px + var(--safe-bottom));
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(255, 43, 60, 0.10), transparent 55%),
+      var(--bg);
+  }
+
+  .page {
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  /* Wider layouts (iPad) get a roomier two-column caption area and a
+     slightly wider shell -- same component styles throughout, just more
+     breathing room and a side-by-side split where it helps. */
+  @media (min-width: 760px) {
+    .page { max-width: 680px; }
+    .captionGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  }
+
+  header.brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 26px;
+  }
+  header.brand img {
+    width: 42px;
+    height: 42px;
+    border-radius: 11px;
+    display: block;
+  }
+  header.brand .wordmark {
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  header.brand .wordmark .accent { color: var(--accent); }
+  header.brand .tagline {
+    font-size: 12.5px;
+    color: var(--text-faint);
+    margin-top: 1px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px;
+    margin-bottom: 14px;
+    backdrop-filter: blur(20px);
+  }
+
+  .segmented {
+    display: flex;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-md);
+    padding: 3px;
+    margin-bottom: 16px;
+    gap: 3px;
+  }
+  .segmented button {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 9px 0;
+    border-radius: calc(var(--radius-md) - 3px);
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+  .segmented button.active {
+    background: var(--surface-strong);
+    color: var(--text);
+  }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  label.fieldLabel {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+  }
+
   input[type="text"] {
     width: 100%;
-    box-sizing: border-box;
-    padding: 12px 14px;
-    font-size: 15px;
-    border: 1px solid #ccc;
-    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    padding: 14px 14px;
+    font-size: 16px;
+    outline: none;
+    transition: border-color 0.15s ease;
   }
-  button {
-    margin-top: 12px;
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"]::placeholder { color: var(--text-faint); }
+
+  .fileDrop {
     width: 100%;
-    padding: 12px;
-    font-size: 15px;
-    font-weight: 600;
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius-md);
+    padding: 22px 14px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 14px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .fileDrop:active { background: rgba(255, 255, 255, 0.04); }
+  .fileDrop.hasFile { border-color: var(--accent); color: var(--text); }
+  .fileDrop input[type="file"] { display: none; }
+  .fileDrop .icon { font-size: 22px; display: block; margin-bottom: 6px; }
+
+  button.primary {
+    width: 100%;
+    margin-top: 14px;
+    padding: 15px;
+    font-size: 16px;
+    font-weight: 700;
     border: none;
-    border-radius: 8px;
-    background: #111;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
     color: #fff;
     cursor: pointer;
+    letter-spacing: -0.01em;
+    transition: transform 0.08s ease, opacity 0.15s ease;
   }
-  button:disabled { background: #999; cursor: not-allowed; }
-  #status { margin-top: 16px; font-size: 14px; color: #444; white-space: pre-wrap; }
-  #result { margin-top: 24px; display: none; }
-  video { width: 100%; max-width: 320px; border-radius: 10px; display: block; margin-bottom: 16px; }
-  textarea {
-    width: 100%;
-    box-sizing: border-box;
-    min-height: 110px;
-    padding: 10px;
-    font-size: 14px;
-    border: 1px solid #ccc;
-    border-radius: 8px;
-    font-family: inherit;
+  button.primary:active { transform: scale(0.98); }
+  button.primary:disabled { background: rgba(255, 255, 255, 0.12); color: var(--text-faint); cursor: not-allowed; }
+
+  button.secondary {
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    font-size: 13.5px;
+    font-weight: 600;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease;
   }
-  .row { display: flex; gap: 8px; align-items: flex-start; }
-  .row textarea { flex: 1; }
-  .row button.copy { width: auto; margin-top: 0; padding: 10px 14px; }
-  a.dl { display: inline-block; margin-top: 10px; font-size: 14px; }
-  .divider { display: flex; align-items: center; gap: 12px; margin: 28px 0; color: #999; font-size: 13px; }
-  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #ddd; }
-  .note { font-size: 13px; color: #666; margin-top: 10px; line-height: 1.4; }
-  input[type="file"] { width: 100%; box-sizing: border-box; padding: 10px; border: 1px dashed #ccc; border-radius: 8px; font-size: 14px; }
+  button.secondary:active { background: rgba(255, 255, 255, 0.09); }
+  button.secondary:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  .captionBlock { margin-top: 24px; }
-  .captionBlock h3 { margin-bottom: 4px; }
-  .captionBlock p.hint { font-size: 12px; color: #888; margin-top: 0; margin-bottom: 8px; }
-  .actionRow { display: flex; gap: 8px; margin-top: 8px; }
-  .actionRow button { margin-top: 0; width: auto; padding: 10px 14px; font-size: 13px; }
-  button.secondary { background: #fff; color: #111; border: 1px solid #ccc; }
-  button.secondary:disabled { color: #999; border-color: #ddd; background: #fff; }
-  .inlineSpinner { font-size: 13px; color: #666; margin-left: 8px; display: none; }
+  .note {
+    font-size: 12.5px;
+    color: var(--text-faint);
+    line-height: 1.5;
+    margin-top: 12px;
+  }
 
-  #progressWrap { display: none; margin-top: 16px; }
+  #statusCard { display: none; }
+  #statusCard.active { display: block; }
+
+  .progressHead {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .progressHead .label { font-size: 14.5px; font-weight: 600; }
+  .progressHead .eta { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
   .progressTrack {
     width: 100%;
-    height: 8px;
-    background: #eee;
+    height: 7px;
+    background: rgba(255, 255, 255, 0.08);
     border-radius: 999px;
     overflow: hidden;
   }
   .progressFill {
     height: 100%;
     width: 0%;
-    background: #111;
+    background: linear-gradient(90deg, var(--accent), #ff6a5a);
     border-radius: 999px;
-    transition: width 0.4s ease;
+    transition: width 0.5s ease;
   }
-  .progressMeta {
+  .progressPct {
+    text-align: right;
+    font-size: 12px;
+    color: var(--text-faint);
+    margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #errorBox {
+    display: none;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: #FFB4B4;
+    background: rgba(255, 43, 60, 0.10);
+    border: 1px solid rgba(255, 43, 60, 0.28);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    white-space: pre-wrap;
+    margin-top: 10px;
+  }
+
+  #result { display: none; }
+
+  video {
+    width: 100%;
+    max-width: 280px;
+    display: block;
+    margin: 0 auto 14px;
+    border-radius: var(--radius-md);
+    background: #000;
+    border: 1px solid var(--border);
+  }
+
+  a.dl {
+    display: block;
+    text-align: center;
+    width: 100%;
+    padding: 13px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-strong);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 14.5px;
+    font-weight: 600;
+    text-decoration: none;
+    margin-bottom: 4px;
+  }
+  a.dl:active { background: rgba(255, 255, 255, 0.14); }
+
+  .captionCard h3 {
+    margin: 0 0 3px;
+    font-size: 14.5px;
+    font-weight: 700;
+  }
+  .captionCard p.hint {
+    font-size: 12px;
+    color: var(--text-faint);
+    margin: 0 0 10px;
+    line-height: 1.4;
+  }
+
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 92px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    padding: 11px 12px;
+    font-size: 14.5px;
+    line-height: 1.45;
+    font-family: inherit;
+    resize: vertical;
+  }
+
+  .actionRow {
     display: flex;
-    justify-content: space-between;
-    margin-top: 8px;
-    font-size: 13px;
-    color: #555;
+    gap: 8px;
+    margin-top: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .actionRow button { margin: 0; }
+
+  .inlineSpinner {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    display: none;
+  }
+
+  .divider-label {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 18px 0 2px;
   }
 </style>
 </head>
 <body>
-  <h1>WokeVision Video Editor</h1>
-  <p class="sub">Paste a link from YouTube, TikTok, Instagram, X or Threads.</p>
+<div class="page">
 
-  <form id="form">
-    <input type="text" id="url" placeholder="https://..." required />
-    <button type="submit" id="submitBtn">Process video</button>
-  </form>
-
-  <div class="divider">or</div>
-
-  <form id="uploadForm">
-    <input type="file" id="fileInput" accept="video/*" required />
-    <button type="submit" id="uploadBtn">Upload video file</button>
-    <p class="note">
-      Use this if a link fails to download (most common with YouTube, when
-      it's blocking this server rather than anything wrong with the link) --
-      download the video yourself and upload the file here instead.
-    </p>
-  </form>
-
-  <div id="status"></div>
-
-  <div id="progressWrap">
-    <div class="progressTrack"><div class="progressFill" id="progressFill"></div></div>
-    <div class="progressMeta">
-      <span id="stageLabel">Queued</span>
-      <span id="etaLabel"></span>
+  <header class="brand">
+    <img src="/static/assets/logo-mark.png" alt="WokeVision" />
+    <div>
+      <div class="wordmark">Woke<span class="accent">Vision</span> Editor</div>
+      <div class="tagline">Link in, finished post out.</div>
     </div>
+  </header>
+
+  <div class="card">
+    <div class="segmented">
+      <button type="button" class="segBtn active" data-panel="linkPanel">Paste a link</button>
+      <button type="button" class="segBtn" data-panel="uploadPanel">Upload a file</button>
+    </div>
+
+    <div id="linkPanel" class="panel active">
+      <form id="form">
+        <label class="fieldLabel" for="url">Video URL</label>
+        <input type="text" id="url" placeholder="https://..." required />
+        <button type="submit" id="submitBtn" class="primary">Process video</button>
+      </form>
+      <p class="note">YouTube, TikTok, Instagram, X or Threads.</p>
+    </div>
+
+    <div id="uploadPanel" class="panel">
+      <form id="uploadForm">
+        <label class="fieldLabel" for="fileInput">Video file</label>
+        <label class="fileDrop" id="fileDropLabel">
+          <span class="icon">⬆️</span>
+          <span id="fileDropText">Tap to choose a video</span>
+          <input type="file" id="fileInput" accept="video/*" required />
+        </label>
+        <button type="submit" id="uploadBtn" class="primary">Upload video file</button>
+      </form>
+      <p class="note">
+        Use this if a link fails to download (most common with YouTube, when
+        it's blocking this server rather than anything wrong with the link).
+      </p>
+    </div>
+  </div>
+
+  <div class="card" id="statusCard">
+    <div class="progressHead">
+      <span class="label" id="stageLabel">Queued</span>
+      <span class="eta" id="etaLabel"></span>
+    </div>
+    <div class="progressTrack"><div class="progressFill" id="progressFill"></div></div>
+    <div class="progressPct" id="pctLabel"></div>
+    <div id="errorBox"></div>
   </div>
 
   <div id="result">
-    <video id="preview" controls></video>
-    <a class="dl" id="downloadLink" download="wokevision.mp4">Download video</a>
-
-    <div class="captionBlock">
-      <h3>On-screen caption</h3>
-      <p class="hint">The line overlaid on the video itself, in the white space above it.</p>
-      <div class="row">
-        <textarea id="onScreenBox" readonly></textarea>
-      </div>
-      <div class="actionRow">
-        <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
-      </div>
+    <div class="card" style="text-align:center;">
+      <video id="preview" controls playsinline></video>
+      <a class="dl" id="downloadLink" download="wokevision.mp4">Download video</a>
     </div>
 
-    <div class="captionBlock">
-      <h3>Posting caption</h3>
-      <p class="hint">For the post itself -- Instagram, YouTube, X, TikTok, Threads &amp; Facebook.</p>
-      <div class="row">
-        <textarea id="captionBox" readonly></textarea>
-        <button class="copy" id="copyBtn" type="button">Copy caption</button>
+    <div class="captionGrid">
+      <div class="card captionCard">
+        <h3>On-screen caption</h3>
+        <p class="hint">The hook overlaid on the video itself, in the white space above it.</p>
+        <textarea id="onScreenBox" readonly></textarea>
+        <div class="actionRow">
+          <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
+        </div>
       </div>
-      <div class="actionRow">
-        <button class="secondary" id="changePostingCaptionBtn" type="button">Change posting caption</button>
-        <span class="inlineSpinner" id="postingCaptionSpinner">Refreshing...</span>
+
+      <div class="card captionCard">
+        <h3>Posting caption</h3>
+        <p class="hint">For the post itself -- Instagram, YouTube, X, TikTok, Threads &amp; Facebook.</p>
+        <textarea id="captionBox" readonly></textarea>
+        <div class="actionRow">
+          <button class="secondary" id="copyBtn" type="button">Copy caption</button>
+          <button class="secondary" id="changePostingCaptionBtn" type="button">Change caption</button>
+          <span class="inlineSpinner" id="postingCaptionSpinner">Refreshing...</span>
+        </div>
       </div>
     </div>
   </div>
 
-  <script>
-    const statusEl = document.getElementById("status");
-    const resultEl = document.getElementById("result");
-    const progressWrap = document.getElementById("progressWrap");
-    const progressFill = document.getElementById("progressFill");
-    const stageLabel = document.getElementById("stageLabel");
-    const etaLabel = document.getElementById("etaLabel");
+</div>
 
-    // Tracks the job currently shown in the result panel so the two
-    // "change caption" buttons know which job to act on.
-    let currentJobId = null;
+<script>
+  const statusCard = document.getElementById("statusCard");
+  const resultEl = document.getElementById("result");
+  const progressFill = document.getElementById("progressFill");
+  const stageLabel = document.getElementById("stageLabel");
+  const etaLabel = document.getElementById("etaLabel");
+  const pctLabel = document.getElementById("pctLabel");
+  const errorBox = document.getElementById("errorBox");
 
-    function resetUI() {
-      resultEl.style.display = "none";
-      statusEl.textContent = "";
-      progressWrap.style.display = "block";
-      progressFill.style.width = "0%";
-      stageLabel.textContent = "Queued";
-      etaLabel.textContent = "";
+  // Tracks the job currently shown in the result panel so the two
+  // "change caption" buttons know which job to act on.
+  let currentJobId = null;
+
+  // --- Segmented link/upload switcher -------------------------------
+  document.querySelectorAll(".segBtn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".segBtn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById(btn.dataset.panel).classList.add("active");
+    });
+  });
+
+  // --- File picker ----------------------------------------------------
+  const fileInput = document.getElementById("fileInput");
+  const fileDropLabel = document.getElementById("fileDropLabel");
+  const fileDropText = document.getElementById("fileDropText");
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files[0]) {
+      fileDropLabel.classList.add("hasFile");
+      fileDropText.textContent = fileInput.files[0].name;
+    } else {
+      fileDropLabel.classList.remove("hasFile");
+      fileDropText.textContent = "Tap to choose a video";
     }
+  });
 
-    function showResult(data, jobId) {
-      if (jobId) currentJobId = jobId;
-      progressWrap.style.display = "none";
-      statusEl.textContent = "Done.";
-      const preview = document.getElementById("preview");
-      // Cache-bust so a re-rendered video (same URL) actually reloads
-      // instead of showing the browser's cached first render.
-      preview.src = data.video_url + (data.video_url.includes("?") ? "&" : "?") + "t=" + Date.now();
-      document.getElementById("downloadLink").href = data.video_url;
-      document.getElementById("onScreenBox").value = data.on_screen_caption || "";
-      document.getElementById("captionBox").value = data.caption || "";
-      resultEl.style.display = "block";
+  function formatEta(seconds) {
+    if (seconds === null || seconds === undefined) return "Estimating...";
+    seconds = Math.max(0, Math.round(seconds));
+    if (seconds <= 2) return "Almost done";
+    if (seconds < 60) return `~${seconds}s left`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `~${mins}:${String(secs).padStart(2, "0")} left`;
+  }
+
+  function resetUI() {
+    resultEl.style.display = "none";
+    errorBox.style.display = "none";
+    statusCard.classList.add("active");
+    progressFill.style.width = "0%";
+    stageLabel.textContent = "Queued";
+    etaLabel.textContent = "";
+    pctLabel.textContent = "";
+  }
+
+  function showResult(data, jobId) {
+    if (jobId) currentJobId = jobId;
+    statusCard.classList.remove("active");
+    const preview = document.getElementById("preview");
+    // Cache-bust so a re-rendered video (same URL) actually reloads
+    // instead of showing the browser's cached first render.
+    preview.src = data.video_url + (data.video_url.includes("?") ? "&" : "?") + "t=" + Date.now();
+    document.getElementById("downloadLink").href = data.video_url;
+    document.getElementById("onScreenBox").value = data.on_screen_caption || "";
+    document.getElementById("captionBox").value = data.caption || "";
+    resultEl.style.display = "block";
+  }
+
+  function showError(message) {
+    statusCard.classList.add("active");
+    errorBox.style.display = "block";
+    errorBox.textContent = message;
+    progressFill.style.width = "0%";
+    stageLabel.textContent = "Error";
+    etaLabel.textContent = "";
+    pctLabel.textContent = "";
+  }
+
+  // Polls /jobs/{job_id} and drives the progress bar + ETA from the
+  // server's own estimate (job.eta_seconds), which blends real progress
+  // signals (actual bytes downloaded, actual ffmpeg render time) with a
+  // self-tuning average of how long each stage has actually taken on this
+  // server, so it adapts rather than quietly lowballing.
+  async function pollJob(jobId) {
+    currentJobId = jobId;
+    while (true) {
+      let job;
+      try {
+        const resp = await fetch(`/jobs/${jobId}`);
+        job = await resp.json();
+      } catch (err) {
+        showError("Lost connection while checking progress.");
+        return;
+      }
+
+      if (job.status === "error") {
+        showError(job.error || "Something went wrong.");
+        return;
+      }
+
+      if (job.status === "done") {
+        showResult(job.result, jobId);
+        return;
+      }
+
+      const pct = Math.round((job.progress || 0) * 100);
+      progressFill.style.width = pct + "%";
+      stageLabel.textContent = job.stage_label || "Working";
+      pctLabel.textContent = pct + "%";
+      etaLabel.textContent = formatEta(job.eta_seconds);
+
+      await new Promise((r) => setTimeout(r, 1200));
     }
+  }
 
-    // Polls /jobs/{job_id} and drives the progress bar from real signals:
-    // actual bytes downloaded, actual ffmpeg render time vs. source
-    // duration. Transcribing/captioning don't have a meaningful
-    // sub-progress to report, so the bar just holds at the start of their
-    // slice until they finish. The ETA is a simple elapsed-time /
-    // progress-so-far projection -- a real estimate, not a fixed countdown,
-    // so it adjusts as it goes rather than promising a number we can't back up.
-    async function pollJob(jobId) {
-      currentJobId = jobId;
-      const startedAt = Date.now();
-      while (true) {
-        let job;
-        try {
-          const resp = await fetch(`/jobs/${jobId}`);
-          job = await resp.json();
-        } catch (err) {
-          statusEl.textContent = "Error: lost connection while checking progress.";
-          progressWrap.style.display = "none";
-          return;
-        }
+  const form = document.getElementById("form");
+  const submitBtn = document.getElementById("submitBtn");
 
-        if (job.status === "error") {
-          progressWrap.style.display = "none";
-          statusEl.textContent = "Error: " + (job.error || "Something went wrong.");
-          return;
-        }
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const url = document.getElementById("url").value.trim();
+    if (!url) return;
 
-        if (job.status === "done") {
-          showResult(job.result, jobId);
-          return;
-        }
+    submitBtn.disabled = true;
+    resetUI();
 
-        const pct = Math.round((job.progress || 0) * 100);
-        progressFill.style.width = pct + "%";
-        stageLabel.textContent = (job.stage_label || "Working") + ` (${pct}%)`;
-
-        const elapsedSec = (Date.now() - startedAt) / 1000;
-        if (job.progress > 0.05) {
-          const totalEstSec = elapsedSec / job.progress;
-          const remainingSec = Math.max(0, Math.round(totalEstSec - elapsedSec));
-          etaLabel.textContent = remainingSec > 90
-            ? `~${Math.round(remainingSec / 60)} min left`
-            : `~${remainingSec}s left`;
-        } else {
-          etaLabel.textContent = "Estimating...";
-        }
-
-        await new Promise((r) => setTimeout(r, 1200));
-      }
+    try {
+      const resp = await fetch("/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+      await pollJob(data.job_id);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      submitBtn.disabled = false;
     }
+  });
 
-    const form = document.getElementById("form");
-    const submitBtn = document.getElementById("submitBtn");
+  document.getElementById("copyBtn").addEventListener("click", async () => {
+    const box = document.getElementById("captionBox");
+    try {
+      await navigator.clipboard.writeText(box.value);
+    } catch (err) {
+      box.select();
+      document.execCommand("copy");
+    }
+    const btn = document.getElementById("copyBtn");
+    const original = btn.textContent;
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  });
 
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const url = document.getElementById("url").value.trim();
-      if (!url) return;
+  // "Change video caption": regenerates the on-screen caption AND
+  // re-renders the video with it. This reuses the progress bar since a
+  // full re-render takes real time.
+  const changeVideoCaptionBtn = document.getElementById("changeVideoCaptionBtn");
+  changeVideoCaptionBtn.addEventListener("click", async () => {
+    if (!currentJobId) return;
+    changeVideoCaptionBtn.disabled = true;
+    document.getElementById("changePostingCaptionBtn").disabled = true;
+    resetUI();
+    stageLabel.textContent = "Writing new caption";
+    try {
+      const resp = await fetch(`/jobs/${currentJobId}/regenerate-video`, { method: "POST" });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+      await pollJob(data.job_id);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      changeVideoCaptionBtn.disabled = false;
+      document.getElementById("changePostingCaptionBtn").disabled = false;
+    }
+  });
 
-      submitBtn.disabled = true;
-      resetUI();
+  // "Change posting caption": text-only, no re-render, so it's quick --
+  // just a lightweight inline spinner rather than the full progress bar.
+  const changePostingCaptionBtn = document.getElementById("changePostingCaptionBtn");
+  const postingCaptionSpinner = document.getElementById("postingCaptionSpinner");
+  changePostingCaptionBtn.addEventListener("click", async () => {
+    if (!currentJobId) return;
+    changePostingCaptionBtn.disabled = true;
+    changeVideoCaptionBtn.disabled = true;
+    postingCaptionSpinner.style.display = "inline";
+    try {
+      const resp = await fetch(`/jobs/${currentJobId}/regenerate-caption`, { method: "POST" });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+      document.getElementById("captionBox").value = data.posting_caption || "";
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      changePostingCaptionBtn.disabled = false;
+      changeVideoCaptionBtn.disabled = false;
+      postingCaptionSpinner.style.display = "none";
+    }
+  });
 
-      try {
-        const resp = await fetch("/process", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
-        });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
-        await pollJob(data.job_id);
-      } catch (err) {
-        progressWrap.style.display = "none";
-        statusEl.textContent = "Error: " + err.message;
-      } finally {
-        submitBtn.disabled = false;
-      }
-    });
+  const uploadForm = document.getElementById("uploadForm");
+  const uploadBtn = document.getElementById("uploadBtn");
 
-    document.getElementById("copyBtn").addEventListener("click", async () => {
-      const box = document.getElementById("captionBox");
-      try {
-        await navigator.clipboard.writeText(box.value);
-      } catch (err) {
-        box.select();
-        document.execCommand("copy");
-      }
-      const btn = document.getElementById("copyBtn");
-      const original = btn.textContent;
-      btn.textContent = "Copied!";
-      setTimeout(() => { btn.textContent = original; }, 1500);
-    });
+  uploadForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const file = fileInput.files[0];
+    if (!file) return;
 
-    // "Change video caption": regenerates the on-screen caption AND
-    // re-renders the video with it. This reuses the progress bar since a
-    // full re-render takes real time.
-    const changeVideoCaptionBtn = document.getElementById("changeVideoCaptionBtn");
-    changeVideoCaptionBtn.addEventListener("click", async () => {
-      if (!currentJobId) return;
-      changeVideoCaptionBtn.disabled = true;
-      document.getElementById("changePostingCaptionBtn").disabled = true;
-      progressWrap.style.display = "block";
-      progressFill.style.width = "0%";
-      stageLabel.textContent = "Writing new caption";
-      etaLabel.textContent = "";
-      statusEl.textContent = "";
-      try {
-        const resp = await fetch(`/jobs/${currentJobId}/regenerate-video`, { method: "POST" });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
-        await pollJob(data.job_id);
-      } catch (err) {
-        progressWrap.style.display = "none";
-        statusEl.textContent = "Error: " + err.message;
-      } finally {
-        changeVideoCaptionBtn.disabled = false;
-        document.getElementById("changePostingCaptionBtn").disabled = false;
-      }
-    });
+    uploadBtn.disabled = true;
+    resetUI();
+    stageLabel.textContent = "Uploading";
 
-    // "Change posting caption": text-only, no re-render, so it's quick --
-    // just a lightweight inline spinner rather than the full progress bar.
-    const changePostingCaptionBtn = document.getElementById("changePostingCaptionBtn");
-    const postingCaptionSpinner = document.getElementById("postingCaptionSpinner");
-    changePostingCaptionBtn.addEventListener("click", async () => {
-      if (!currentJobId) return;
-      changePostingCaptionBtn.disabled = true;
-      changeVideoCaptionBtn.disabled = true;
-      postingCaptionSpinner.style.display = "inline";
-      try {
-        const resp = await fetch(`/jobs/${currentJobId}/regenerate-caption`, { method: "POST" });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
-        document.getElementById("captionBox").value = data.posting_caption || "";
-      } catch (err) {
-        statusEl.textContent = "Error: " + err.message;
-      } finally {
-        changePostingCaptionBtn.disabled = false;
-        changeVideoCaptionBtn.disabled = false;
-        postingCaptionSpinner.style.display = "none";
-      }
-    });
-
-    const uploadForm = document.getElementById("uploadForm");
-    const uploadBtn = document.getElementById("uploadBtn");
-
-    uploadForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const fileInput = document.getElementById("fileInput");
-      const file = fileInput.files[0];
-      if (!file) return;
-
-      uploadBtn.disabled = true;
-      resetUI();
-      stageLabel.textContent = "Uploading";
-
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-        const resp = await fetch("/process-file", { method: "POST", body: formData });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
-        await pollJob(data.job_id);
-      } catch (err) {
-        progressWrap.style.display = "none";
-        statusEl.textContent = "Error: " + err.message;
-      } finally {
-        uploadBtn.disabled = false;
-      }
-    });
-  </script>
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const resp = await fetch("/process-file", { method: "POST", body: formData });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+      await pollJob(data.job_id);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      uploadBtn.disabled = false;
+    }
+  });
+</script>
 </body>
 </html>

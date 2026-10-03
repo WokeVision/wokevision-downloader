@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
-from caption import generate_on_screen_caption, generate_posting_caption
+from caption import generate_captions, generate_on_screen_caption, generate_posting_caption
 from render import render_video
 
 app = FastAPI()
@@ -29,12 +29,13 @@ JOBS_LOCK = threading.Lock()
 # progress (0..1 within a stage) into one overall bar. Download and render
 # report real progress within their slice; transcribe/caption don't have a
 # meaningful sub-progress signal, so they just occupy their slice while
-# running and complete it when done.
+# running and complete it when done. (Captioning is now one combined OpenAI
+# call instead of two serial ones, so it gets a smaller slice than before.)
 STAGE_WEIGHTS = {
     "downloading": (0.00, 0.35),
-    "transcribing": (0.35, 0.55),
-    "captioning": (0.55, 0.65),
-    "rendering": (0.65, 1.00),
+    "transcribing": (0.35, 0.57),
+    "captioning": (0.57, 0.63),
+    "rendering": (0.63, 1.00),
 }
 STAGE_LABELS = {
     "queued": "Queued",
@@ -46,6 +47,74 @@ STAGE_LABELS = {
     "done": "Done",
     "error": "Error",
 }
+
+STAGE_ORDER = ["downloading", "transcribing", "captioning", "rendering"]
+
+# Seed guesses for how long each stage takes (seconds), used only until real
+# measurements come in. Deliberately on the generous side -- a first-run ETA
+# that's a bit pessimistic and then comes in early feels much better than
+# one that's optimistic and then blows past zero.
+STAGE_AVG_SECONDS = {
+    "downloading": 25.0,
+    "transcribing": 18.0,
+    "captioning": 8.0,
+    "rendering": 25.0,
+}
+STAGE_AVG_LOCK = threading.Lock()
+
+
+def _record_stage_duration(stage: str, duration: float):
+    """Self-tuning ETA: blends each real stage duration into a running
+    average (exponential moving average, recent runs weighted more) so the
+    ETA keeps adapting to this server's actual speed instead of a fixed
+    guess. Clamped to sane bounds so one freak slow/fast run can't skew
+    future estimates too hard."""
+    if stage not in STAGE_AVG_SECONDS or duration <= 0:
+        return
+    duration = max(1.0, min(duration, 600.0))
+    with STAGE_AVG_LOCK:
+        prev = STAGE_AVG_SECONDS[stage]
+        STAGE_AVG_SECONDS[stage] = prev * 0.7 + duration * 0.3
+
+
+def _estimate_eta_seconds(job: dict) -> float:
+    """Seconds remaining, estimated from a mix of real-time progress signal
+    (when a stage reports one -- download/render) and this server's learned
+    average duration per stage (for transcribe/caption, which don't).
+    Whichever source implies MORE time left wins, so the estimate only ever
+    gets revised up when reality is running behind -- never quietly
+    lowballs by trusting an optimistic average over what's actually
+    happening."""
+    stage = job.get("stage")
+    if stage not in STAGE_ORDER:
+        return 0.0
+    idx = STAGE_ORDER.index(stage)
+    with STAGE_AVG_LOCK:
+        avgs = dict(STAGE_AVG_SECONDS)
+
+    now = time.time()
+    started = job.get("_stage_started_at", now)
+    elapsed_in_stage = max(0.0, now - started)
+    lo, hi = STAGE_WEIGHTS.get(stage, (0.0, 1.0))
+    span = max(hi - lo, 0.001)
+    frac_done = max(0.0, min((job.get("progress", lo) - lo) / span, 1.0))
+
+    current_avg = avgs.get(stage, 15.0)
+    if frac_done > 0.02:
+        # Real sub-progress signal available (download/render): project from
+        # it, but never go below the learned average for this stage.
+        projected_total = elapsed_in_stage / frac_done
+        expected_total = max(current_avg, projected_total)
+    else:
+        # No sub-progress signal (transcribe/caption): lean on the learned
+        # average, but if we've already run past it, grow the estimate
+        # rather than let the countdown hit zero while still working.
+        expected_total = max(current_avg, elapsed_in_stage * 1.25)
+
+    time_left_in_stage = max(expected_total - elapsed_in_stage, 2.0)
+    time_left_future_stages = sum(avgs.get(s, 15.0) for s in STAGE_ORDER[idx + 1:])
+    return round(time_left_in_stage + time_left_future_stages)
+
 
 # How long a finished job's source/output files stick around on disk, so the
 # "change caption" buttons can re-render or re-write a caption without the
@@ -60,9 +129,22 @@ def _set_job(job_id, **fields):
 
 
 def _set_stage(job_id, stage, within_stage=0.0):
-    lo, hi = STAGE_WEIGHTS.get(stage, (0.0, 1.0))
-    overall = lo + (hi - lo) * max(0.0, min(within_stage, 1.0))
-    _set_job(job_id, stage=stage, stage_label=STAGE_LABELS.get(stage, stage), progress=overall)
+    now = time.time()
+    with JOBS_LOCK:
+        job = JOBS[job_id]
+        prev_stage = job.get("stage")
+        if prev_stage != stage:
+            prev_started = job.get("_stage_started_at")
+            if prev_stage in STAGE_ORDER and prev_started:
+                _record_stage_duration(prev_stage, now - prev_started)
+            job["_stage_started_at"] = now
+
+        lo, hi = STAGE_WEIGHTS.get(stage, (0.0, 1.0))
+        overall = lo + (hi - lo) * max(0.0, min(within_stage, 1.0))
+        job["stage"] = stage
+        job["stage_label"] = STAGE_LABELS.get(stage, stage)
+        job["progress"] = overall
+        job["eta_seconds"] = _estimate_eta_seconds(job)
 
 
 class ProcessRequest(BaseModel):
@@ -104,8 +186,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
         _set_job(job_id, transcript=transcript, meta=meta, source_path=final_source_path)
 
         _set_stage(job_id, "captioning")
-        on_screen_caption = generate_on_screen_caption(transcript, meta)
-        posting_caption = generate_posting_caption(transcript, meta, on_screen_caption)
+        on_screen_caption, posting_caption = generate_captions(transcript, meta)
 
         _set_stage(job_id, "rendering", 0.0)
         render_video(
@@ -114,6 +195,8 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
             output_path=output_path,
             progress_cb=lambda frac: _set_stage(job_id, "rendering", frac),
         )
+        with JOBS_LOCK:
+            _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
 
         if not os.path.exists(output_path):
             raise RuntimeError("Render finished but no output file was produced.")
@@ -122,7 +205,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
         _cleanup_later(final_source_path, delay=KEEP_ALIVE_SECONDS)
         _set_job(
             job_id,
-            stage="done", stage_label="Done", progress=1.0, status="done",
+            stage="done", stage_label="Done", progress=1.0, status="done", eta_seconds=0,
             on_screen_caption=on_screen_caption,
             posting_caption=posting_caption,
             result=_result_for(job_id, meta, on_screen_caption, posting_caption),
@@ -171,6 +254,8 @@ def _run_regenerate_video(job_id: str):
             output_path=output_path,
             progress_cb=lambda frac: _set_stage(job_id, "rendering", frac),
         )
+        with JOBS_LOCK:
+            _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
 
         if not os.path.exists(output_path):
             raise RuntimeError("Render finished but no output file was produced.")
@@ -178,7 +263,7 @@ def _run_regenerate_video(job_id: str):
         _cleanup_later(output_path, delay=KEEP_ALIVE_SECONDS)
         _set_job(
             job_id,
-            stage="done", stage_label="Done", progress=1.0, status="done",
+            stage="done", stage_label="Done", progress=1.0, status="done", eta_seconds=0,
             on_screen_caption=on_screen_caption,
             posting_caption=posting_caption,
             result=_result_for(job_id, meta, on_screen_caption, posting_caption),
@@ -310,6 +395,8 @@ def regenerate_video(job_id: str):
         job["stage"] = "captioning"
         job["stage_label"] = "Writing new caption"
         job["progress"] = STAGE_WEIGHTS["captioning"][0]
+        job["_stage_started_at"] = time.time()
+        job["eta_seconds"] = _estimate_eta_seconds(job)
     threading.Thread(target=_run_regenerate_video, args=(job_id,), daemon=True).start()
     return {"job_id": job_id}
 

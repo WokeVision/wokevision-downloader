@@ -1,5 +1,7 @@
 import os
+import re
 import json
+import random
 import requests
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -22,26 +24,81 @@ protected traits (race, religion, sexuality, disability, etc.) -- the \
 target is ideas, hypocrisy and politicians/public figures' actions, not \
 who someone is.""")
 
-ON_SCREEN_SYSTEM = BRAND_VOICE + """
+# Shared instructions for the on-screen hook line, reused by both the
+# combined (fast, single-call) generator and the standalone regenerate-only
+# one. Emoji placement is spelled out explicitly because this is the part
+# that was quietly getting dropped/misplaced before.
+ON_SCREEN_RULES = """Write ONE short line of text to overlay directly on top of a video, in \
+the white space above it. Under 12 words. This is the hook -- it should \
+land as a single punch, not a summary. No hashtags, no quotation marks \
+around the line itself.
 
-Your job right now: write ONE short line of text to overlay directly on \
-top of a video, in the white space above it. Under 12 words. This is the \
-hook -- it should land as a single punch, not a summary. You may include \
-up to 2 emoji if they land well; skip them if they don't add anything. No \
-hashtags, no quotation marks around the line itself.
+End the line with exactly ONE emoji that fits the tone -- it must be the \
+very last character. Do not put a full stop, period, or any other \
+punctuation between the last word and the emoji (e.g. "Libs are shaking \
+🤡" not "Libs are shaking. 🤡"). Do not use more than one emoji."""
 
-Respond ONLY with JSON: {"on_screen": "..."}"""
-
-POSTING_SYSTEM = BRAND_VOICE + """
-
-Your job right now: write the caption that goes out with this video when \
-it's posted simultaneously to Instagram, YouTube, X, TikTok, Threads and \
-Facebook. 2-4 sentences, savage and sharp, building on the hook rather \
+POSTING_RULES = """Write the caption that goes out with this video when it's posted \
+simultaneously to Instagram, YouTube, X, TikTok, Threads and Facebook. \
+2-4 sentences, savage and sharp, building on the on-screen hook rather \
 than repeating it. No hashtags inside the caption body itself -- those \
 come separately. Then give 5-8 relevant hashtags (a mix of broad reach \
-tags and topic-specific ones).
+tags and topic-specific ones)."""
 
-Respond ONLY with JSON: {"caption": "...", "hashtags": ["#...", "#..."]}"""
+COMBINED_SYSTEM = BRAND_VOICE + f"""
+
+You have two things to write for the same video, in one response.
+
+1) ON-SCREEN HOOK: {ON_SCREEN_RULES}
+
+2) POSTING CAPTION: {POSTING_RULES}
+
+Respond ONLY with JSON: {{"on_screen": "...", "caption": "...", "hashtags": ["#...", "#..."]}}"""
+
+ON_SCREEN_SYSTEM = BRAND_VOICE + f"\n\nYour job right now: {ON_SCREEN_RULES}\n\nRespond ONLY with JSON: {{\"on_screen\": \"...\"}}"
+
+POSTING_SYSTEM = BRAND_VOICE + f"\n\nYour job right now: {POSTING_RULES}\n\nRespond ONLY with JSON: {{\"caption\": \"...\", \"hashtags\": [\"#...\", \"#...\"]}}"
+
+# Fallback emoji, confirmed present in the local emoji_pack/ so the on-screen
+# caption always renders a real image instead of silently dropping a
+# character the pack doesn't have. Used only when the model's own line
+# somehow comes back with no emoji at all.
+FALLBACK_EMOJI = ["\U0001F525", "\U0001F921", "\U0001F480", "\U0001F6A8", "\U0001F62D",
+                   "\U0001F644", "\U0001F62F", "\U0001F60F", "\U0001F914", "\U0001F4AF"]
+
+# Mirrors render.py's own emoji matcher closely enough to detect "is there
+# an emoji in this text at all" without importing render.py (keeps caption.py
+# usable standalone / in tests without the Pillow/ffmpeg stack).
+_EMOJI_RE = re.compile(
+    "(?:[\U0001F1E6-\U0001F1FF]{2})"
+    "|(?:[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002190-\U000021FF\U00002B00-\U00002BFF]"
+    "[\U0000FE0F\U0000200D\U0001F3FB-\U0001F3FF]*)"
+)
+
+
+def _enforce_single_trailing_emoji(text: str) -> str:
+    """Guarantees the on-screen line ends in exactly one emoji with no
+    punctuation in between, regardless of what the model actually returned:
+    - strips a period/other punctuation sitting right before an emoji
+    - if an emoji is present but buried mid-sentence rather than at the end,
+      moves one to the end
+    - if no emoji is present at all, appends a fallback one
+    - collapses multiple trailing emoji down to one
+    """
+    text = (text or "").strip()
+    if not text:
+        return text
+
+    found = _EMOJI_RE.findall(text)
+    # Strip every emoji out of the body so we can cleanly re-append one.
+    stripped = _EMOJI_RE.sub("", text)
+    # Clean up leftover punctuation/whitespace left dangling where an emoji
+    # used to sit (e.g. "Libs are shaking. " -> "Libs are shaking").
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    stripped = stripped.rstrip(" .!?,;:").strip()
+
+    emoji = found[0] if found else random.choice(FALLBACK_EMOJI)
+    return f"{stripped} {emoji}"
 
 
 def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
@@ -76,10 +133,34 @@ def _call_openai(system_prompt: str, user_content: str) -> dict:
     return json.loads(resp.json()["choices"][0]["message"]["content"])
 
 
+def generate_captions(transcript: str, meta: dict) -> tuple:
+    """Generates BOTH captions (on-screen hook + posting caption/hashtags)
+    in a single OpenAI call instead of two serial ones -- used for the main
+    pipeline where speed matters and there's nothing to "avoid" yet. Falls
+    back to the video's own title/description when no OPENAI_API_KEY is set
+    or the call fails. Returns (on_screen_caption, posting_caption)."""
+    title = (meta or {}).get("title") or "Watch this"
+    description = (meta or {}).get("description") or ""
+    fallback_posting = title or (description[:80] if description else "") or "Watch this"
+    if not OPENAI_API_KEY:
+        return title, fallback_posting
+
+    try:
+        data = _call_openai(COMBINED_SYSTEM, _build_context(transcript, meta))
+        on_screen = _enforce_single_trailing_emoji((data.get("on_screen") or "").strip() or title)
+        body = (data.get("caption") or "").strip()
+        hashtags = " ".join(h for h in data.get("hashtags", []) if h)
+        posting = f"{body}\n\n{hashtags}".strip() or fallback_posting
+        return on_screen, posting
+    except Exception as e:
+        print(f"CAPTION GEN FAILED: {e}", flush=True)
+        return title, fallback_posting
+
+
 def generate_on_screen_caption(transcript: str, meta: dict, avoid: str = None) -> str:
-    """The short line overlaid on the video itself. Falls back to the
-    video's own title when no OPENAI_API_KEY is set or the call fails --
-    the pipeline still produces something usable either way."""
+    """The short line overlaid on the video itself, generated alone -- used
+    by the "change video caption" regenerate button. Falls back to the
+    video's own title when no OPENAI_API_KEY is set or the call fails."""
     title = (meta or {}).get("title") or "Watch this"
     if not OPENAI_API_KEY:
         return title
@@ -87,7 +168,7 @@ def generate_on_screen_caption(transcript: str, meta: dict, avoid: str = None) -
     note = f'A previous version was: "{avoid}" -- write a genuinely different one, not a light rewording.' if avoid else ""
     try:
         data = _call_openai(ON_SCREEN_SYSTEM, _build_context(transcript, meta, note))
-        return (data.get("on_screen") or "").strip() or title
+        return _enforce_single_trailing_emoji((data.get("on_screen") or "").strip() or title)
     except Exception as e:
         print(f"ON-SCREEN CAPTION GEN FAILED: {e}", flush=True)
         return title

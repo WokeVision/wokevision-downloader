@@ -244,7 +244,7 @@
     margin-top: 10px;
   }
 
-  #result { display: none; }
+  #result, #publishToCard { display: none; }
 
   video {
     width: 100%;
@@ -503,27 +503,32 @@
         </div>
       </div>
     </div>
+  </div>
 
-    <!-- Platforms always sit at the bottom -- connecting/checking status and
-         actually publishing are both things done last, right before or at
-         upload time, once the video and captions are already sorted. -->
-    <div class="card" id="platformStatusCard">
-      <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Platforms</h3>
-      <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
-        Live connection status -- tap Connect/Reconnect to fix one.
-      </p>
-      <div id="platformStatusList"></div>
-    </div>
+  <!-- Platforms always sit at the bottom of whatever's currently showing --
+       connecting/checking status and actually publishing are both things
+       done last, right before or at upload time, once the video and
+       captions are already sorted. The status card (platformStatusCard)
+       stays visible regardless of job state, since fixing a dropped
+       connection is useful any time -- only the publish-to toggles
+       (publishToCard) need an actual finished video to make sense, so that
+       one is hidden/shown together with #result above. -->
+  <div class="card" id="platformStatusCard">
+    <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Platforms</h3>
+    <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
+      Live connection status -- tap Connect/Reconnect to fix one.
+    </p>
+    <div id="platformStatusList"></div>
+  </div>
 
-    <div class="card">
-      <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Publish to</h3>
-      <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
-        Toggle on whichever platforms this video should go out to, then upload.
-      </p>
-      <div id="platformList"></div>
-      <button class="primary" id="uploadToPlatformsBtn" type="button">Upload</button>
-      <div class="publishResults" id="publishResults"></div>
-    </div>
+  <div class="card" id="publishToCard">
+    <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Publish to</h3>
+    <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
+      Toggle on whichever platforms this video should go out to, then upload.
+    </p>
+    <div id="platformList"></div>
+    <button class="primary" id="uploadToPlatformsBtn" type="button">Upload</button>
+    <div class="publishResults" id="publishResults"></div>
   </div>
 
 </div>
@@ -531,6 +536,7 @@
 <script>
   const statusCard = document.getElementById("statusCard");
   const resultEl = document.getElementById("result");
+  const publishToCard = document.getElementById("publishToCard");
   const progressFill = document.getElementById("progressFill");
   const stageLabel = document.getElementById("stageLabel");
   const etaLabel = document.getElementById("etaLabel");
@@ -577,6 +583,7 @@
 
   function resetUI() {
     resultEl.style.display = "none";
+    publishToCard.style.display = "none";
     errorBox.style.display = "none";
     statusCard.classList.add("active");
     progressFill.style.width = "0%";
@@ -597,6 +604,7 @@
     document.getElementById("captionBox").value = data.caption || "";
     updateCaptionCharCount();
     resultEl.style.display = "block";
+    publishToCard.style.display = "block";
   }
 
   // Posting caption is user-editable, so show a live character count

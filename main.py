@@ -15,7 +15,7 @@ from transcribe import transcribe_audio
 from caption import generate_captions, generate_on_screen_caption, generate_posting_caption
 from render import render_video
 import db
-from platforms import instagram, threads, youtube, x
+from platforms import instagram, threads, youtube, x, tiktok
 
 app = FastAPI()
 
@@ -40,6 +40,7 @@ PLATFORM_MODULES = {
     "threads": threads,
     "youtube": youtube,
     "x": x,
+    "tiktok": tiktok,
 }
 PLATFORM_LABELS = {
     "instagram": "Instagram",

@@ -32,7 +32,12 @@ def configured() -> bool:
 
 @contextlib.contextmanager
 def _conn():
-    conn = psycopg2.connect(DATABASE_URL)
+    # A short, explicit timeout here matters a lot: with none, a bad/slow
+    # connection string can hang the whole process indefinitely at startup
+    # (since init_db() runs in FastAPI's startup event), which looks from
+    # the outside like the app never deploys at all rather than like a
+    # clear, fast failure.
+    conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
     try:
         yield conn
         conn.commit()

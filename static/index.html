@@ -409,6 +409,7 @@
   }
   .publishResultRow .r-ok { color: #8FF0AC; }
   .publishResultRow .r-err { color: #FFB4B4; }
+  .publishResultRow .r-pending { color: #B8B8C0; }
 </style>
 </head>
 <body>
@@ -846,6 +847,42 @@
   // while the page just sits open.
   setInterval(loadConnections, 60000);
 
+  // Renders the current state of a publish job's per-platform results --
+  // pending platforms show a spinner-ish "..." row so it's clear the page
+  // is still waiting on them specifically, not stuck as a whole.
+  function renderPublishResults(results) {
+    publishResults.style.display = "block";
+    publishResults.innerHTML = "";
+    Object.entries(results || {}).forEach(([platform, result]) => {
+      const row = document.createElement("div");
+      row.className = "publishResultRow";
+      if (result.status === "pending") {
+        row.innerHTML = `<span class="r-pending">…</span><span>${platform}: posting...</span>`;
+      } else {
+        row.innerHTML = result.ok
+          ? `<span class="r-ok">✓</span><span>${platform}: posted</span>`
+          : `<span class="r-err">✗</span><span>${platform}: ${result.error || "failed"}</span>`;
+      }
+      publishResults.appendChild(row);
+    });
+  }
+
+  async function pollPublishJob(publishJobId) {
+    // No fixed cap -- a slow platform (TikTok's status poll can run a few
+    // minutes) is still progress, not a hang. What changed is that a
+    // genuinely stuck platform no longer blocks the others, and this poll
+    // itself is cheap/short-lived per call, so it can't silently hang the
+    // way one giant blocking request could.
+    while (true) {
+      const resp = await fetch(`/publish/${publishJobId}`);
+      if (!resp.ok) throw new Error("Lost track of the publish job.");
+      const job = await resp.json();
+      renderPublishResults(job.results);
+      if (job.status === "done") return job;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+
   uploadToPlatformsBtn.addEventListener("click", async () => {
     if (!currentJobId) return;
     const platforms = Array.from(toggledOn);
@@ -867,15 +904,7 @@
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
-      publishResults.style.display = "block";
-      Object.entries(data.results || {}).forEach(([platform, result]) => {
-        const row = document.createElement("div");
-        row.className = "publishResultRow";
-        row.innerHTML = result.ok
-          ? `<span class="r-ok">✓</span><span>${platform}: posted</span>`
-          : `<span class="r-err">✗</span><span>${platform}: ${result.error || "failed"}</span>`;
-        publishResults.appendChild(row);
-      });
+      await pollPublishJob(data.publish_job_id);
     } catch (err) {
       publishResults.style.display = "block";
       publishResults.innerHTML = `<div class="publishResultRow"><span class="r-err">✗</span><span>${err.message}</span></div>`;

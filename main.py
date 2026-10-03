@@ -81,6 +81,14 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 
+# Same idea for /publish: each platform's publish_video() call can take a
+# while (TikTok's status poll alone can run up to 5 minutes, and a resumable
+# upload on a slow connection longer still), so publishing runs in a
+# background thread -- one per platform, in parallel -- rather than as a
+# single blocking request the browser just has to sit on with no feedback
+# and no way to tell a slow call apart from a hung one.
+PUBLISH_JOBS = {}
+
 # Rough share of total time each stage takes, used to blend per-stage
 # progress (0..1 within a stage) into one overall bar. Download and render
 # report real progress within their slice; transcribe/caption don't have a
@@ -580,6 +588,33 @@ class PublishRequest(BaseModel):
     platforms: list[str]
 
 
+def _run_publish(publish_job_id: str, platforms: list, video_url: str, caption: str):
+    """Runs one publish_video() call per platform, each in its own thread,
+    so a slow platform (or one that's genuinely stuck) never blocks the
+    others -- and the job's per-platform results are visible to a poller
+    as soon as each one finishes, rather than all-at-once at the end."""
+    def _do(platform):
+        module = PLATFORM_MODULES.get(platform)
+        if not module:
+            result = {"status": "done", "ok": False, "error": "This platform isn't connected yet."}
+        else:
+            try:
+                outcome = module.publish_video(video_url, caption)
+                result = {"status": "done", "ok": True, **outcome}
+            except Exception as e:
+                result = {"status": "done", "ok": False, "error": str(e)}
+        with JOBS_LOCK:
+            PUBLISH_JOBS[publish_job_id]["results"][platform] = result
+
+    workers = [threading.Thread(target=_do, args=(p,), daemon=True) for p in platforms]
+    for t in workers:
+        t.start()
+    for t in workers:
+        t.join()
+    with JOBS_LOCK:
+        PUBLISH_JOBS[publish_job_id]["status"] = "done"
+
+
 @app.post("/publish")
 def publish(req: PublishRequest):
     with JOBS_LOCK:
@@ -593,18 +628,25 @@ def publish(req: PublishRequest):
         video_url = base_url + video_url
     caption = job.get("posting_caption") or job["result"].get("caption") or ""
 
-    results = {}
-    for platform in req.platforms:
-        module = PLATFORM_MODULES.get(platform)
-        if not module:
-            results[platform] = {"ok": False, "error": "This platform isn't connected yet."}
-            continue
-        try:
-            outcome = module.publish_video(video_url, caption)
-            results[platform] = {"ok": True, **outcome}
-        except Exception as e:
-            results[platform] = {"ok": False, "error": str(e)}
-    return {"results": results}
+    publish_job_id = str(uuid.uuid4())
+    with JOBS_LOCK:
+        PUBLISH_JOBS[publish_job_id] = {
+            "status": "running",
+            "results": {platform: {"status": "pending"} for platform in req.platforms},
+        }
+    threading.Thread(
+        target=_run_publish, args=(publish_job_id, req.platforms, video_url, caption), daemon=True
+    ).start()
+    return {"publish_job_id": publish_job_id}
+
+
+@app.get("/publish/{publish_job_id}")
+def get_publish_job(publish_job_id: str):
+    with JOBS_LOCK:
+        job = PUBLISH_JOBS.get(publish_job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown publish job id")
+    return job
 
 
 # Serves the submission page's own static assets, if any are added later

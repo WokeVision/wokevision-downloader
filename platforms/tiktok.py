@@ -27,7 +27,6 @@ Flow:
      the video/init FILE_UPLOAD flow, PUT each chunk with a Content-Range
      header, then poll publish status until it completes or fails.
 """
-import math
 import os
 import time
 import requests
@@ -55,6 +54,32 @@ PLATFORM = "tiktok"
 # so a flat 8MB chunk size comfortably clears the 5MB floor while keeping
 # chunk count low.
 CHUNK_SIZE = 8 * 1024 * 1024
+MIN_CHUNK_SIZE = 5 * 1024 * 1024
+
+
+def _plan_chunks(total_bytes: int) -> list:
+    """Returns the byte size of each chunk to upload. TikTok requires every
+    chunk -- including the last -- to be at least 5MB, UNLESS the whole
+    video is a single chunk (video_size == chunk_size, total_chunk_count ==
+    1), which is also the only valid shape when the video itself is under
+    5MB. A flat `total_bytes // CHUNK_SIZE` split can leave a trailing
+    remainder under 5MB (e.g. a 20MB video split into 8+8+4), which TikTok
+    rejects as an invalid chunk size -- so instead of starting a new tiny
+    final chunk, fold any under-sized remainder into the previous chunk."""
+    if total_bytes <= CHUNK_SIZE:
+        return [total_bytes]
+    sizes = []
+    remaining = total_bytes
+    while remaining > CHUNK_SIZE:
+        if remaining - CHUNK_SIZE < MIN_CHUNK_SIZE:
+            sizes.append(remaining)
+            remaining = 0
+            break
+        sizes.append(CHUNK_SIZE)
+        remaining -= CHUNK_SIZE
+    if remaining > 0:
+        sizes.append(remaining)
+    return sizes
 
 
 class TikTokError(Exception):
@@ -221,18 +246,13 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
         source_resp.close()
         raise TikTokError("Rendered video has no known size -- can't start a chunked upload.")
     total_bytes = int(content_length)
-    # TikTok requires chunk_size == video_size and total_chunk_count == 1
-    # whenever the whole video is smaller than one chunk (their stated floor
-    # is 5MB per chunk, but in practice any chunk_size that doesn't equal
-    # video_size on a single-chunk upload is rejected as "invalid chunk
-    # size") -- so only use the flat CHUNK_SIZE once the video actually
-    # spans multiple chunks.
-    if total_bytes <= CHUNK_SIZE:
-        effective_chunk_size = total_bytes
-        total_chunks = 1
-    else:
-        effective_chunk_size = CHUNK_SIZE
-        total_chunks = math.ceil(total_bytes / CHUNK_SIZE)
+    chunk_sizes = _plan_chunks(total_bytes)
+    total_chunks = len(chunk_sizes)
+    # TikTok's `chunk_size` field is nominal -- the size of every chunk
+    # except (possibly) the last, which is what each PUT's Content-Range
+    # actually reflects. For a single-chunk upload this must equal
+    # video_size exactly.
+    nominal_chunk_size = chunk_sizes[0]
 
     title = (caption or "").strip()[:2200]
 
@@ -254,7 +274,7 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
             "source_info": {
                 "source": "FILE_UPLOAD",
                 "video_size": total_bytes,
-                "chunk_size": effective_chunk_size,
+                "chunk_size": nominal_chunk_size,
                 "total_chunk_count": total_chunks,
             },
         },
@@ -272,9 +292,8 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
 
     try:
         sent = 0
-        chunk_index = 0
-        while sent < total_bytes:
-            chunk = source_resp.raw.read(effective_chunk_size)
+        for chunk_index, size in enumerate(chunk_sizes):
+            chunk = source_resp.raw.read(size)
             if not chunk:
                 break
             start = sent
@@ -292,7 +311,6 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
             if put_resp.status_code not in (200, 201):
                 raise TikTokError(f"Upload chunk {chunk_index} failed: {put_resp.status_code} {put_resp.text[:500]}")
             sent += len(chunk)
-            chunk_index += 1
     finally:
         source_resp.close()
 

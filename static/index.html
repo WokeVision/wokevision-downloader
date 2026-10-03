@@ -424,6 +424,14 @@
 
   <div class="banner" id="connectBanner"></div>
 
+  <div class="card" id="platformStatusCard">
+    <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Platforms</h3>
+    <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
+      Live connection status -- tap Connect/Reconnect to fix one.
+    </p>
+    <div id="platformStatusList"></div>
+  </div>
+
   <div class="card">
     <div class="segmented">
       <button type="button" class="segBtn active" data-panel="linkPanel">Paste a link</button>
@@ -740,6 +748,7 @@
   // --- Publish to: platform connections, toggles, status lights --------
 
   const platformList = document.getElementById("platformList");
+  const platformStatusList = document.getElementById("platformStatusList");
   const uploadToPlatformsBtn = document.getElementById("uploadToPlatformsBtn");
   const publishResults = document.getElementById("publishResults");
   const connectBanner = document.getElementById("connectBanner");
@@ -749,8 +758,16 @@
   // the user's selection.
   const toggledOn = new Set();
 
-  function renderPlatformList(connections) {
-    platformList.innerHTML = "";
+  // Renders the connections list into a given container. `withToggles`
+  // controls whether a working connection gets an Apple-style "include in
+  // this upload" switch (used in the per-video "Publish to" card, which
+  // only makes sense once a video exists) or is just shown as connected
+  // with no control (used in the always-visible top-of-page status card).
+  // Either way, a platform that isn't connected (or has gone unhealthy)
+  // always gets a Connect/Reconnect link, since fixing that is useful
+  // whether or not a video is currently loaded.
+  function renderPlatformList(container, connections, withToggles) {
+    container.innerHTML = "";
     connections.forEach((c) => {
       const row = document.createElement("div");
       row.className = "platformRow";
@@ -772,7 +789,7 @@
       row.appendChild(dot);
       row.appendChild(info);
 
-      if (c.available && c.ok) {
+      if (c.available && c.ok && withToggles) {
         // Working connection -> Apple-style toggle for "include in this upload".
         const label = document.createElement("label");
         label.className = "switch";
@@ -788,9 +805,9 @@
         label.appendChild(input);
         label.appendChild(track);
         row.appendChild(label);
-      } else if (c.available) {
-        // Configured platform, not connected (or connection errored) ->
-        // a Connect/Reconnect link instead of a toggle.
+      } else if (c.available && !c.ok) {
+        // Not connected (or connection errored) -> a Connect/Reconnect
+        // link, shown in both the status card and the publish card.
         const btn = document.createElement("button");
         btn.className = "connectLink";
         btn.type = "button";
@@ -799,13 +816,14 @@
           window.location.href = `/connections/${c.platform}/start`;
         });
         row.appendChild(btn);
-        toggledOn.delete(c.platform);
-      } else {
-        // Not built yet (Threads/YouTube/TikTok/X, for now).
+        if (withToggles) toggledOn.delete(c.platform);
+      } else if (withToggles) {
+        // Not built yet (YouTube/TikTok/X, for now) -- only relevant to
+        // the toggle list.
         toggledOn.delete(c.platform);
       }
 
-      platformList.appendChild(row);
+      container.appendChild(row);
     });
   }
 
@@ -813,11 +831,20 @@
     try {
       const resp = await fetch("/connections");
       const data = await resp.json();
-      renderPlatformList(data.connections || []);
+      const connections = data.connections || [];
+      renderPlatformList(platformStatusList, connections, false);
+      renderPlatformList(platformList, connections, true);
     } catch (err) {
-      platformList.innerHTML = '<p class="note">Couldn\'t load platform connections.</p>';
+      const msg = '<p class="note">Couldn\'t load platform connections.</p>';
+      platformStatusList.innerHTML = msg;
+      platformList.innerHTML = msg;
     }
   }
+
+  // Keep the always-visible status card fresh on its own, independent of
+  // anything video-related -- a connection can drop (expired token, etc.)
+  // while the page just sits open.
+  setInterval(loadConnections, 60000);
 
   uploadToPlatformsBtn.addEventListener("click", async () => {
     if (!currentJobId) return;

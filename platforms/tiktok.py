@@ -221,7 +221,18 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
         source_resp.close()
         raise TikTokError("Rendered video has no known size -- can't start a chunked upload.")
     total_bytes = int(content_length)
-    total_chunks = max(1, math.ceil(total_bytes / CHUNK_SIZE))
+    # TikTok requires chunk_size == video_size and total_chunk_count == 1
+    # whenever the whole video is smaller than one chunk (their stated floor
+    # is 5MB per chunk, but in practice any chunk_size that doesn't equal
+    # video_size on a single-chunk upload is rejected as "invalid chunk
+    # size") -- so only use the flat CHUNK_SIZE once the video actually
+    # spans multiple chunks.
+    if total_bytes <= CHUNK_SIZE:
+        effective_chunk_size = total_bytes
+        total_chunks = 1
+    else:
+        effective_chunk_size = CHUNK_SIZE
+        total_chunks = math.ceil(total_bytes / CHUNK_SIZE)
 
     title = (caption or "").strip()[:2200]
 
@@ -243,7 +254,7 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
             "source_info": {
                 "source": "FILE_UPLOAD",
                 "video_size": total_bytes,
-                "chunk_size": CHUNK_SIZE,
+                "chunk_size": effective_chunk_size,
                 "total_chunk_count": total_chunks,
             },
         },
@@ -263,7 +274,7 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
         sent = 0
         chunk_index = 0
         while sent < total_bytes:
-            chunk = source_resp.raw.read(CHUNK_SIZE)
+            chunk = source_resp.raw.read(effective_chunk_size)
             if not chunk:
                 break
             start = sent

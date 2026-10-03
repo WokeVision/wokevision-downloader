@@ -21,7 +21,8 @@ RUN git clone --single-branch --branch 2.0.0 \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py render.py emoji_names.py downloader.py transcribe.py caption.py .
+COPY main.py render.py emoji_names.py downloader.py transcribe.py caption.py db.py .
+COPY platforms ./platforms
 COPY assets ./assets
 COPY fonts ./fonts
 # Fallback font (from the fonts-dejavu-core package installed above), used

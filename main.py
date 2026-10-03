@@ -6,7 +6,7 @@ import threading
 import traceback
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -388,6 +388,16 @@ def index():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# TikTok's URL-prefix domain verification expects a specific plaintext file
+# at the site root, containing a token it gives us (see Developer Portal ->
+# App -> URL properties -> Verify). Static files are otherwise only served
+# under /static, so this one gets its own tiny route rather than a broader
+# root-level static mount.
+@app.get("/tiktokf2TEyaKWItLVEN7IU6Sr0Fyd4eBclual.txt")
+def tiktok_site_verification():
+    return PlainTextResponse("tiktok-developers-site-verification=f2TEyaKWItLVEN7IU6Sr0Fyd4eBclual")
 
 
 @app.post("/process")

@@ -7,3 +7,5 @@ pydantic
 requests
 Pillow
 bgutil-ytdlp-pot-provider
+psycopg2-binary
+cryptography

@@ -5,8 +5,8 @@ import shutil
 import threading
 import traceback
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -14,8 +14,60 @@ from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
 from caption import generate_captions, generate_on_screen_caption, generate_posting_caption
 from render import render_video
+import db
+from platforms import instagram
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+def _startup():
+    # Platform connections are an optional subsystem layered on top of the
+    # core video editor -- a bad/missing DATABASE_URL should never take the
+    # whole app down, just leave connections showing as unavailable.
+    try:
+        db.init_db()
+    except Exception as e:
+        print(f"DB INIT FAILED (platform connections will be unavailable): {e}", flush=True)
+
+
+# Platforms that are wired up for real vs. still placeholders in the UI.
+# Extending to a new platform means adding its module here and to
+# PLATFORM_LABELS -- the /connections, /connections/{id}/*, and /publish
+# routes are all written generically against this registry.
+PLATFORM_MODULES = {
+    "instagram": instagram,
+}
+PLATFORM_LABELS = {
+    "instagram": "Instagram",
+    "threads": "Threads",
+    "youtube": "YouTube Shorts",
+    "tiktok": "TikTok",
+    "x": "X",
+}
+PLATFORM_ORDER = ["instagram", "threads", "youtube", "tiktok", "x"]
+
+# Short-lived store of in-flight OAuth "state" values (CSRF protection for
+# the connect flow). Single-user app, modest size -- an in-memory dict with
+# a timestamp is enough; entries older than 10 minutes are ignored.
+OAUTH_STATES = {}
+OAUTH_STATE_TTL = 600
+
+
+def _new_oauth_state(platform: str) -> str:
+    state = f"{platform}:{uuid.uuid4()}"
+    OAUTH_STATES[state] = time.time()
+    return state
+
+
+def _check_oauth_state(state: str) -> bool:
+    ts = OAUTH_STATES.pop(state, None)
+    return bool(ts and time.time() - ts < OAUTH_STATE_TTL)
+
+
+def _url_quote(text: str) -> str:
+    import urllib.parse
+    return urllib.parse.quote((text or "")[:300])
 
 DOWNLOAD_DIR = "/tmp/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -426,6 +478,119 @@ def get_file(filename: str):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="File not found or expired")
     return FileResponse(path, media_type="video/mp4", headers={"Content-Disposition": "inline"})
+
+
+# --- Platform connections (Instagram, and eventually Threads/YouTube/TikTok/X) ---
+
+@app.get("/connections")
+def list_connections():
+    """Status for every platform the UI shows -- wired-up ones get a real
+    live probe (db.configured() gates all of this gracefully: if Neon/the
+    encryption key aren't set up yet, every platform just reports as
+    unavailable rather than erroring)."""
+    out = []
+    for platform in PLATFORM_ORDER:
+        module = PLATFORM_MODULES.get(platform)
+        if not module:
+            out.append({
+                "platform": platform, "label": PLATFORM_LABELS[platform],
+                "available": False, "connected": False, "ok": False,
+                "status_label": "Coming soon",
+            })
+            continue
+        if not db.configured():
+            out.append({
+                "platform": platform, "label": PLATFORM_LABELS[platform],
+                "available": True, "connected": False, "ok": False,
+                "status_label": "Storage not set up",
+            })
+            continue
+        try:
+            status = module.check_status()
+        except Exception as e:
+            status = {"connected": False, "ok": False, "label": "Connection error"}
+            print(f"CONNECTION STATUS CHECK FAILED ({platform}): {e}", flush=True)
+        out.append({
+            "platform": platform, "label": PLATFORM_LABELS[platform],
+            "available": True, "connected": status["connected"], "ok": status["ok"],
+            "status_label": status["label"],
+        })
+    return {"connections": out}
+
+
+@app.get("/connections/{platform}/start")
+def connect_start(platform: str):
+    module = PLATFORM_MODULES.get(platform)
+    if not module:
+        raise HTTPException(status_code=404, detail="Unknown or not-yet-supported platform.")
+    if not db.configured():
+        raise HTTPException(status_code=503, detail="Connection storage isn't set up yet (Neon database not configured).")
+    try:
+        state = _new_oauth_state(platform)
+        url = module.get_auth_url(state)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return RedirectResponse(url)
+
+
+@app.get("/connections/{platform}/callback")
+def connect_callback(platform: str, request: Request):
+    module = PLATFORM_MODULES.get(platform)
+    if not module:
+        raise HTTPException(status_code=404, detail="Unknown or not-yet-supported platform.")
+    params = request.query_params
+    if params.get("error"):
+        msg = params.get("error_description", params.get("error"))
+        return RedirectResponse(f"/?connect_error={_url_quote(msg)}")
+    code = params.get("code")
+    state = params.get("state")
+    if not code or not _check_oauth_state(state or ""):
+        return RedirectResponse(f"/?connect_error={_url_quote('Invalid or expired connection attempt, please try again.')}")
+    try:
+        module.handle_callback(code)
+    except Exception as e:
+        return RedirectResponse(f"/?connect_error={_url_quote(str(e))}")
+    return RedirectResponse(f"/?connected={platform}")
+
+
+@app.post("/connections/{platform}/disconnect")
+def connect_disconnect(platform: str):
+    if platform not in PLATFORM_MODULES:
+        raise HTTPException(status_code=404, detail="Unknown or not-yet-supported platform.")
+    db.delete_connection(platform)
+    return {"ok": True}
+
+
+class PublishRequest(BaseModel):
+    job_id: str
+    platforms: list[str]
+
+
+@app.post("/publish")
+def publish(req: PublishRequest):
+    with JOBS_LOCK:
+        job = JOBS.get(req.job_id)
+    if not job or job.get("status") != "done" or not job.get("result"):
+        raise HTTPException(status_code=409, detail="That video isn't ready to publish yet.")
+
+    base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    video_url = job["result"]["video_url"]
+    if base_url and video_url.startswith("/"):
+        video_url = base_url + video_url
+    caption = job.get("posting_caption") or job["result"].get("caption") or ""
+
+    results = {}
+    for platform in req.platforms:
+        module = PLATFORM_MODULES.get(platform)
+        if not module:
+            results[platform] = {"ok": False, "error": "This platform isn't connected yet."}
+            continue
+        try:
+            outcome = module.publish_video(video_url, caption)
+            results[platform] = {"ok": True, **outcome}
+        except Exception as e:
+            results[platform] = {"ok": False, "error": str(e)}
+    return {"results": results}
 
 
 # Serves the submission page's own static assets, if any are added later

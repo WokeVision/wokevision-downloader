@@ -322,6 +322,93 @@
     letter-spacing: 0.06em;
     margin: 18px 0 2px;
   }
+
+  /* --- Publish to / platform connections ------------------------------ */
+  .banner {
+    display: none;
+    font-size: 13.5px;
+    line-height: 1.4;
+    border-radius: var(--radius-sm);
+    padding: 11px 14px;
+    margin-bottom: 14px;
+  }
+  .banner.ok { background: rgba(48, 209, 88, 0.12); border: 1px solid rgba(48, 209, 88, 0.3); color: #8FF0AC; }
+  .banner.err { background: rgba(255, 43, 60, 0.10); border: 1px solid rgba(255, 43, 60, 0.28); color: #FFB4B4; }
+
+  .platformRow {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .platformRow:last-child { border-bottom: none; }
+
+  .statusDot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #8E8E93;
+    box-shadow: 0 0 0 3px rgba(142, 142, 147, 0.15);
+  }
+  .statusDot.ok { background: #30D158; box-shadow: 0 0 0 3px rgba(48, 209, 88, 0.18); }
+  .statusDot.err { background: #FF453A; box-shadow: 0 0 0 3px rgba(255, 69, 58, 0.18); }
+
+  .platformInfo { flex: 1; min-width: 0; }
+  .platformInfo .pName { font-size: 14.5px; font-weight: 600; }
+  .platformInfo .pStatus { font-size: 12px; color: var(--text-faint); margin-top: 1px; }
+
+  .connectLink {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--accent);
+    background: none;
+    border: none;
+    padding: 6px 2px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  /* Apple-style on/off switch */
+  .switch {
+    position: relative;
+    width: 46px;
+    height: 27px;
+    flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .track {
+    position: absolute; inset: 0;
+    background: rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    transition: background 0.2s ease;
+    cursor: pointer;
+  }
+  .switch .track::before {
+    content: "";
+    position: absolute;
+    width: 23px; height: 23px;
+    left: 2px; top: 2px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+  .switch input:checked + .track { background: #30D158; }
+  .switch input:checked + .track::before { transform: translateX(19px); }
+  .switch input:disabled + .track { opacity: 0.35; cursor: not-allowed; }
+
+  .publishResults { margin-top: 12px; display: none; }
+  .publishResultRow {
+    font-size: 13px;
+    padding: 7px 0;
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+  .publishResultRow .r-ok { color: #8FF0AC; }
+  .publishResultRow .r-err { color: #FFB4B4; }
 </style>
 </head>
 <body>
@@ -334,6 +421,8 @@
       <div class="tagline">Link in, finished post out.</div>
     </div>
   </header>
+
+  <div class="banner" id="connectBanner"></div>
 
   <div class="card">
     <div class="segmented">
@@ -403,6 +492,16 @@
           <span class="inlineSpinner" id="postingCaptionSpinner">Refreshing...</span>
         </div>
       </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Publish to</h3>
+      <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
+        Toggle on whichever platforms this video should go out to, then upload.
+      </p>
+      <div id="platformList"></div>
+      <button class="primary" id="uploadToPlatformsBtn" type="button">Upload</button>
+      <div class="publishResults" id="publishResults"></div>
     </div>
   </div>
 
@@ -637,6 +736,153 @@
       uploadBtn.disabled = false;
     }
   });
+
+  // --- Publish to: platform connections, toggles, status lights --------
+
+  const platformList = document.getElementById("platformList");
+  const uploadToPlatformsBtn = document.getElementById("uploadToPlatformsBtn");
+  const publishResults = document.getElementById("publishResults");
+  const connectBanner = document.getElementById("connectBanner");
+
+  // Which platforms are currently toggled on, by platform id. Persists
+  // across a connections refresh so re-rendering the list doesn't reset
+  // the user's selection.
+  const toggledOn = new Set();
+
+  function renderPlatformList(connections) {
+    platformList.innerHTML = "";
+    connections.forEach((c) => {
+      const row = document.createElement("div");
+      row.className = "platformRow";
+
+      const dot = document.createElement("span");
+      dot.className = "statusDot" + (c.available ? (c.ok ? " ok" : (c.connected ? " err" : "")) : "");
+
+      const info = document.createElement("div");
+      info.className = "platformInfo";
+      const name = document.createElement("div");
+      name.className = "pName";
+      name.textContent = c.label;
+      const status = document.createElement("div");
+      status.className = "pStatus";
+      status.textContent = c.status_label;
+      info.appendChild(name);
+      info.appendChild(status);
+
+      row.appendChild(dot);
+      row.appendChild(info);
+
+      if (c.available && c.ok) {
+        // Working connection -> Apple-style toggle for "include in this upload".
+        const label = document.createElement("label");
+        label.className = "switch";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = toggledOn.has(c.platform);
+        input.addEventListener("change", () => {
+          if (input.checked) toggledOn.add(c.platform);
+          else toggledOn.delete(c.platform);
+        });
+        const track = document.createElement("span");
+        track.className = "track";
+        label.appendChild(input);
+        label.appendChild(track);
+        row.appendChild(label);
+      } else if (c.available) {
+        // Configured platform, not connected (or connection errored) ->
+        // a Connect/Reconnect link instead of a toggle.
+        const btn = document.createElement("button");
+        btn.className = "connectLink";
+        btn.type = "button";
+        btn.textContent = c.connected ? "Reconnect" : "Connect";
+        btn.addEventListener("click", () => {
+          window.location.href = `/connections/${c.platform}/start`;
+        });
+        row.appendChild(btn);
+        toggledOn.delete(c.platform);
+      } else {
+        // Not built yet (Threads/YouTube/TikTok/X, for now).
+        toggledOn.delete(c.platform);
+      }
+
+      platformList.appendChild(row);
+    });
+  }
+
+  async function loadConnections() {
+    try {
+      const resp = await fetch("/connections");
+      const data = await resp.json();
+      renderPlatformList(data.connections || []);
+    } catch (err) {
+      platformList.innerHTML = '<p class="note">Couldn\'t load platform connections.</p>';
+    }
+  }
+
+  uploadToPlatformsBtn.addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const platforms = Array.from(toggledOn);
+    if (platforms.length === 0) {
+      alert("Toggle on at least one platform first.");
+      return;
+    }
+    uploadToPlatformsBtn.disabled = true;
+    const original = uploadToPlatformsBtn.textContent;
+    uploadToPlatformsBtn.textContent = "Uploading...";
+    publishResults.style.display = "none";
+    publishResults.innerHTML = "";
+
+    try {
+      const resp = await fetch("/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: currentJobId, platforms }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+      publishResults.style.display = "block";
+      Object.entries(data.results || {}).forEach(([platform, result]) => {
+        const row = document.createElement("div");
+        row.className = "publishResultRow";
+        row.innerHTML = result.ok
+          ? `<span class="r-ok">✓</span><span>${platform}: posted</span>`
+          : `<span class="r-err">✗</span><span>${platform}: ${result.error || "failed"}</span>`;
+        publishResults.appendChild(row);
+      });
+    } catch (err) {
+      publishResults.style.display = "block";
+      publishResults.innerHTML = `<div class="publishResultRow"><span class="r-err">✗</span><span>${err.message}</span></div>`;
+    } finally {
+      uploadToPlatformsBtn.disabled = false;
+      uploadToPlatformsBtn.textContent = original;
+    }
+  });
+
+  // Handle landing back here after an OAuth connect redirect
+  // (?connected=instagram or ?connect_error=...), then clean the URL so a
+  // refresh doesn't re-show the banner.
+  (function handleConnectRedirect() {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("connected");
+    const error = params.get("connect_error");
+    if (connected) {
+      connectBanner.className = "banner ok";
+      connectBanner.style.display = "block";
+      connectBanner.textContent = `${connected} connected successfully.`;
+    } else if (error) {
+      connectBanner.className = "banner err";
+      connectBanner.style.display = "block";
+      connectBanner.textContent = `Couldn't connect: ${decodeURIComponent(error)}`;
+    }
+    if (connected || error) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("connected");
+      url.searchParams.delete("connect_error");
+      window.history.replaceState({}, "", url.pathname);
+    }
+  })();
+
+  loadConnections();
 </script>
 </body>
 </html>

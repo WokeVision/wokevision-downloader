@@ -15,7 +15,7 @@ from transcribe import transcribe_audio
 from caption import generate_captions, generate_on_screen_caption, generate_posting_caption
 from render import render_video
 import db
-from platforms import instagram
+from platforms import instagram, threads
 
 app = FastAPI()
 
@@ -37,6 +37,7 @@ def _startup():
 # routes are all written generically against this registry.
 PLATFORM_MODULES = {
     "instagram": instagram,
+    "threads": threads,
 }
 PLATFORM_LABELS = {
     "instagram": "Instagram",

@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
-from caption import generate_caption
+from caption import generate_on_screen_caption, generate_posting_caption
 from render import render_video
 
 app = FastAPI()
@@ -47,6 +47,12 @@ STAGE_LABELS = {
     "error": "Error",
 }
 
+# How long a finished job's source/output files stick around on disk, so the
+# "change caption" buttons can re-render or re-write a caption without the
+# user having to re-download or re-upload anything. Matches the existing
+# output-file cleanup window.
+KEEP_ALIVE_SECONDS = 1200
+
 
 def _set_job(job_id, **fields):
     with JOBS_LOCK:
@@ -71,18 +77,35 @@ def _cleanup_later(path: str, delay: int = 1200):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption: str) -> dict:
+    base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    return {
+        "video_url": f"{base_url}/files/{job_id}_final.mp4",
+        "on_screen_caption": on_screen_caption,
+        "caption": posting_caption,
+        "download_method": meta.get("method", ""),
+    }
+
+
 def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
     """Shared steps once a source video is on disk, regardless of whether it
     got there via download or direct upload: transcribe -> caption -> render
     -> store the result on the job. Runs in a background thread; all
-    progress/results are communicated back through JOBS[job_id]."""
+    progress/results are communicated back through JOBS[job_id].
+
+    The source file and transcript/meta are kept on the job (rather than
+    deleted immediately) so the "change caption" buttons can regenerate the
+    on-screen caption + re-render, or regenerate just the posting caption,
+    without re-downloading or re-uploading anything."""
     output_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_final.mp4")
     try:
         _set_stage(job_id, "transcribing")
         transcript = transcribe_audio(final_source_path)
+        _set_job(job_id, transcript=transcript, meta=meta, source_path=final_source_path)
 
         _set_stage(job_id, "captioning")
-        on_screen_caption, full_caption = generate_caption(transcript, meta)
+        on_screen_caption = generate_on_screen_caption(transcript, meta)
+        posting_caption = generate_posting_caption(transcript, meta, on_screen_caption)
 
         _set_stage(job_id, "rendering", 0.0)
         render_video(
@@ -92,28 +115,104 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
             progress_cb=lambda frac: _set_stage(job_id, "rendering", frac),
         )
 
-        if os.path.exists(final_source_path):
-            os.remove(final_source_path)
         if not os.path.exists(output_path):
             raise RuntimeError("Render finished but no output file was produced.")
 
-        _cleanup_later(output_path)
-        base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        _cleanup_later(output_path, delay=KEEP_ALIVE_SECONDS)
+        _cleanup_later(final_source_path, delay=KEEP_ALIVE_SECONDS)
         _set_job(
             job_id,
             stage="done", stage_label="Done", progress=1.0, status="done",
-            result={
-                "video_url": f"{base_url}/files/{job_id}_final.mp4",
-                "on_screen_caption": on_screen_caption,
-                "caption": full_caption,
-                "download_method": meta.get("method", ""),
-            },
+            on_screen_caption=on_screen_caption,
+            posting_caption=posting_caption,
+            result=_result_for(job_id, meta, on_screen_caption, posting_caption),
         )
     except Exception as e:
         tb = traceback.format_exc()
         print("PIPELINE FAILED:", tb, flush=True)
         if os.path.exists(final_source_path):
             os.remove(final_source_path)
+        _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
+
+
+def _run_regenerate_video(job_id: str):
+    """Re-generate the on-screen caption and re-render the video against the
+    kept source file, without re-downloading/re-uploading. Used by the
+    "change video caption" button."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    # The endpoint already validated status=="done" and flipped it to
+    # "running" before starting this thread, so we don't re-check it here.
+    if not job:
+        return
+    final_source_path = job.get("source_path")
+    transcript = job.get("transcript", "")
+    meta = job.get("meta", {})
+    prev_on_screen = job.get("on_screen_caption", "")
+    output_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_final.mp4")
+
+    if not final_source_path or not os.path.exists(final_source_path):
+        _set_job(
+            job_id, stage="error", stage_label="Error", status="error",
+            error="The original video file has expired, so the caption can't be "
+                  "regenerated anymore -- please re-process the video.",
+        )
+        return
+
+    try:
+        _set_stage(job_id, "captioning")
+        on_screen_caption = generate_on_screen_caption(transcript, meta, avoid=prev_on_screen)
+        posting_caption = generate_posting_caption(transcript, meta, on_screen_caption)
+
+        _set_stage(job_id, "rendering", 0.0)
+        render_video(
+            source_path=final_source_path,
+            caption_text=on_screen_caption,
+            output_path=output_path,
+            progress_cb=lambda frac: _set_stage(job_id, "rendering", frac),
+        )
+
+        if not os.path.exists(output_path):
+            raise RuntimeError("Render finished but no output file was produced.")
+
+        _cleanup_later(output_path, delay=KEEP_ALIVE_SECONDS)
+        _set_job(
+            job_id,
+            stage="done", stage_label="Done", progress=1.0, status="done",
+            on_screen_caption=on_screen_caption,
+            posting_caption=posting_caption,
+            result=_result_for(job_id, meta, on_screen_caption, posting_caption),
+        )
+    except Exception as e:
+        tb = traceback.format_exc()
+        print("REGENERATE VIDEO FAILED:", tb, flush=True)
+        _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
+
+
+def _run_regenerate_caption(job_id: str):
+    """Re-generate only the posting caption (text-only, no re-render). Used
+    by the "change posting caption" button."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job or job.get("status") != "done":
+        return
+    transcript = job.get("transcript", "")
+    meta = job.get("meta", {})
+    on_screen_caption = job.get("on_screen_caption", "")
+    prev_posting = job.get("posting_caption", "")
+
+    try:
+        posting_caption = generate_posting_caption(
+            transcript, meta, on_screen_caption, avoid=prev_posting
+        )
+        _set_job(
+            job_id,
+            posting_caption=posting_caption,
+            result=_result_for(job_id, meta, on_screen_caption, posting_caption),
+        )
+    except Exception as e:
+        tb = traceback.format_exc()
+        print("REGENERATE CAPTION FAILED:", tb, flush=True)
         _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
 
 
@@ -195,6 +294,43 @@ def get_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Unknown job id")
     return job
+
+
+@app.post("/jobs/{job_id}/regenerate-video")
+def regenerate_video(job_id: str):
+    """Reprocesses the video with a new on-screen (top-of-frame) caption,
+    reusing the kept source file -- no re-download/re-upload needed."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job id")
+        if job.get("status") != "done":
+            raise HTTPException(status_code=409, detail="Job isn't finished yet.")
+        job["status"] = "running"
+        job["stage"] = "captioning"
+        job["stage_label"] = "Writing new caption"
+        job["progress"] = STAGE_WEIGHTS["captioning"][0]
+    threading.Thread(target=_run_regenerate_video, args=(job_id,), daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.post("/jobs/{job_id}/regenerate-caption")
+def regenerate_caption(job_id: str):
+    """Refreshes just the posting caption (the text used when sharing the
+    finished video to Instagram/YouTube/X/TikTok/Threads/Facebook) -- no
+    re-render, so this is near-instant."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job id")
+        if job.get("status") != "done":
+            raise HTTPException(status_code=409, detail="Job isn't finished yet.")
+    _run_regenerate_caption(job_id)
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if job.get("stage") == "error":
+        raise HTTPException(status_code=500, detail=job.get("error", "Something went wrong."))
+    return {"posting_caption": job.get("posting_caption", ""), "result": job.get("result")}
 
 
 @app.get("/files/{filename}")

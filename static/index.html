@@ -59,6 +59,15 @@
   .note { font-size: 13px; color: #666; margin-top: 10px; line-height: 1.4; }
   input[type="file"] { width: 100%; box-sizing: border-box; padding: 10px; border: 1px dashed #ccc; border-radius: 8px; font-size: 14px; }
 
+  .captionBlock { margin-top: 24px; }
+  .captionBlock h3 { margin-bottom: 4px; }
+  .captionBlock p.hint { font-size: 12px; color: #888; margin-top: 0; margin-bottom: 8px; }
+  .actionRow { display: flex; gap: 8px; margin-top: 8px; }
+  .actionRow button { margin-top: 0; width: auto; padding: 10px 14px; font-size: 13px; }
+  button.secondary { background: #fff; color: #111; border: 1px solid #ccc; }
+  button.secondary:disabled { color: #999; border-color: #ddd; background: #fff; }
+  .inlineSpinner { font-size: 13px; color: #666; margin-left: 8px; display: none; }
+
   #progressWrap { display: none; margin-top: 16px; }
   .progressTrack {
     width: 100%;
@@ -117,10 +126,29 @@
   <div id="result">
     <video id="preview" controls></video>
     <a class="dl" id="downloadLink" download="wokevision.mp4">Download video</a>
-    <h3 style="margin-top:24px;">Caption</h3>
-    <div class="row">
-      <textarea id="captionBox" readonly></textarea>
-      <button class="copy" id="copyBtn" type="button">Copy</button>
+
+    <div class="captionBlock">
+      <h3>On-screen caption</h3>
+      <p class="hint">The line overlaid on the video itself, in the white space above it.</p>
+      <div class="row">
+        <textarea id="onScreenBox" readonly></textarea>
+      </div>
+      <div class="actionRow">
+        <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
+      </div>
+    </div>
+
+    <div class="captionBlock">
+      <h3>Posting caption</h3>
+      <p class="hint">For the post itself -- Instagram, YouTube, X, TikTok, Threads &amp; Facebook.</p>
+      <div class="row">
+        <textarea id="captionBox" readonly></textarea>
+        <button class="copy" id="copyBtn" type="button">Copy caption</button>
+      </div>
+      <div class="actionRow">
+        <button class="secondary" id="changePostingCaptionBtn" type="button">Change posting caption</button>
+        <span class="inlineSpinner" id="postingCaptionSpinner">Refreshing...</span>
+      </div>
     </div>
   </div>
 
@@ -132,6 +160,10 @@
     const stageLabel = document.getElementById("stageLabel");
     const etaLabel = document.getElementById("etaLabel");
 
+    // Tracks the job currently shown in the result panel so the two
+    // "change caption" buttons know which job to act on.
+    let currentJobId = null;
+
     function resetUI() {
       resultEl.style.display = "none";
       statusEl.textContent = "";
@@ -141,12 +173,16 @@
       etaLabel.textContent = "";
     }
 
-    function showResult(data) {
+    function showResult(data, jobId) {
+      if (jobId) currentJobId = jobId;
       progressWrap.style.display = "none";
       statusEl.textContent = "Done.";
       const preview = document.getElementById("preview");
-      preview.src = data.video_url;
+      // Cache-bust so a re-rendered video (same URL) actually reloads
+      // instead of showing the browser's cached first render.
+      preview.src = data.video_url + (data.video_url.includes("?") ? "&" : "?") + "t=" + Date.now();
       document.getElementById("downloadLink").href = data.video_url;
+      document.getElementById("onScreenBox").value = data.on_screen_caption || "";
       document.getElementById("captionBox").value = data.caption || "";
       resultEl.style.display = "block";
     }
@@ -159,6 +195,7 @@
     // progress-so-far projection -- a real estimate, not a fixed countdown,
     // so it adjusts as it goes rather than promising a number we can't back up.
     async function pollJob(jobId) {
+      currentJobId = jobId;
       const startedAt = Date.now();
       while (true) {
         let job;
@@ -178,7 +215,7 @@
         }
 
         if (job.status === "done") {
-          showResult(job.result);
+          showResult(job.result, jobId);
           return;
         }
 
@@ -229,10 +266,68 @@
       }
     });
 
-    document.getElementById("copyBtn").addEventListener("click", () => {
+    document.getElementById("copyBtn").addEventListener("click", async () => {
       const box = document.getElementById("captionBox");
-      box.select();
-      document.execCommand("copy");
+      try {
+        await navigator.clipboard.writeText(box.value);
+      } catch (err) {
+        box.select();
+        document.execCommand("copy");
+      }
+      const btn = document.getElementById("copyBtn");
+      const original = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    });
+
+    // "Change video caption": regenerates the on-screen caption AND
+    // re-renders the video with it. This reuses the progress bar since a
+    // full re-render takes real time.
+    const changeVideoCaptionBtn = document.getElementById("changeVideoCaptionBtn");
+    changeVideoCaptionBtn.addEventListener("click", async () => {
+      if (!currentJobId) return;
+      changeVideoCaptionBtn.disabled = true;
+      document.getElementById("changePostingCaptionBtn").disabled = true;
+      progressWrap.style.display = "block";
+      progressFill.style.width = "0%";
+      stageLabel.textContent = "Writing new caption";
+      etaLabel.textContent = "";
+      statusEl.textContent = "";
+      try {
+        const resp = await fetch(`/jobs/${currentJobId}/regenerate-video`, { method: "POST" });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+        await pollJob(data.job_id);
+      } catch (err) {
+        progressWrap.style.display = "none";
+        statusEl.textContent = "Error: " + err.message;
+      } finally {
+        changeVideoCaptionBtn.disabled = false;
+        document.getElementById("changePostingCaptionBtn").disabled = false;
+      }
+    });
+
+    // "Change posting caption": text-only, no re-render, so it's quick --
+    // just a lightweight inline spinner rather than the full progress bar.
+    const changePostingCaptionBtn = document.getElementById("changePostingCaptionBtn");
+    const postingCaptionSpinner = document.getElementById("postingCaptionSpinner");
+    changePostingCaptionBtn.addEventListener("click", async () => {
+      if (!currentJobId) return;
+      changePostingCaptionBtn.disabled = true;
+      changeVideoCaptionBtn.disabled = true;
+      postingCaptionSpinner.style.display = "inline";
+      try {
+        const resp = await fetch(`/jobs/${currentJobId}/regenerate-caption`, { method: "POST" });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+        document.getElementById("captionBox").value = data.posting_caption || "";
+      } catch (err) {
+        statusEl.textContent = "Error: " + err.message;
+      } finally {
+        changePostingCaptionBtn.disabled = false;
+        changeVideoCaptionBtn.disabled = false;
+        postingCaptionSpinner.style.display = "none";
+      }
     });
 
     const uploadForm = document.getElementById("uploadForm");

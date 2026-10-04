@@ -52,7 +52,7 @@ GRAPH_BASE = "https://graph.facebook.com/v23.0"
 AUTHORIZE_URL = "https://www.facebook.com/v23.0/dialog/oauth"
 TOKEN_URL = f"{GRAPH_BASE}/oauth/access_token"
 
-SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement"
+SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement,business_management"
 
 PLATFORM = "facebook"
 

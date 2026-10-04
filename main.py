@@ -16,6 +16,7 @@ from caption import generate_captions, generate_on_screen_caption, generate_post
 from render import render_staged, apply_caption
 import db
 import auth
+import storage
 from platforms import instagram, threads, youtube, x, tiktok, facebook
 
 app = FastAPI()
@@ -351,6 +352,13 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
             result=_result_for(job_id, meta, on_screen_caption, posting_caption),
         )
         _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
+        # Mirror to durable storage (no-op if not configured) so the video
+        # and the files behind fast caption edits survive redeploys.
+        storage.upload_many_async([
+            (output_path, os.path.basename(output_path)),
+            (staged_path, os.path.basename(staged_path)),
+            (final_source_path, os.path.basename(final_source_path)),
+        ])
     except Exception as e:
         tb = traceback.format_exc()
         print("PIPELINE FAILED:", tb, flush=True)
@@ -374,14 +382,16 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
         job = JOBS.get(job_id)
     if not job:
         raise RuntimeError("Unknown job id.")
-    staged_path = job.get("staged_path")
-    final_source_path = job.get("source_path")
+    # Expected names are fixed per job id, so a reopened History entry (or a
+    # post-redeploy job) can pull them back from durable storage on demand.
+    staged_path = job.get("staged_path") or os.path.join(DOWNLOAD_DIR, f"{job_id}_staged.mp4")
+    final_source_path = job.get("source_path") or os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
     meta = job.get("meta", {})
     transcript = job.get("transcript", "")
     output_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_final.mp4")
 
-    have_staged = bool(staged_path and os.path.exists(staged_path))
-    have_source = bool(final_source_path and os.path.exists(final_source_path))
+    have_staged = storage.fetch_to(staged_path, os.path.basename(staged_path))
+    have_source = have_staged or storage.fetch_to(final_source_path, os.path.basename(final_source_path))
     if not have_staged and not have_source:
         raise RuntimeError(
             "The original video file has expired, so the caption can't be "
@@ -423,6 +433,12 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
         result=_result_for(job_id, meta, on_screen_caption, posting_caption),
     )
     _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
+    # The re-rendered final replaces the stored one; staged is re-uploaded
+    # too in case it had to be rebuilt.
+    storage.upload_many_async([
+        (output_path, os.path.basename(output_path)),
+        (staged_path, os.path.basename(staged_path)),
+    ])
 
 
 def _run_regenerate_video(job_id: str):
@@ -741,7 +757,10 @@ def set_on_screen_caption(job_id: str, req: OnScreenCaptionRequest):
 
 @app.get("/files/{filename}")
 def get_file(filename: str):
-    path = os.path.join(DOWNLOAD_DIR, filename)
+    path = os.path.join(DOWNLOAD_DIR, os.path.basename(filename))
+    if not os.path.exists(path):
+        # Local disk is wiped on every redeploy; pull from durable storage.
+        storage.fetch_to(path, os.path.basename(filename))
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="File not found or expired")
     return FileResponse(path, media_type="video/mp4", headers={"Content-Disposition": "inline"})
@@ -907,6 +926,7 @@ def get_publish_job(publish_job_id: str):
 @app.get("/history")
 def list_history():
     entries = db.list_history()
+    stored_keys = storage.list_keys()
     out = []
     for e in entries:
         out.append({
@@ -914,7 +934,9 @@ def list_history():
             "created_at": e["created_at"].isoformat() if e.get("created_at") else None,
             "title": e.get("title"),
             "on_screen_caption": e.get("on_screen_caption"),
-            "video_available": bool(e.get("video_filename")) and os.path.exists(os.path.join(DOWNLOAD_DIR, e["video_filename"])),
+            "video_available": bool(e.get("video_filename")) and (
+                os.path.exists(os.path.join(DOWNLOAD_DIR, e["video_filename"])) or e["video_filename"] in stored_keys
+            ),
             "publish_results": e.get("publish_results") or {},
         })
     return {"history": out}
@@ -927,8 +949,9 @@ def get_history(entry_id: str):
         raise HTTPException(status_code=404, detail="Unknown history entry")
     video_path = os.path.join(DOWNLOAD_DIR, e["video_filename"]) if e.get("video_filename") else None
     source_path = os.path.join(DOWNLOAD_DIR, e["source_filename"]) if e.get("source_filename") else None
-    video_available = bool(video_path and os.path.exists(video_path))
-    source_available = bool(source_path and os.path.exists(source_path))
+    stored_keys = storage.list_keys()
+    video_available = bool(video_path and (os.path.exists(video_path) or e["video_filename"] in stored_keys))
+    source_available = bool(source_path and (os.path.exists(source_path) or e["source_filename"] in stored_keys))
     base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
     return {
         "id": str(e["id"]),
@@ -959,14 +982,14 @@ def reopen_history(entry_id: str):
         raise HTTPException(status_code=404, detail="Unknown history entry")
 
     source_path = os.path.join(DOWNLOAD_DIR, e["source_filename"]) if e.get("source_filename") else None
-    if not source_path or not os.path.exists(source_path):
+    if not source_path or not (os.path.exists(source_path) or (storage.configured() and e.get("source_filename") in storage.list_keys())):
         source_path = None
 
     # The staged (pre-caption) composite isn't tracked in the database --
     # it's a disk-only cache -- but it's always named {id}_staged.mp4 when
     # it exists, so it can just be looked up directly.
     staged_path = os.path.join(DOWNLOAD_DIR, f"{entry_id}_staged.mp4")
-    if not os.path.exists(staged_path):
+    if not os.path.exists(staged_path) and not (storage.configured() and os.path.basename(staged_path) in storage.list_keys()):
         staged_path = None
 
     meta = e.get("meta") or {}

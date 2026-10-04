@@ -10,3 +10,4 @@ bgutil-ytdlp-pot-provider
 psycopg2-binary
 cryptography
 webauthn
+boto3

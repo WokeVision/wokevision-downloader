@@ -849,6 +849,7 @@
     { platform: "youtube", label: "YouTube Shorts" },
     { platform: "tiktok", label: "TikTok" },
     { platform: "x", label: "X" },
+    { platform: "facebook", label: "Facebook" },
   ].map((p) => ({ ...p, checking: true, available: true, connected: false, ok: false, status_label: "Checking..." }));
 
   // Renders the connections list, with an Apple-style "include in this
@@ -1114,7 +1115,7 @@
   }
 
   const PLATFORM_LABELS_SHORT = {
-    instagram: "IG", threads: "Threads", youtube: "YouTube", tiktok: "TikTok", x: "X",
+    instagram: "IG", threads: "Threads", youtube: "YouTube", tiktok: "TikTok", x: "X", facebook: "Facebook",
   };
 
   async function openHistoryEntry(entryId) {

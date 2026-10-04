@@ -16,7 +16,7 @@ from caption import generate_captions, generate_on_screen_caption, generate_post
 from render import render_video
 import db
 import auth
-from platforms import instagram, threads, youtube, x, tiktok
+from platforms import instagram, threads, youtube, x, tiktok, facebook
 
 app = FastAPI()
 
@@ -70,6 +70,7 @@ PLATFORM_MODULES = {
     "youtube": youtube,
     "x": x,
     "tiktok": tiktok,
+    "facebook": facebook,
 }
 PLATFORM_LABELS = {
     "instagram": "Instagram",
@@ -77,8 +78,9 @@ PLATFORM_LABELS = {
     "youtube": "YouTube Shorts",
     "tiktok": "TikTok",
     "x": "X",
+    "facebook": "Facebook",
 }
-PLATFORM_ORDER = ["instagram", "threads", "youtube", "tiktok", "x"]
+PLATFORM_ORDER = ["instagram", "threads", "youtube", "tiktok", "x", "facebook"]
 
 # Short-lived store of in-flight OAuth "state" values (CSRF protection for
 # the connect flow). Single-user app, modest size -- an in-memory dict with

@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
 from caption import generate_captions, generate_on_screen_caption, generate_posting_caption
-from render import render_video
+from render import render_staged, apply_caption
 import db
 import auth
 from platforms import instagram, threads, youtube, x, tiktok, facebook
@@ -306,6 +306,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
     on-screen caption + re-render, or regenerate just the posting caption,
     without re-downloading or re-uploading anything."""
     output_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_final.mp4")
+    staged_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_staged.mp4")
     try:
         _set_stage(job_id, "transcribing")
         transcript = transcribe_audio(final_source_path)
@@ -314,12 +315,24 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
         _set_stage(job_id, "captioning")
         on_screen_caption, posting_caption = generate_captions(transcript, meta)
 
+        # Rendering happens in two cached stages: render_staged() does the
+        # crop/scale/logo/watermark compositing (everything that has nothing
+        # to do with the caption text) and is kept on disk afterwards, so a
+        # later caption-only edit (regenerate-video / set-on-screen-caption)
+        # can call apply_caption() straight against it instead of redoing
+        # this work and re-decoding the original source every time.
         _set_stage(job_id, "rendering", 0.0)
-        render_video(
+        render_staged(
             source_path=final_source_path,
+            output_path=staged_path,
+            progress_cb=lambda frac: _set_stage(job_id, "rendering", frac * 0.5),
+        )
+        _set_job(job_id, staged_path=staged_path)
+        apply_caption(
+            staged_path=staged_path,
             caption_text=on_screen_caption,
             output_path=output_path,
-            progress_cb=lambda frac: _set_stage(job_id, "rendering", frac),
+            progress_cb=lambda frac: _set_stage(job_id, "rendering", 0.5 + frac * 0.5),
         )
         with JOBS_LOCK:
             _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
@@ -328,6 +341,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
             raise RuntimeError("Render finished but no output file was produced.")
 
         _cleanup_later(output_path, delay=KEEP_ALIVE_SECONDS)
+        _cleanup_later(staged_path, delay=KEEP_ALIVE_SECONDS)
         _cleanup_later(final_source_path, delay=KEEP_ALIVE_SECONDS)
         _set_job(
             job_id,
@@ -345,60 +359,112 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
         _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
 
 
+def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: str):
+    """Shared fast re-render: applies on_screen_caption to the job's cached
+    staged video (see render_staged/apply_caption in render.py), rebuilding
+    that staged composite from the kept raw source first if its own
+    keep-alive window has already lapsed, then writes the new output and
+    persists both captions onto the job + history. Used by both the
+    AI-regenerate path ("change video caption") and the manual on-screen-
+    caption editor -- they differ only in how on_screen_caption/
+    posting_caption were produced, not in how the render happens.
+    Raises RuntimeError (with a user-facing message) on failure; callers are
+    expected to catch it and set the job's error state."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        raise RuntimeError("Unknown job id.")
+    staged_path = job.get("staged_path")
+    final_source_path = job.get("source_path")
+    meta = job.get("meta", {})
+    transcript = job.get("transcript", "")
+    output_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_final.mp4")
+
+    have_staged = bool(staged_path and os.path.exists(staged_path))
+    have_source = bool(final_source_path and os.path.exists(final_source_path))
+    if not have_staged and not have_source:
+        raise RuntimeError(
+            "The original video file has expired, so the caption can't be "
+            "changed anymore -- please re-process the video."
+        )
+
+    _set_stage(job_id, "rendering", 0.0)
+    progress_base = 0.0
+    if not have_staged:
+        # The staged composite itself aged out (shouldn't normally happen,
+        # since it shares the source file's keep-alive window) but the raw
+        # source is still here -- rebuild the staged file once, then cache
+        # it again so later caption edits are fast again too.
+        staged_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_staged.mp4")
+        render_staged(
+            source_path=final_source_path, output_path=staged_path,
+            progress_cb=lambda frac: _set_stage(job_id, "rendering", frac * 0.5),
+        )
+        _cleanup_later(staged_path, delay=KEEP_ALIVE_SECONDS)
+        _set_job(job_id, staged_path=staged_path)
+        progress_base = 0.5
+
+    apply_caption(
+        staged_path=staged_path, caption_text=on_screen_caption, output_path=output_path,
+        progress_cb=lambda frac: _set_stage(job_id, "rendering", progress_base + frac * (1 - progress_base)),
+    )
+    with JOBS_LOCK:
+        _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
+
+    if not os.path.exists(output_path):
+        raise RuntimeError("Render finished but no output file was produced.")
+
+    _cleanup_later(output_path, delay=KEEP_ALIVE_SECONDS)
+    _set_job(
+        job_id,
+        stage="done", stage_label="Done", progress=1.0, status="done", eta_seconds=0,
+        on_screen_caption=on_screen_caption,
+        posting_caption=posting_caption,
+        result=_result_for(job_id, meta, on_screen_caption, posting_caption),
+    )
+    _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
+
+
 def _run_regenerate_video(job_id: str):
-    """Re-generate the on-screen caption and re-render the video against the
-    kept source file, without re-downloading/re-uploading. Used by the
-    "change video caption" button."""
+    """Re-generate the on-screen caption (and, to match it, the posting
+    caption) and fast-re-render against the kept staged/source file, without
+    re-downloading/re-uploading or redoing the crop/scale/logo/watermark
+    work. Used by the "change video caption" button."""
     with JOBS_LOCK:
         job = JOBS.get(job_id)
     # The endpoint already validated status=="done" and flipped it to
     # "running" before starting this thread, so we don't re-check it here.
     if not job:
         return
-    final_source_path = job.get("source_path")
     transcript = job.get("transcript", "")
     meta = job.get("meta", {})
     prev_on_screen = job.get("on_screen_caption", "")
-    output_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_final.mp4")
-
-    if not final_source_path or not os.path.exists(final_source_path):
-        _set_job(
-            job_id, stage="error", stage_label="Error", status="error",
-            error="The original video file has expired, so the caption can't be "
-                  "regenerated anymore -- please re-process the video.",
-        )
-        return
 
     try:
         _set_stage(job_id, "captioning")
         on_screen_caption = generate_on_screen_caption(transcript, meta, avoid=prev_on_screen)
         posting_caption = generate_posting_caption(transcript, meta, on_screen_caption)
-
-        _set_stage(job_id, "rendering", 0.0)
-        render_video(
-            source_path=final_source_path,
-            caption_text=on_screen_caption,
-            output_path=output_path,
-            progress_cb=lambda frac: _set_stage(job_id, "rendering", frac),
-        )
-        with JOBS_LOCK:
-            _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
-
-        if not os.path.exists(output_path):
-            raise RuntimeError("Render finished but no output file was produced.")
-
-        _cleanup_later(output_path, delay=KEEP_ALIVE_SECONDS)
-        _set_job(
-            job_id,
-            stage="done", stage_label="Done", progress=1.0, status="done", eta_seconds=0,
-            on_screen_caption=on_screen_caption,
-            posting_caption=posting_caption,
-            result=_result_for(job_id, meta, on_screen_caption, posting_caption),
-        )
-        _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
+        _render_with_caption(job_id, on_screen_caption, posting_caption)
     except Exception as e:
         tb = traceback.format_exc()
         print("REGENERATE VIDEO FAILED:", tb, flush=True)
+        _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
+
+
+def _run_set_on_screen_caption(job_id: str, on_screen_caption: str):
+    """Manual on-screen-caption edit: the text comes straight from the user,
+    so -- unlike "change video caption" -- this never calls OpenAI, it only
+    fast-re-renders. The posting caption is left exactly as it was."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        return
+    posting_caption = job.get("posting_caption", "")
+    try:
+        _render_with_caption(job_id, on_screen_caption, posting_caption)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print("SET ON-SCREEN CAPTION FAILED:", tb, flush=True)
         _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
 
 
@@ -643,6 +709,36 @@ def regenerate_caption(job_id: str):
     return {"posting_caption": job.get("posting_caption", ""), "result": job.get("result")}
 
 
+class OnScreenCaptionRequest(BaseModel):
+    on_screen_caption: str
+
+
+@app.post("/jobs/{job_id}/set-on-screen-caption")
+def set_on_screen_caption(job_id: str, req: OnScreenCaptionRequest):
+    """User-typed on-screen (burned-in) caption edit -- the text is already
+    given, so this skips AI generation entirely and goes straight to the
+    fast render path (see _render_with_caption): it reuses the cached staged
+    video and only re-applies the caption overlay, instead of reprocessing
+    the whole video from the original source."""
+    text = (req.on_screen_caption or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="On-screen caption can't be empty.")
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job id")
+        if job.get("status") != "done":
+            raise HTTPException(status_code=409, detail="Job isn't finished yet.")
+        job["status"] = "running"
+        job["stage"] = "rendering"
+        job["stage_label"] = "Updating caption"
+        job["progress"] = STAGE_WEIGHTS["rendering"][0]
+        job["_stage_started_at"] = time.time()
+        job["eta_seconds"] = _estimate_eta_seconds(job)
+    threading.Thread(target=_run_set_on_screen_caption, args=(job_id, text), daemon=True).start()
+    return {"job_id": job_id}
+
+
 @app.get("/files/{filename}")
 def get_file(filename: str):
     path = os.path.join(DOWNLOAD_DIR, filename)
@@ -866,6 +962,13 @@ def reopen_history(entry_id: str):
     if not source_path or not os.path.exists(source_path):
         source_path = None
 
+    # The staged (pre-caption) composite isn't tracked in the database --
+    # it's a disk-only cache -- but it's always named {id}_staged.mp4 when
+    # it exists, so it can just be looked up directly.
+    staged_path = os.path.join(DOWNLOAD_DIR, f"{entry_id}_staged.mp4")
+    if not os.path.exists(staged_path):
+        staged_path = None
+
     meta = e.get("meta") or {}
     on_screen_caption = e.get("on_screen_caption") or ""
     posting_caption = e.get("posting_caption") or ""
@@ -875,6 +978,7 @@ def reopen_history(entry_id: str):
             "transcript": e.get("transcript") or "",
             "meta": meta,
             "source_path": source_path,
+            "staged_path": staged_path,
             "on_screen_caption": on_screen_caption,
             "posting_caption": posting_caption,
             "result": _result_for(entry_id, meta, on_screen_caption, posting_caption),

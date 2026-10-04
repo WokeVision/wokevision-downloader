@@ -247,80 +247,12 @@ def _probe_duration(path: str):
         return None
 
 
-def render_video(source_path: str, caption_text: str, output_path: str, progress_cb=None):
-    logo_path = os.path.join(ASSET_DIR, "logo.png")
-    watermark_path = os.path.join(ASSET_DIR, "watermark.png")
-    have_logo = os.path.exists(logo_path)
-    have_watermark = os.path.exists(watermark_path)
-
-    caption_img_path, cap_w, cap_h = build_caption_image(caption_text)
-    caption_x = VIDEO_X
-    caption_y = VIDEO_Y - CAPTION_GAP - cap_h
-
-    inputs = ["-i", source_path]
-    filters = [
-        f"color=white:s={CANVAS_W}x{CANVAS_H}[bg];",
-        f"[0:v]crop=iw:iw*4/3:0:(ih-iw*4/3)/2,scale={VIDEO_W}:{VIDEO_H}[vid];",
-        f"[bg][vid]overlay={VIDEO_X}:{VIDEO_Y}[stage];",
-    ]
-    last_label = "stage"
-    next_input_index = 1
-
-    if have_logo:
-        logo_w = round(VIDEO_W * LOGO_WIDTH_RATIO)
-        logo_h = get_scaled_height(logo_path, logo_w)
-        logo_x = VIDEO_X + VIDEO_W - logo_w - LOGO_MARGIN
-        logo_y = VIDEO_Y + LOGO_MARGIN
-        inputs += ["-i", logo_path]
-        filters.append(
-            f"[{next_input_index}:v]scale={logo_w}:{logo_h},format=rgba,"
-            f"colorchannelmixer=aa={LOGO_OPACITY}[logo];"
-        )
-        filters.append(f"[{last_label}][logo]overlay={logo_x}:{logo_y}[stage_logo];")
-        last_label = "stage_logo"
-        next_input_index += 1
-
-    if have_watermark:
-        wm_w = round(VIDEO_W * WATERMARK_WIDTH_RATIO)
-        wm_h = get_scaled_height(watermark_path, wm_w)
-        wm_x = VIDEO_X + round((VIDEO_W - wm_w) / 2)
-        wm_y = VIDEO_Y + round((VIDEO_H - wm_h) / 2)
-        inputs += ["-i", watermark_path]
-        filters.append(
-            f"[{next_input_index}:v]scale={wm_w}:{wm_h},format=rgba,"
-            f"colorchannelmixer=aa={WATERMARK_OPACITY}[wm];"
-        )
-        filters.append(f"[{last_label}][wm]overlay={wm_x}:{wm_y}[stage_wm];")
-        last_label = "stage_wm"
-        next_input_index += 1
-
-    inputs += ["-i", caption_img_path]
-    filters.append(f"[{next_input_index}:v]format=rgba[capimg];")
-    filters.append(f"[{last_label}][capimg]overlay={caption_x}:{caption_y}[final]")
-    next_input_index += 1
-
-    filter_complex = "".join(filters)
-    duration = _probe_duration(source_path) if progress_cb else None
-
-    cmd = [
-        "ffmpeg", "-y",
-        *inputs,
-        "-filter_complex", filter_complex,
-        "-map", "[final]",
-        "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-        "-c:a", "aac",
-        "-movflags", "+faststart",
-        "-shortest",
-        "-nostats", "-progress", "pipe:1",
-        output_path,
-    ]
-
+def _run_ffmpeg(cmd, progress_cb, duration):
+    """Shared ffmpeg runner for both render_staged() and apply_caption() --
+    streams -progress pipe:1's clean "key=value" lines (rather than the
+    human-readable stats line meant for a terminal) into progress_cb, and
+    raises with the tail of stderr on a non-zero exit."""
     print("FFMPEG COMMAND:", " ".join(cmd), flush=True)
-
-    # Run with -progress pipe:1, which emits clean "key=value" lines (rather
-    # than the human-readable stats line meant for a terminal) -- this is
-    # what lets us report real render progress instead of a guess.
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1,
@@ -341,9 +273,140 @@ def render_video(source_path: str, caption_text: str, output_path: str, progress
     proc.wait()
     stderr_text = "\n".join(log_lines)
     print("FFMPEG STDERR:", stderr_text, flush=True)
-
-    if os.path.exists(caption_img_path):
-        os.remove(caption_img_path)
-
     if proc.returncode != 0:
         raise RuntimeError(stderr_text[-4000:])
+
+
+def _build_stage_graph(source_path: str):
+    """Builds the ffmpeg inputs/filters that composite the source video onto
+    the canvas with the logo + watermark -- everything EXCEPT the on-screen
+    caption. Shared by render_staged() (which caches this as its own file)
+    and the historical single-pass path, so the crop/scale/logo/watermark
+    work only has to happen once per source video, not once per caption
+    edit. Returns (inputs, filters, last_label)."""
+    logo_path = os.path.join(ASSET_DIR, "logo.png")
+    watermark_path = os.path.join(ASSET_DIR, "watermark.png")
+    have_logo = os.path.exists(logo_path)
+    have_watermark = os.path.exists(watermark_path)
+
+    inputs = ["-i", source_path]
+    filters = [
+        f"color=white:s={CANVAS_W}x{CANVAS_H}[bg]",
+        f"[0:v]crop=iw:iw*4/3:0:(ih-iw*4/3)/2,scale={VIDEO_W}:{VIDEO_H}[vid]",
+        f"[bg][vid]overlay={VIDEO_X}:{VIDEO_Y}[stage]",
+    ]
+    last_label = "stage"
+    next_input_index = 1
+
+    if have_logo:
+        logo_w = round(VIDEO_W * LOGO_WIDTH_RATIO)
+        logo_h = get_scaled_height(logo_path, logo_w)
+        logo_x = VIDEO_X + VIDEO_W - logo_w - LOGO_MARGIN
+        logo_y = VIDEO_Y + LOGO_MARGIN
+        inputs += ["-i", logo_path]
+        filters.append(
+            f"[{next_input_index}:v]scale={logo_w}:{logo_h},format=rgba,"
+            f"colorchannelmixer=aa={LOGO_OPACITY}[logo]"
+        )
+        filters.append(f"[{last_label}][logo]overlay={logo_x}:{logo_y}[stage_logo]")
+        last_label = "stage_logo"
+        next_input_index += 1
+
+    if have_watermark:
+        wm_w = round(VIDEO_W * WATERMARK_WIDTH_RATIO)
+        wm_h = get_scaled_height(watermark_path, wm_w)
+        wm_x = VIDEO_X + round((VIDEO_W - wm_w) / 2)
+        wm_y = VIDEO_Y + round((VIDEO_H - wm_h) / 2)
+        inputs += ["-i", watermark_path]
+        filters.append(
+            f"[{next_input_index}:v]scale={wm_w}:{wm_h},format=rgba,"
+            f"colorchannelmixer=aa={WATERMARK_OPACITY}[wm]"
+        )
+        filters.append(f"[{last_label}][wm]overlay={wm_x}:{wm_y}[stage_wm]")
+        last_label = "stage_wm"
+        next_input_index += 1
+
+    return inputs, filters, last_label
+
+
+def render_staged(source_path: str, output_path: str, progress_cb=None):
+    """Composites the source video onto the canvas (crop/scale + logo +
+    watermark) WITHOUT the on-screen caption, and encodes it to output_path.
+    This is cached on disk by the caller (main.py keeps it alongside the
+    source/final files, same lifetime) so a later caption-only change can
+    call apply_caption() against this instead of redoing the crop/scale/
+    logo/watermark work and re-decoding the original source every time."""
+    inputs, filters, last_label = _build_stage_graph(source_path)
+    filter_complex = ";".join(filters)
+    duration = _probe_duration(source_path) if progress_cb else None
+
+    cmd = [
+        "ffmpeg", "-y",
+        *inputs,
+        "-filter_complex", filter_complex,
+        "-map", f"[{last_label}]",
+        "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        "-shortest",
+        "-nostats", "-progress", "pipe:1",
+        output_path,
+    ]
+    _run_ffmpeg(cmd, progress_cb, duration)
+
+
+def apply_caption(staged_path: str, caption_text: str, output_path: str, progress_cb=None):
+    """The fast path: overlays just the on-screen caption onto an already-
+    staged video (see render_staged) and re-encodes. The filter graph here is
+    a single overlay onto a canvas-sized input, instead of the full crop +
+    scale + logo + watermark + caption chain -- so changing the caption text
+    no longer repeats compositing work that has nothing to do with the text
+    itself. (The encode pass itself still has to touch every frame, since
+    the caption is burned into the pixels, not a toggleable subtitle track --
+    but this skips re-decoding/re-filtering the original source.)"""
+    caption_img_path, cap_w, cap_h = build_caption_image(caption_text)
+    caption_x = VIDEO_X
+    caption_y = VIDEO_Y - CAPTION_GAP - cap_h
+
+    inputs = ["-i", staged_path, "-i", caption_img_path]
+    filter_complex = (
+        f"[1:v]format=rgba[capimg];[0:v][capimg]overlay={caption_x}:{caption_y}[final]"
+    )
+    duration = _probe_duration(staged_path) if progress_cb else None
+
+    cmd = [
+        "ffmpeg", "-y",
+        *inputs,
+        "-filter_complex", filter_complex,
+        "-map", "[final]",
+        "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        "-shortest",
+        "-nostats", "-progress", "pipe:1",
+        output_path,
+    ]
+    try:
+        _run_ffmpeg(cmd, progress_cb, duration)
+    finally:
+        if os.path.exists(caption_img_path):
+            os.remove(caption_img_path)
+
+
+def render_video(source_path: str, caption_text: str, output_path: str, progress_cb=None):
+    """Back-compat convenience wrapper: stages (crop/scale/logo/watermark)
+    and applies the caption in one call, without keeping the intermediate
+    staged file around. Prefer calling render_staged() + apply_caption()
+    directly (as main.py does) when the staged file should be cached for a
+    later fast caption-only re-render."""
+    staged_path = f"{output_path}.staged.mp4"
+    half = (lambda frac: progress_cb(frac * 0.5)) if progress_cb else None
+    other_half = (lambda frac: progress_cb(0.5 + frac * 0.5)) if progress_cb else None
+    try:
+        render_staged(source_path, staged_path, progress_cb=half)
+        apply_caption(staged_path, caption_text, output_path, progress_cb=other_half)
+    finally:
+        if os.path.exists(staged_path):
+            os.remove(staged_path)

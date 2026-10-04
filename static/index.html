@@ -535,10 +535,12 @@
     <div class="captionGrid">
       <div class="card captionCard">
         <h3>On-screen caption</h3>
-        <p class="hint">The hook overlaid on the video itself, in the white space above it.</p>
-        <textarea id="onScreenBox" readonly></textarea>
+        <p class="hint">The hook overlaid on the video itself, in the white space above it. Edit the text directly, then tap Save caption.</p>
+        <textarea id="onScreenBox"></textarea>
         <div class="actionRow">
           <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
+          <button class="secondary" id="saveOnScreenCaptionBtn" type="button">Save caption</button>
+          <span class="inlineSpinner" id="onScreenCaptionSpinner">Updating...</span>
         </div>
       </div>
 
@@ -772,6 +774,44 @@
     } finally {
       changeVideoCaptionBtn.disabled = false;
       document.getElementById("changePostingCaptionBtn").disabled = false;
+    }
+  });
+
+  // "Save caption" (on-screen): the user's own typed text, no AI call --
+  // just a fast re-render against the cached staged video (see
+  // render.py's apply_caption / main.py's _render_with_caption). Lightweight
+  // inline spinner rather than the full progress bar, same as the posting
+  // caption's "Change caption" button below.
+  const onScreenBox = document.getElementById("onScreenBox");
+  const saveOnScreenCaptionBtn = document.getElementById("saveOnScreenCaptionBtn");
+  const onScreenCaptionSpinner = document.getElementById("onScreenCaptionSpinner");
+  saveOnScreenCaptionBtn.addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const text = onScreenBox.value.trim();
+    if (!text) {
+      alert("On-screen caption can't be empty.");
+      return;
+    }
+    saveOnScreenCaptionBtn.disabled = true;
+    changeVideoCaptionBtn.disabled = true;
+    changePostingCaptionBtn.disabled = true;
+    onScreenCaptionSpinner.style.display = "inline";
+    try {
+      const resp = await fetch(`/jobs/${currentJobId}/set-on-screen-caption`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ on_screen_caption: text }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+      await pollJob(data.job_id);
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      saveOnScreenCaptionBtn.disabled = false;
+      changeVideoCaptionBtn.disabled = false;
+      changePostingCaptionBtn.disabled = false;
+      onScreenCaptionSpinner.style.display = "none";
     }
   });
 

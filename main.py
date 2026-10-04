@@ -40,7 +40,12 @@ def _startup():
 # everyone out including the owner, so auth.configured() gates the whole
 # thing -- if it's not set up yet, the app behaves exactly as before.
 PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/")
-PUBLIC_PATHS = {"/login", "/health", "/tiktokf2TEyaKWItLVEN7IU6Sr0Fyd4eBclual.txt"}
+PUBLIC_PATHS = {
+    "/login",
+    "/health",
+    "/tiktokf2TEyaKWItLVEN7IU6Sr0Fyd4eBclual.txt",
+    "/tiktokXoc4Y47fr98En3040kRaFWp20XNF2taG.txt",
+}
 
 
 @app.middleware("http")

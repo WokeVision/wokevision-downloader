@@ -33,6 +33,7 @@ Flow:
      Instagram/Threads, but via the /{page_id}/video_reels endpoint.
 """
 import os
+import json
 import time
 import requests
 
@@ -126,9 +127,19 @@ def _get_page_token(user_access_token: str) -> dict:
     )
     if resp.status_code != 200:
         raise FacebookError(f"Could not list Facebook Pages: {resp.status_code} {resp.text[:500]}")
-    pages = resp.json().get("data") or []
+    body = resp.json()
+    pages = body.get("data") or []
     if not pages:
-        raise FacebookError("This Facebook account doesn't administer any Page -- connect with the account that manages the WokeVision Page.")
+        # Temporary diagnostic: surface the raw /me/accounts response so we
+        # can see *why* Facebook thinks there are no Pages (e.g. a scopes
+        # mismatch, a business-asset access quirk, pagination/paging info)
+        # rather than guessing blind. Safe to trim back down once this is
+        # understood -- there's nothing secret in this response, it's just
+        # an empty/near-empty Pages list.
+        raise FacebookError(
+            "This Facebook account doesn't administer any Page -- connect with the account that manages the "
+            f"WokeVision Page. (Raw /me/accounts response: {json.dumps(body)[:800]})"
+        )
     if PAGE_ID:
         for p in pages:
             if p.get("id") == PAGE_ID:

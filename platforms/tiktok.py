@@ -308,7 +308,11 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
                 data=chunk,
                 timeout=120,
             )
-            if put_resp.status_code not in (200, 201):
+            # TikTok's own docs: a successful PUT returns 206 ("chunk
+            # processed, more chunks pending") for every intermediate chunk
+            # and 201 ("all parts uploaded") for the final one -- 206 is a
+            # success code here, not an error, so it must be accepted too.
+            if put_resp.status_code not in (200, 201, 206):
                 raise TikTokError(f"Upload chunk {chunk_index} failed: {put_resp.status_code} {put_resp.text[:500]}")
             sent += len(chunk)
     finally:

@@ -34,7 +34,6 @@ Flow:
 """
 import os
 import json
-import time
 import requests
 
 import db
@@ -296,26 +295,26 @@ def publish_video(video_url: str, caption: str) -> dict:
     if upload_resp.status_code != 200:
         raise FacebookError(f"Video upload failed: {upload_resp.text[:500]}")
 
-    # Facebook processes the uploaded video asynchronously; poll until it's
-    # ready to publish (or errors out). Mirrors Instagram/Threads' container
-    # pattern -- up to 5 minutes, checked every 10s.
-    deadline = time.time() + 5 * 60
-    status = "processing"
-    while time.time() < deadline:
-        status_resp = requests.get(
-            f"{GRAPH_BASE}/{video_id}",
-            params={"fields": "status", "access_token": access_token},
-            timeout=20,
-        )
-        status_data = status_resp.json().get("status") or {}
-        phase = status_data.get("video_status") or status_data.get("uploading_phase", {}).get("status")
-        if phase == "ready":
-            break
-        if phase == "error":
-            raise FacebookError(f"Facebook failed to process the video: {status_data}")
-        time.sleep(10)
-    else:
-        raise FacebookError("Timed out waiting for Facebook to process the video.")
+    # Meta's own Reels Publishing guide goes start -> upload -> finish with
+    # no documented "wait until video_status == ready" step in between --
+    # unlike Instagram/Threads' container flow, Reels processing happens
+    # after publish, not before it. Waiting here for "ready" was copied from
+    # that Instagram/Threads pattern, but Reels can legitimately sit in
+    # "processing" past any reasonable timeout, which is why this used to
+    # hang for the full 5 minutes before failing on every post. We still do
+    # one quick check so a genuinely failed upload (video_status == "error")
+    # is caught immediately with a clear message, but otherwise proceed
+    # straight to "finish" per the documented flow instead of blocking on a
+    # status value that may never arrive in time.
+    status_resp = requests.get(
+        f"{GRAPH_BASE}/{video_id}",
+        params={"fields": "status", "access_token": access_token},
+        timeout=20,
+    )
+    status_data = status_resp.json().get("status") or {}
+    phase = status_data.get("video_status")
+    if phase == "error":
+        raise FacebookError(f"Facebook failed to process the video: {status_data}")
 
     # Step 3: publish the processed video as a Reel.
     publish_resp = requests.post(

@@ -542,6 +542,16 @@ def tiktok_site_verification():
     return PlainTextResponse("tiktok-developers-site-verification=f2TEyaKWItLVEN7IU6Sr0Fyd4eBclual")
 
 
+# Second verification file -- issued when verifying the https://wokevision.com/
+# URL prefix against the Production TikTok app (the token above was issued
+# for the old onrender.com URL / a different app). Kept alongside the first
+# rather than replacing it, since TikTok doesn't let you remove a verified
+# property from its side and we don't need to either.
+@app.get("/tiktokXoc4Y47fr98En3040kRaFWp20XNF2taG.txt")
+def tiktok_site_verification_2():
+    return PlainTextResponse("tiktok-developers-site-verification=Xoc4Y47fr98En3040kRaFWp20XNF2taG")
+
+
 @app.post("/process")
 def process(req: ProcessRequest):
     job_id = str(uuid.uuid4())

@@ -594,15 +594,62 @@ MESSAGE_SUPPORT = {
 }
 
 
+# Platforms whose DMs are actually wired up. Each needs list_conversations /
+# get_thread / send_message on its module.
+MESSAGING_MODULES = {"instagram": instagram}
+
+
 @app.get("/api/messages")
 def api_messages():
-    return {
-        "conversations": [],
-        "platforms": [
-            {"platform": p, "label": PLATFORM_LABELS[p], "status": MESSAGE_SUPPORT[p][0], "note": MESSAGE_SUPPORT[p][1]}
-            for p in PLATFORM_ORDER
-        ],
-    }
+    convos, status = [], []
+    for p in PLATFORM_ORDER:
+        mod = MESSAGING_MODULES.get(p)
+        if not mod:
+            st, note = MESSAGE_SUPPORT[p]
+        else:
+            try:
+                convos += mod.list_conversations()
+                st, note = "live", "Connected -- messages from this platform appear in the inbox."
+            except Exception as e:
+                msg = str(e)
+                if "not connected" in msg.lower():
+                    st, note = "needs_access", "Connect Instagram in the Video Editor first."
+                else:
+                    st, note = "needs_access", "Reconnect Instagram in the Video Editor to grant message access, and make sure 'Allow access to messages' is on in the Instagram app. (" + msg[:120] + ")"
+        status.append({"platform": p, "label": PLATFORM_LABELS[p], "status": st, "note": note})
+    convos.sort(key=lambda c: c.get("updated") or "", reverse=True)
+    return {"conversations": convos, "platforms": status}
+
+
+@app.get("/api/messages/{platform}/{conversation_id}")
+def api_message_thread(platform: str, conversation_id: str):
+    mod = MESSAGING_MODULES.get(platform)
+    if not mod:
+        raise HTTPException(status_code=404, detail="Messaging isn't available for this platform.")
+    try:
+        return {"messages": mod.get_thread(conversation_id)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)[:300])
+
+
+class ReplyRequest(BaseModel):
+    recipient_id: str
+    text: str
+
+
+@app.post("/api/messages/{platform}/reply")
+def api_message_reply(platform: str, req: ReplyRequest):
+    mod = MESSAGING_MODULES.get(platform)
+    text = (req.text or "").strip()
+    if not mod:
+        raise HTTPException(status_code=404, detail="Messaging isn't available for this platform.")
+    if not text:
+        raise HTTPException(status_code=400, detail="Message is empty.")
+    try:
+        mod.send_message(req.recipient_id, text[:1000])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)[:300])
+    return {"ok": True}
 
 
 @app.get("/api/insights/{platform}")

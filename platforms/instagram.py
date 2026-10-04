@@ -34,7 +34,8 @@ LONG_LIVED_EXCHANGE_URL = "https://graph.instagram.com/access_token"
 REFRESH_URL = "https://graph.instagram.com/refresh_access_token"
 GRAPH_BASE = "https://graph.instagram.com/v23.0"
 
-SCOPES = "instagram_business_basic,instagram_business_content_publish"
+SCOPES = ("instagram_business_basic,instagram_business_content_publish,"
+          "instagram_business_manage_insights,instagram_business_manage_messages")
 
 PLATFORM = "instagram"
 
@@ -252,3 +253,77 @@ def publish_video(video_url: str, caption: str) -> dict:
     if publish_resp.status_code != 200:
         raise InstagramError(f"Could not publish: {publish_resp.text[:500]}")
     return {"media_id": publish_resp.json().get("id")}
+
+
+# --- Direct messages + account insights (need the manage_messages /
+# manage_insights scopes; until Instagram is reconnected with them these
+# raise InstagramError with Instagram's own message, which callers treat as
+# "permission not granted yet" rather than a failure) ----------------------
+
+def _auth():
+    conn = db.get_connection(PLATFORM)
+    if not conn or not conn.get("access_token"):
+        raise InstagramError("Instagram isn't connected.")
+    refresh_if_needed()
+    conn = db.get_connection(PLATFORM)
+    uid = conn.get("extra", {}).get("ig_user_id")
+    if not uid:
+        raise InstagramError("No Instagram account id on file -- try reconnecting.")
+    return conn["access_token"], uid
+
+
+def list_conversations(limit: int = 25) -> list:
+    token, uid = _auth()
+    r = requests.get(f"{GRAPH_BASE}/me/conversations", params={
+        "platform": "instagram", "limit": limit, "access_token": token,
+        "fields": "id,updated_time,participants,messages.limit(1){message,created_time,from}"}, timeout=25)
+    if r.status_code != 200:
+        raise InstagramError(r.text[:400])
+    out = []
+    for c in r.json().get("data", []):
+        others = [p for p in c.get("participants", {}).get("data", []) if p.get("id") != uid]
+        other = others[0] if others else {}
+        last = (c.get("messages", {}).get("data") or [{}])[0]
+        out.append({
+            "id": c["id"], "platform": PLATFORM,
+            "with_id": other.get("id"), "with_name": other.get("username") or other.get("id") or "Unknown",
+            "last_text": last.get("message") or "", "updated": c.get("updated_time"),
+        })
+    return out
+
+
+def get_thread(conversation_id: str, limit: int = 40) -> list:
+    token, uid = _auth()
+    r = requests.get(f"{GRAPH_BASE}/{conversation_id}", params={
+        "fields": f"messages.limit({limit}){{id,message,created_time,from}}", "access_token": token}, timeout=25)
+    if r.status_code != 200:
+        raise InstagramError(r.text[:400])
+    msgs = r.json().get("messages", {}).get("data", [])
+    return [{"id": m["id"], "text": m.get("message") or "(attachment)", "ts": m.get("created_time"),
+             "mine": (m.get("from") or {}).get("id") == uid} for m in reversed(msgs)]
+
+
+def send_message(recipient_id: str, text: str) -> dict:
+    token, uid = _auth()
+    r = requests.post(f"{GRAPH_BASE}/{uid}/messages", params={"access_token": token},
+                      json={"recipient": {"id": recipient_id}, "message": {"text": text}}, timeout=25)
+    if r.status_code != 200:
+        raise InstagramError(r.text[:400])
+    return r.json()
+
+
+def account_insights(days: int = 30) -> dict:
+    """Account-level views / reach over the last `days` days."""
+    import time as _t
+    token, uid = _auth()
+    now = int(_t.time())
+    out = {}
+    for metric in ("views", "reach"):
+        r = requests.get(f"{GRAPH_BASE}/{uid}/insights", params={
+            "metric": metric, "period": "day", "metric_type": "total_value",
+            "since": now - days * 86400, "until": now, "access_token": token}, timeout=25)
+        if r.status_code != 200:
+            raise InstagramError(r.text[:400])
+        data = r.json().get("data") or []
+        out[metric] = (data[0].get("total_value") or {}).get("value") if data else None
+    return out

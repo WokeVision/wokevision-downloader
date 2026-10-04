@@ -93,9 +93,14 @@ def _instagram():
                 "views": None, "likes": p.get("like_count"), "comments": p.get("comments_count"),
                 "shares": None, "type": p.get("media_type"),
             })
-    out = _empty("instagram", "limited", "Views and reach need the Instagram insights permission (reconnect later to grant it).",
-                 "@" + (me.get("username") or ""))
-    out["totals"].update(followers=me.get("followers_count"), posts=me.get("media_count"),
+    views = None
+    try:
+        views = m.account_insights(30).get("views")
+        out_state, out_note = "ok", None
+    except Exception:
+        out_state, out_note = "limited", "Views need the Instagram insights permission -- reconnect Instagram in the Video Editor to grant it."
+    out = _empty("instagram", out_state, out_note, "@" + (me.get("username") or ""))
+    out["totals"].update(followers=me.get("followers_count"), posts=me.get("media_count"), views=views,
                          likes=_sum(posts, "likes"), comments=_sum(posts, "comments"))
     out["posts"] = posts
     return out

@@ -108,8 +108,9 @@
   .msgRow .pt { font-size: 12.5px; color: var(--text-faint); margin-top: 2px; line-height: 1.45; }
   .badge { font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: rgba(255,255,255,0.08); color: var(--text-dim); white-space: nowrap; margin-left: auto; }
   .badge.soon { background: rgba(255,214,10,0.14); color: #FFD60A; }
-  .inbox { display: grid; grid-template-columns: 1fr; gap: 12px; }
-  @media (min-width: 800px) { .inbox { grid-template-columns: 320px 1fr; } }
+  .inbox { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .inbox > * { min-width: 0; }
+  @media (min-width: 800px) { .inbox { grid-template-columns: 320px minmax(0, 1fr); } }
   .convo { display: flex; gap: 10px; padding: 11px 8px; border-radius: var(--radius-sm); cursor: pointer; align-items: center; }
   .convo:hover, .convo.active { background: var(--surface-strong); }
   .thread { min-height: 280px; display: flex; flex-direction: column; }
@@ -117,9 +118,9 @@
   .bubble { max-width: 78%; padding: 9px 13px; border-radius: 18px; font-size: 14.5px; line-height: 1.4; background: var(--surface-strong); align-self: flex-start; }
   .bubble.me { align-self: flex-end; background: var(--accent); color: #fff; }
   .replyBar { display: flex; gap: 8px; }
-  .replyBar input { flex: 1; background: rgba(0,0,0,0.35); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 12px 16px; font-size: 16px; outline: none; font-family: inherit; }
+  .replyBar input { flex: 1; min-width: 0; width: 100%; background: rgba(0,0,0,0.35); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 12px 16px; font-size: 16px; outline: none; font-family: inherit; }
   .replyBar input:focus { border-color: var(--accent); }
-  .replyBar button { border: none; background: var(--accent); color: #fff; font-weight: 700; padding: 0 20px; border-radius: 999px; cursor: pointer; font-size: 14.5px; }
+  .replyBar button { flex: none; border: none; background: var(--accent); color: #fff; font-weight: 700; padding: 0 20px; border-radius: 999px; cursor: pointer; font-size: 14.5px; }
   .replyBar button:disabled { background: rgba(255,255,255,0.12); color: var(--text-faint); }
 
   .skeleton { height: 90px; border-radius: var(--radius-md); background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.09), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: sh 1.3s linear infinite; }
@@ -385,15 +386,55 @@
       var convos = m.conversations || [];
       if (!convos.length) empty.textContent = "No conversations yet. Platforms appear below as their messaging access is switched on.";
       else {
-        empty.outerHTML = '<div class="inbox"><div id="convoList"></div><div class="thread" id="thread"><div class="empty">Select a conversation</div></div></div>';
-        // Inbox rendering lands with the first platform's messaging access.
+        empty.outerHTML = '<div class="inbox"><div id="convoList"></div><div class="thread card" id="thread" style="margin:0"><div class="empty">Select a conversation</div></div></div>';
+        var list = document.getElementById("convoList");
+        list.innerHTML = convos.map(function (c, i) {
+          var p = BY_ID[c.platform] || {};
+          return '<div class="convo" data-ix="' + i + '"><i class="dot" style="background:' + (p.color || "#888") + '"></i><div style="min-width:0;flex:1">' +
+            '<div style="font-weight:600;font-size:14px;display:flex;gap:8px;align-items:baseline"><span>' + esc(c.with_name) + '</span><span class="badge" style="margin-left:auto">' + esc(p.label || c.platform) + '</span></div>' +
+            '<div style="font-size:12.5px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">' + esc(c.last_text) + '</div></div></div>';
+        }).join("");
+        list.addEventListener("click", function (e) {
+          var row = e.target.closest(".convo"); if (!row) return;
+          Array.prototype.forEach.call(list.children, function (x) { x.classList.remove("active"); });
+          row.classList.add("active"); openThread(convos[+row.dataset.ix]);
+        });
       }
       st.innerHTML = '<div class="card"><h3>Platform status</h3><div class="msgGrid">' + (m.platforms || []).map(function (p) {
         var c = BY_ID[p.platform] || {};
         return '<div class="msgRow"><i class="dot" style="background:' + (c.color || "#888") + ';margin-top:6px"></i><div><div class="pn">' + esc(p.label) + '</div><div class="pt">' + esc(p.note) + '</div></div>' +
-          '<span class="badge ' + (p.status === "needs_access" ? "soon" : "") + '">' + (p.status === "needs_access" ? "Needs access" : p.status === "unsupported" ? "No DM API" : "Live") + '</span></div>';
+          '<span class="badge ' + (p.status === "needs_access" ? "soon" : "") + '"' + (p.status === "live" ? ' style="background:rgba(48,209,88,0.16);color:#30D158"' : "") + '>' + (p.status === "needs_access" ? "Needs access" : p.status === "unsupported" ? "No DM API" : "Live") + '</span></div>';
       }).join("") + '</div></div>';
     }).catch(function () { var e = document.getElementById("inboxEmpty"); if (e) e.textContent = "Couldn't load messages."; });
+  }
+
+  function openThread(c) {
+    var box = document.getElementById("thread"), p = BY_ID[c.platform] || {};
+    box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><i class="dot" style="background:' + (p.color || "#888") + '"></i>' +
+      '<b>' + esc(c.with_name) + '</b><span class="badge" style="margin-left:6px">' + esc(p.label || c.platform) + '</span></div>' +
+      '<div class="bubbles" id="bubbles"><div class="empty">Loading…</div></div><div id="replyErr" class="banner err" style="display:none"></div>' +
+      '<div class="replyBar"><input id="replyText" placeholder="Reply on ' + esc(p.label || c.platform) + '…" maxlength="1000" /><button id="replySend">Send</button></div>';
+    function loadT() {
+      fetch("/api/messages/" + c.platform + "/" + encodeURIComponent(c.id)).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || "Failed"); return j; }); })
+        .then(function (j) {
+          var b = document.getElementById("bubbles"); if (!b) return;
+          b.innerHTML = j.messages.length ? j.messages.map(function (m) { return '<div class="bubble' + (m.mine ? " me" : "") + '">' + esc(m.text) + '</div>'; }).join("") : '<div class="empty">No messages.</div>';
+          b.scrollTop = b.scrollHeight;
+        }).catch(function (e) { var b = document.getElementById("bubbles"); if (b) b.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+    }
+    loadT();
+    var input = document.getElementById("replyText"), btn = document.getElementById("replySend"), err = document.getElementById("replyErr");
+    function send() {
+      var text = input.value.trim(); if (!text) return;
+      btn.disabled = true; err.style.display = "none";
+      fetch("/api/messages/" + c.platform + "/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipient_id: c.with_id, text: text }) })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || "Couldn't send"); }); })
+        .then(function () { input.value = ""; loadT(); })
+        .catch(function (e) { err.textContent = "Not sent: " + e.message + " (Instagram only allows replies within 24 hours of their last message.)"; err.style.display = "block"; })
+        .finally(function () { btn.disabled = false; });
+    }
+    btn.addEventListener("click", send);
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") send(); });
   }
 
   /* ---------- render + events ---------- */

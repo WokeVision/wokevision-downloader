@@ -1,0 +1,332 @@
+"""Read-only stats for the Dashboards page, normalised across platforms.
+
+Every fetcher returns the same shape so the UI can compare or combine them:
+
+  {
+    "platform": "instagram", "label": "Instagram",
+    "state": "ok" | "not_connected" | "limited" | "error",
+    "note": str | None,           # shown under the platform name
+    "account": str | None,        # @handle / channel / page name
+    "totals": {"followers": int|None, "posts": int|None, "views": int|None,
+               "likes": int|None, "comments": int|None, "shares": int|None},
+    "posts": [{"id","title","url","thumb","ts","views","likes","comments","shares"}],
+  }
+
+A metric a platform doesn't hand us with the permissions currently granted
+is None (the UI shows "n/a" rather than a misleading 0). "limited" means the
+connection works but some numbers need an extra permission -- `note` says
+which. Nothing here ever writes to a platform.
+"""
+import time
+import datetime
+import threading
+
+import requests
+
+import db
+
+LABELS = {
+    "instagram": "Instagram", "threads": "Threads", "youtube": "YouTube",
+    "tiktok": "TikTok", "x": "X", "facebook": "Facebook",
+}
+ORDER = ["instagram", "threads", "youtube", "tiktok", "x", "facebook"]
+_TTL = 300
+_CACHE = {}
+_LOCK = threading.Lock()
+
+
+def _empty(platform, state, note=None, account=None):
+    return {
+        "platform": platform, "label": LABELS[platform], "state": state,
+        "note": note, "account": account,
+        "totals": {k: None for k in ("followers", "posts", "views", "likes", "comments", "shares")},
+        "posts": [],
+    }
+
+
+def _get(url, **kw):
+    kw.setdefault("timeout", 20)
+    return requests.get(url, **kw)
+
+
+def _sum(posts, key):
+    vals = [p[key] for p in posts if p.get(key) is not None]
+    return sum(vals) if vals else None
+
+
+def _conn(platform, module):
+    """Returns the decrypted connection after making sure the token is fresh,
+    or None if the platform isn't connected."""
+    c = db.get_connection(platform)
+    if not c or not c.get("access_token"):
+        return None
+    try:
+        module.refresh_if_needed()
+        c = db.get_connection(platform) or c
+    except Exception:
+        pass
+    return c
+
+
+# --- Instagram -------------------------------------------------------------
+
+def _instagram():
+    from platforms import instagram as m
+    c = _conn("instagram", m)
+    if not c:
+        return _empty("instagram", "not_connected", "Connect Instagram in the Video Editor to see stats.")
+    tok = c["access_token"]
+    r = _get(f"{m.GRAPH_BASE}/me", params={
+        "fields": "username,followers_count,follows_count,media_count", "access_token": tok})
+    if r.status_code != 200:
+        return _empty("instagram", "error", r.text[:300])
+    me = r.json()
+    r = _get(f"{m.GRAPH_BASE}/me/media", params={
+        "fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count",
+        "limit": 50, "access_token": tok})
+    posts = []
+    if r.status_code == 200:
+        for p in r.json().get("data", []):
+            posts.append({
+                "id": p["id"], "title": (p.get("caption") or "")[:140], "url": p.get("permalink"),
+                "thumb": p.get("thumbnail_url") or p.get("media_url"), "ts": p.get("timestamp"),
+                "views": None, "likes": p.get("like_count"), "comments": p.get("comments_count"),
+                "shares": None, "type": p.get("media_type"),
+            })
+    out = _empty("instagram", "limited", "Views and reach need the Instagram insights permission (reconnect later to grant it).",
+                 "@" + (me.get("username") or ""))
+    out["totals"].update(followers=me.get("followers_count"), posts=me.get("media_count"),
+                         likes=_sum(posts, "likes"), comments=_sum(posts, "comments"))
+    out["posts"] = posts
+    return out
+
+
+# --- Threads ---------------------------------------------------------------
+
+def _threads():
+    from platforms import threads as m
+    c = _conn("threads", m)
+    if not c:
+        return _empty("threads", "not_connected", "Connect Threads in the Video Editor to see stats.")
+    tok = c["access_token"]
+    r = _get(f"{m.GRAPH_BASE}/me/threads", params={
+        "fields": "id,text,permalink,timestamp,media_type,media_url,thumbnail_url", "limit": 50, "access_token": tok})
+    if r.status_code != 200:
+        return _empty("threads", "error", r.text[:300])
+    posts = [{
+        "id": p["id"], "title": (p.get("text") or "")[:140], "url": p.get("permalink"),
+        "thumb": p.get("thumbnail_url") or p.get("media_url"), "ts": p.get("timestamp"),
+        "views": None, "likes": None, "comments": None, "shares": None,
+    } for p in r.json().get("data", [])]
+    out = _empty("threads", "limited", "Views, likes and followers need the Threads insights permission (reconnect later to grant it).",
+                 "@" + (c.get("extra", {}).get("username") or ""))
+    out["totals"]["posts"] = len(posts)
+    out["posts"] = posts
+    return out
+
+
+# --- YouTube ---------------------------------------------------------------
+
+def _youtube():
+    from platforms import youtube as m
+    c = _conn("youtube", m)
+    if not c:
+        return _empty("youtube", "not_connected", "Connect YouTube in the Video Editor to see stats.")
+    h = {"Authorization": f"Bearer {c['access_token']}"}
+    r = _get("https://www.googleapis.com/youtube/v3/channels",
+             params={"part": "snippet,statistics,contentDetails", "mine": "true"}, headers=h)
+    if r.status_code != 200:
+        return _empty("youtube", "error", r.text[:300])
+    items = r.json().get("items") or []
+    if not items:
+        return _empty("youtube", "error", "No YouTube channel found.")
+    ch = items[0]
+    st = ch.get("statistics", {})
+    uploads = ch.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads")
+    posts = []
+    if uploads:
+        pl = _get("https://www.googleapis.com/youtube/v3/playlistItems",
+                  params={"part": "contentDetails", "playlistId": uploads, "maxResults": 50}, headers=h)
+        ids = [i["contentDetails"]["videoId"] for i in pl.json().get("items", [])] if pl.status_code == 200 else []
+        if ids:
+            vr = _get("https://www.googleapis.com/youtube/v3/videos",
+                      params={"part": "snippet,statistics", "id": ",".join(ids)}, headers=h)
+            for v in (vr.json().get("items", []) if vr.status_code == 200 else []):
+                s = v.get("statistics", {})
+                th = v["snippet"].get("thumbnails", {})
+                posts.append({
+                    "id": v["id"], "title": v["snippet"].get("title", ""),
+                    "url": f"https://www.youtube.com/watch?v={v['id']}",
+                    "thumb": (th.get("medium") or th.get("default") or {}).get("url"),
+                    "ts": v["snippet"].get("publishedAt"),
+                    "views": int(s.get("viewCount", 0)), "likes": int(s.get("likeCount", 0)),
+                    "comments": int(s.get("commentCount", 0)), "shares": None,
+                })
+    out = _empty("youtube", "ok", None, ch["snippet"].get("title"))
+    out["totals"].update(
+        followers=None if st.get("hiddenSubscriberCount") else int(st.get("subscriberCount", 0)),
+        posts=int(st.get("videoCount", 0)), views=int(st.get("viewCount", 0)),
+        likes=_sum(posts, "likes"), comments=_sum(posts, "comments"))
+    out["posts"] = posts
+    return out
+
+
+# --- TikTok ----------------------------------------------------------------
+
+def _tiktok():
+    from platforms import tiktok as m
+    c = _conn("tiktok", m)
+    if not c:
+        return _empty("tiktok", "not_connected", "Connect TikTok in the Video Editor to see stats.")
+    out = _empty("tiktok", "limited",
+                 "TikTok only shares follower, view and like counts after its app review is approved and the stats permission is granted.",
+                 c.get("extra", {}).get("display_name"))
+    return out
+
+
+# --- X ---------------------------------------------------------------------
+
+def _x():
+    from platforms import x as m
+    c = _conn("x", m)
+    if not c:
+        return _empty("x", "not_connected", "Connect X in the Video Editor to see stats.")
+    h = {"Authorization": f"Bearer {c['access_token']}"}
+    uid = c.get("extra", {}).get("user_id")
+    r = _get("https://api.x.com/2/users/me", params={"user.fields": "public_metrics,username"}, headers=h)
+    if r.status_code != 200:
+        return _empty("x", "error", f"X returned {r.status_code}: {r.text[:200]}")
+    me = r.json().get("data", {})
+    pm = me.get("public_metrics", {})
+    posts = []
+    tr = _get(f"https://api.x.com/2/users/{uid or me.get('id')}/tweets",
+              params={"max_results": 50, "tweet.fields": "public_metrics,created_at"}, headers=h)
+    note = None
+    if tr.status_code == 200:
+        for t in tr.json().get("data", []):
+            p = t.get("public_metrics", {})
+            posts.append({
+                "id": t["id"], "title": t.get("text", "")[:140],
+                "url": f"https://x.com/{me.get('username')}/status/{t['id']}", "thumb": None,
+                "ts": t.get("created_at"), "views": p.get("impression_count"),
+                "likes": p.get("like_count"), "comments": p.get("reply_count"),
+                "shares": (p.get("retweet_count") or 0) + (p.get("quote_count") or 0),
+            })
+    else:
+        note = "Post-level stats weren't available from X with the current plan."
+    out = _empty("x", "ok" if not note else "limited", note, "@" + (me.get("username") or ""))
+    out["totals"].update(followers=pm.get("followers_count"), posts=pm.get("tweet_count"),
+                         views=_sum(posts, "views"), likes=_sum(posts, "likes"),
+                         comments=_sum(posts, "comments"), shares=_sum(posts, "shares"))
+    out["posts"] = posts
+    return out
+
+
+# --- Facebook --------------------------------------------------------------
+
+def _facebook():
+    from platforms import facebook as m
+    c = _conn("facebook", m)
+    if not c:
+        return _empty("facebook", "not_connected", "Connect Facebook in the Video Editor to see stats.")
+    tok, pid = c["access_token"], c.get("extra", {}).get("page_id")
+    r = _get(f"{m.GRAPH_BASE}/{pid}", params={"fields": "name,fan_count,followers_count", "access_token": tok})
+    if r.status_code != 200:
+        return _empty("facebook", "error", r.text[:300])
+    pg = r.json()
+    posts = []
+    pr = _get(f"{m.GRAPH_BASE}/{pid}/posts", params={
+        "fields": "id,message,permalink_url,created_time,full_picture,shares,"
+                  "reactions.summary(true).limit(0),comments.summary(true).limit(0)",
+        "limit": 50, "access_token": tok})
+    if pr.status_code == 200:
+        for p in pr.json().get("data", []):
+            posts.append({
+                "id": p["id"], "title": (p.get("message") or "")[:140], "url": p.get("permalink_url"),
+                "thumb": p.get("full_picture"), "ts": p.get("created_time"), "views": None,
+                "likes": p.get("reactions", {}).get("summary", {}).get("total_count"),
+                "comments": p.get("comments", {}).get("summary", {}).get("total_count"),
+                "shares": (p.get("shares") or {}).get("count", 0),
+            })
+    out = _empty("facebook", "limited", "Reel views and reach need the Page insights permission (reconnect later to grant it).",
+                 pg.get("name"))
+    out["totals"].update(followers=pg.get("followers_count", pg.get("fan_count")), posts=len(posts),
+                         likes=_sum(posts, "likes"), comments=_sum(posts, "comments"), shares=_sum(posts, "shares"))
+    out["posts"] = posts
+    return out
+
+
+_FETCHERS = {"instagram": _instagram, "threads": _threads, "youtube": _youtube,
+             "tiktok": _tiktok, "x": _x, "facebook": _facebook}
+
+
+def get(platform: str, force: bool = False) -> dict:
+    if platform not in _FETCHERS:
+        raise KeyError(platform)
+    now = time.time()
+    with _LOCK:
+        hit = _CACHE.get(platform)
+        if hit and not force and now - hit[0] < _TTL:
+            return hit[1]
+    try:
+        data = _FETCHERS[platform]()
+    except Exception as e:
+        print(f"INSIGHTS FAILED ({platform}): {e}", flush=True)
+        data = _empty(platform, "error", f"Couldn't load stats: {e}"[:300])
+    with _LOCK:
+        _CACHE[platform] = (now, data)
+    try:
+        _snapshot(data)
+    except Exception as e:
+        print(f"INSIGHTS SNAPSHOT FAILED ({platform}): {e}", flush=True)
+    return data
+
+
+# --- follower history ------------------------------------------------------
+# Platforms only give today's follower count, so to draw a growth line we
+# store one reading per platform per day whenever the dashboard is opened.
+
+def init_snapshots():
+    if not db.configured():
+        return
+    with db._conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS insight_snapshots (
+                    platform TEXT NOT NULL, day DATE NOT NULL,
+                    followers BIGINT, posts BIGINT, views BIGINT, likes BIGINT, comments BIGINT,
+                    PRIMARY KEY (platform, day)
+                )""")
+
+
+def _snapshot(data):
+    if not db.configured() or data["state"] not in ("ok", "limited"):
+        return
+    t = data["totals"]
+    if t.get("followers") is None and t.get("views") is None:
+        return
+    day = datetime.datetime.now(datetime.timezone.utc).date()
+    with db._conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO insight_snapshots (platform, day, followers, posts, views, likes, comments)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (platform, day) DO UPDATE SET followers=EXCLUDED.followers,
+                  posts=EXCLUDED.posts, views=EXCLUDED.views, likes=EXCLUDED.likes, comments=EXCLUDED.comments
+            """, (data["platform"], day, t.get("followers"), t.get("posts"), t.get("views"),
+                  t.get("likes"), t.get("comments")))
+
+
+def history(days: int = 90) -> dict:
+    if not db.configured():
+        return {}
+    import psycopg2.extras
+    out = {}
+    with db._conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""SELECT platform, day, followers, views FROM insight_snapshots
+                           WHERE day >= CURRENT_DATE - %s ORDER BY day""", (days,))
+            for r in cur.fetchall():
+                out.setdefault(r["platform"], []).append(
+                    {"day": r["day"].isoformat(), "followers": r["followers"], "views": r["views"]})
+    return out

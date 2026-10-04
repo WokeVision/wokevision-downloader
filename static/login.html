@@ -89,6 +89,13 @@
   </div>
 
 <script>
+  // Where to land after signing in: the page that sent us here (same-site
+  // paths only), otherwise the editor.
+  function nextUrl() {
+    const n = new URLSearchParams(location.search).get("next") || "";
+    return (n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/login")) ? n : "/editor";
+  }
+
   const msg = document.getElementById("msg");
   function showMsg(text, kind) {
     msg.textContent = text;
@@ -151,7 +158,7 @@
       if (!verifyResp.ok) throw new Error(verify.detail || "Sign-in failed.");
 
       showMsg("Signed in.", "ok");
-      window.location.href = "/";
+      window.location.href = nextUrl();
     } catch (err) {
       showMsg(err.message || String(err), "error");
     } finally {
@@ -202,7 +209,7 @@
       if (!verifyResp.ok) throw new Error(verify.detail || "Setup failed.");
 
       showMsg("Passkey registered -- signed in.", "ok");
-      window.location.href = "/";
+      window.location.href = nextUrl();
     } catch (err) {
       showMsg(err.message || String(err), "error");
     } finally {

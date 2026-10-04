@@ -17,6 +17,7 @@ from render import render_staged, apply_caption
 import db
 import auth
 import storage
+import insights
 from platforms import instagram, threads, youtube, x, tiktok, facebook
 
 app = FastAPI()
@@ -31,6 +32,10 @@ def _startup():
         db.init_db()
     except Exception as e:
         print(f"DB INIT FAILED (platform connections will be unavailable): {e}", flush=True)
+    try:
+        insights.init_snapshots()
+    except Exception as e:
+        print(f"INSIGHTS INIT FAILED (follower history unavailable): {e}", flush=True)
 
 
 # --- Access control: everything behind a passkey, except what genuinely has
@@ -42,6 +47,8 @@ def _startup():
 # thing -- if it's not set up yet, the app behaves exactly as before.
 PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/")
 PUBLIC_PATHS = {
+    "/",                    # public homepage
+    "/api/home/popular",    # public: top Instagram posts for the homepage carousel
     "/login",
     "/health",
     "/tiktokf2TEyaKWItLVEN7IU6Sr0Fyd4eBclual.txt",
@@ -62,7 +69,7 @@ async def _require_passkey_session(request: Request, call_next):
         return await call_next(request)
 
     if request.method == "GET" and "text/html" in (request.headers.get("accept") or ""):
-        return RedirectResponse(url="/login")
+        return RedirectResponse(url="/login?next=" + _url_quote(path))
     return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
 
 
@@ -539,8 +546,81 @@ def _run_download_then_pipeline(job_id: str, url: str, final_source_path: str):
 
 
 @app.get("/")
-def index():
+def home():
+    return FileResponse("static/home.html")
+
+
+@app.get("/editor")
+def editor():
     return FileResponse("static/index.html")
+
+
+@app.get("/dashboards")
+def dashboards_page():
+    return FileResponse("static/dashboards.html")
+
+
+@app.get("/auth/status")
+def auth_status(request: Request):
+    """Lets the public pages' nav bar show Sign in vs Sign out."""
+    if not auth.configured():
+        return {"authed": True}
+    return {"authed": bool(auth.verify_session_token(request.cookies.get(auth.SESSION_COOKIE)))}
+
+
+@app.get("/api/home/popular")
+def home_popular():
+    """Most-engaged recent Instagram posts, for the public homepage. Only
+    the public bits (thumbnail, caption snippet, link, like/comment counts)
+    leave the server -- never tokens or anything account-private."""
+    data = insights.get("instagram")
+    posts = [p for p in data.get("posts", []) if p.get("thumb")]
+    posts.sort(key=lambda p: (p.get("likes") or 0) + 2 * (p.get("comments") or 0), reverse=True)
+    return {"account": data.get("account"), "posts": [
+        {"thumb": p["thumb"], "url": p["url"], "title": p["title"],
+         "likes": p.get("likes"), "comments": p.get("comments")} for p in posts[:10]]}
+
+
+# What each platform's messaging API actually allows. The inbox itself comes
+# online platform by platform once the permission below is granted -- until
+# then the Messages tab shows exactly what's missing instead of an empty box.
+MESSAGE_SUPPORT = {
+    "instagram": ("needs_access", "Needs the instagram_business_manage_messages permission (Meta app review), then reconnect Instagram."),
+    "facebook": ("needs_access", "Needs the pages_messaging permission (Meta app review), then reconnect Facebook."),
+    "x": ("needs_access", "X direct messages need dm.read / dm.write scopes on a paid X API plan."),
+    "threads": ("unsupported", "Threads doesn't offer a direct-message API."),
+    "tiktok": ("unsupported", "TikTok doesn't offer a direct-message API to apps like this."),
+    "youtube": ("unsupported", "YouTube has no direct messages; comment replies could be added instead."),
+}
+
+
+@app.get("/api/messages")
+def api_messages():
+    return {
+        "conversations": [],
+        "platforms": [
+            {"platform": p, "label": PLATFORM_LABELS[p], "status": MESSAGE_SUPPORT[p][0], "note": MESSAGE_SUPPORT[p][1]}
+            for p in PLATFORM_ORDER
+        ],
+    }
+
+
+@app.get("/api/insights/{platform}")
+def api_insights(platform: str, refresh: bool = False):
+    if platform not in PLATFORM_MODULES:
+        raise HTTPException(status_code=404, detail="Unknown platform.")
+    return insights.get(platform, force=refresh)
+
+
+@app.get("/api/insights")
+def api_insights_all(refresh: bool = False):
+    results = {}
+    def _one(p):
+        results[p] = insights.get(p, force=refresh)
+    ts = [threading.Thread(target=_one, args=(p,)) for p in PLATFORM_ORDER]
+    for t in ts: t.start()
+    for t in ts: t.join()
+    return {"platforms": [results[p] for p in PLATFORM_ORDER], "history": insights.history()}
 
 
 @app.get("/login")
@@ -827,16 +907,16 @@ def connect_callback(platform: str, request: Request):
     params = request.query_params
     if params.get("error"):
         msg = params.get("error_description", params.get("error"))
-        return RedirectResponse(f"/?connect_error={_url_quote(msg)}")
+        return RedirectResponse(f"/editor?connect_error={_url_quote(msg)}")
     code = params.get("code")
     state = params.get("state")
     if not code or not _check_oauth_state(state or ""):
-        return RedirectResponse(f"/?connect_error={_url_quote('Invalid or expired connection attempt, please try again.')}")
+        return RedirectResponse(f"/editor?connect_error={_url_quote('Invalid or expired connection attempt, please try again.')}")
     try:
         module.handle_callback(code)
     except Exception as e:
-        return RedirectResponse(f"/?connect_error={_url_quote(str(e))}")
-    return RedirectResponse(f"/?connected={platform}")
+        return RedirectResponse(f"/editor?connect_error={_url_quote(str(e))}")
+    return RedirectResponse(f"/editor?connected={platform}")
 
 
 @app.post("/connections/{platform}/disconnect")

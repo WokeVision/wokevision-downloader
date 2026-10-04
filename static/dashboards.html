@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0A0A0C" />
+<link rel="icon" href="/static/assets/logo-mark.png" />
+<link rel="apple-touch-icon" href="/static/assets/logo-mark.png" />
+<title>Dashboards · WokeVision</title>
+<link rel="stylesheet" href="/static/nav.css" />
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0A0A0C; --surface: rgba(255,255,255,0.055); --surface-strong: rgba(255,255,255,0.09);
+    --border: rgba(255,255,255,0.10); --text: #F5F5F7; --text-dim: rgba(245,245,247,0.62);
+    --text-faint: rgba(245,245,247,0.38); --accent: #FF2B3C; --accent-dim: rgba(255,43,60,0.16);
+    --radius-lg: 20px; --radius-md: 14px; --radius-sm: 10px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { background: var(--bg); color: var(--text); margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh; padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+    background: radial-gradient(circle at 50% 0%, rgba(255,43,60,0.10), transparent 55%), var(--bg);
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 22px 18px 0; }
+  .titleRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 26px; letter-spacing: -0.02em; margin: 0; }
+  .sub { color: var(--text-faint); font-size: 13px; margin-top: 3px; }
+
+  button { font-family: inherit; }
+  .btn2 { border: 1px solid var(--border); background: rgba(255,255,255,0.04); color: var(--text); font-size: 13.5px;
+    font-weight: 600; padding: 9px 14px; border-radius: 999px; cursor: pointer; }
+  .btn2:active { background: rgba(255,255,255,0.1); }
+  .btn2:disabled { opacity: .5; }
+
+  /* Subtabs: scroll sideways on a phone */
+  .tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 14px; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; border: 1px solid transparent; background: transparent; color: var(--text-dim); font-size: 14px; font-weight: 600;
+    padding: 9px 15px; border-radius: 999px; cursor: pointer; display: flex; align-items: center; gap: 7px; }
+  .tab.active { background: var(--surface-strong); color: var(--text); border-color: var(--border); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .tab .sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; align-self: center; flex: none; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px; margin-bottom: 14px; backdrop-filter: blur(20px); }
+  .card h3 { margin: 0 0 4px; font-size: 15px; }
+  .card .hint { font-size: 12.5px; color: var(--text-faint); margin: 0 0 12px; line-height: 1.4; }
+
+  /* Platform chips + mode switch */
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-dim);
+    font-size: 13.5px; font-weight: 600; padding: 8px 13px; border-radius: 999px; cursor: pointer; transition: all .15s ease; }
+  .chip.on { color: var(--text); background: var(--surface-strong); }
+  .chip.off .dot { background: transparent !important; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+  .chip.all.on { background: var(--accent); border-color: transparent; color: #fff; }
+  .seg { display: flex; background: rgba(255,255,255,0.06); border-radius: var(--radius-md); padding: 3px; gap: 3px; }
+  .seg button { border: none; background: transparent; color: var(--text-dim); font-size: 13.5px; font-weight: 600; padding: 8px 14px; border-radius: 11px; cursor: pointer; }
+  .seg button.active { background: var(--surface-strong); color: var(--text); }
+
+  /* KPI tiles */
+  .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
+  @media (min-width: 700px) { .kpis { grid-template-columns: repeat(5, 1fr); } }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; }
+  .kpi .lbl { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); font-weight: 700; }
+  .kpi .val { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .kpi .val.na { color: var(--text-faint); font-size: 20px; }
+
+  /* Compare bars */
+  .barBlock { margin-bottom: 16px; } .barBlock:last-child { margin-bottom: 0; }
+  .barBlock .t { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); font-weight: 700; margin-bottom: 8px; }
+  .barRow { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; font-size: 13.5px; }
+  .barRow .nm { width: 86px; flex: none; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+  .barRow .bar { flex: 1; height: 12px; background: rgba(255,255,255,0.06); border-radius: 999px; overflow: hidden; }
+  .barRow .bar > i { display: block; height: 100%; border-radius: 999px; transition: width .5s ease; }
+  .barRow .num { width: 64px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .barRow .num.na { color: var(--text-faint); font-weight: 500; }
+
+  /* Charts */
+  .chartWrap { position: relative; }
+  svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+  .tip { position: absolute; pointer-events: none; background: rgba(20,20,24,0.96); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 10px; font-size: 12.5px; min-width: 120px; display: none; z-index: 5; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+  .tip b { display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-dim); }
+  .tip div { display: flex; justify-content: space-between; gap: 14px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12.5px; color: var(--text-dim); }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .empty { color: var(--text-faint); font-size: 13.5px; padding: 18px 0; text-align: center; line-height: 1.5; }
+
+  .banner { font-size: 13px; line-height: 1.45; border-radius: var(--radius-sm); padding: 11px 14px; margin-bottom: 14px;
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text-dim); }
+  .banner.err { background: rgba(255,43,60,0.10); border-color: rgba(255,43,60,0.28); color: #FFB4B4; }
+
+  /* Top posts */
+  .posts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .pcard { text-decoration: none; color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; display: block; }
+  .pcard .th { aspect-ratio: 4/5; background: #141417 center/cover no-repeat; }
+  .pcard .bd { padding: 9px 10px 11px; }
+  .pcard .tt { font-size: 12.5px; line-height: 1.35; height: 2.7em; overflow: hidden; color: var(--text-dim); }
+  .pcard .st { font-size: 12px; margin-top: 7px; display: flex; gap: 10px; font-variant-numeric: tabular-nums; }
+
+  /* Messages */
+  .msgGrid { display: grid; gap: 10px; }
+  .msgRow { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .msgRow:last-child { border-bottom: none; }
+  .msgRow .pn { font-weight: 600; font-size: 14.5px; }
+  .msgRow .pt { font-size: 12.5px; color: var(--text-faint); margin-top: 2px; line-height: 1.45; }
+  .badge { font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: rgba(255,255,255,0.08); color: var(--text-dim); white-space: nowrap; margin-left: auto; }
+  .badge.soon { background: rgba(255,214,10,0.14); color: #FFD60A; }
+  .inbox { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 800px) { .inbox { grid-template-columns: 320px 1fr; } }
+  .convo { display: flex; gap: 10px; padding: 11px 8px; border-radius: var(--radius-sm); cursor: pointer; align-items: center; }
+  .convo:hover, .convo.active { background: var(--surface-strong); }
+  .thread { min-height: 280px; display: flex; flex-direction: column; }
+  .bubbles { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 6px 0 12px; }
+  .bubble { max-width: 78%; padding: 9px 13px; border-radius: 18px; font-size: 14.5px; line-height: 1.4; background: var(--surface-strong); align-self: flex-start; }
+  .bubble.me { align-self: flex-end; background: var(--accent); color: #fff; }
+  .replyBar { display: flex; gap: 8px; }
+  .replyBar input { flex: 1; background: rgba(0,0,0,0.35); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 12px 16px; font-size: 16px; outline: none; font-family: inherit; }
+  .replyBar input:focus { border-color: var(--accent); }
+  .replyBar button { border: none; background: var(--accent); color: #fff; font-weight: 700; padding: 0 20px; border-radius: 999px; cursor: pointer; font-size: 14.5px; }
+  .replyBar button:disabled { background: rgba(255,255,255,0.12); color: var(--text-faint); }
+
+  .skeleton { height: 90px; border-radius: var(--radius-md); background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.09), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: sh 1.3s linear infinite; }
+  @keyframes sh { to { background-position: -200% 0; } }
+</style>
+</head>
+<body>
+<script src="/static/nav.js"></script>
+
+<div class="wrap">
+  <div class="titleRow">
+    <div>
+      <h1>Dashboards</h1>
+      <div class="sub" id="updated">Loading…</div>
+    </div>
+    <button class="btn2" id="refreshBtn">Refresh</button>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="view"><div class="skeleton"></div></div>
+</div>
+
+<script>
+(function () {
+  var PLATFORMS = [
+    { id: "instagram", label: "Instagram", color: "#FF5CA8" },
+    { id: "threads",   label: "Threads",   color: "#B28DFF" },
+    { id: "youtube",   label: "YouTube",   color: "#FF453A" },
+    { id: "tiktok",    label: "TikTok",    color: "#25F4EE" },
+    { id: "x",         label: "X",         color: "#E5E5EA" },
+    { id: "facebook",  label: "Facebook",  color: "#4C8DFF" }
+  ];
+  var BY_ID = {}; PLATFORMS.forEach(function (p) { BY_ID[p.id] = p; });
+  var METRICS = [["followers", "Followers"], ["views", "Views"], ["likes", "Likes"], ["comments", "Comments"], ["posts", "Posts"]];
+
+  var state = {
+    data: {},            // platform id -> normalised stats
+    history: {},         // platform id -> [{day, followers, views}]
+    tab: (location.hash || "#overview").slice(1),
+    selected: PLATFORMS.map(function (p) { return p.id; }),
+    mode: "compare"      // "compare" | "combined"
+  };
+  try {
+    var saved = JSON.parse(localStorage.getItem("wvDash") || "{}");
+    if (saved.selected && saved.selected.length) state.selected = saved.selected.filter(function (i) { return BY_ID[i]; });
+    if (saved.mode) state.mode = saved.mode;
+  } catch (e) {}
+  function persist() { try { localStorage.setItem("wvDash", JSON.stringify({ selected: state.selected, mode: state.mode })); } catch (e) {} }
+
+  var $view = document.getElementById("view"), $tabs = document.getElementById("tabs");
+
+  /* ---------- helpers ---------- */
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function fmt(n) {
+    if (n == null) return "n/a";
+    if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M";
+    if (Math.abs(n) >= 1e4) return (n / 1e3).toFixed(n >= 1e5 ? 0 : 1).replace(/\.0$/, "") + "K";
+    return n.toLocaleString();
+  }
+  function dayKey(d) { return d.toISOString().slice(0, 10); }
+  function sumNullable(vals) {
+    var v = vals.filter(function (x) { return x != null; });
+    return v.length ? v.reduce(function (a, b) { return a + b; }, 0) : null;
+  }
+  function connected(id) { var d = state.data[id]; return d && d.state !== "not_connected" && d.state !== "error"; }
+
+  /* ---------- tabs ---------- */
+  function renderTabs() {
+    var h = '<button class="tab' + (state.tab === "overview" ? " active" : "") + '" data-tab="overview">Overview</button>';
+    PLATFORMS.forEach(function (p) {
+      h += '<button class="tab' + (state.tab === p.id ? " active" : "") + '" data-tab="' + p.id + '"><span class="dot" style="background:' + p.color + '"></span>' + p.label + '</button>';
+    });
+    h += '<span class="sep"></span><button class="tab' + (state.tab === "messages" ? " active" : "") + '" data-tab="messages">Messages</button>';
+    $tabs.innerHTML = h;
+  }
+  $tabs.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-tab]"); if (!b) return;
+    state.tab = b.dataset.tab; location.hash = state.tab; render();
+  });
+
+  /* ---------- charts (plain SVG, hover tooltips) ---------- */
+  function lineChart(series, opts) {
+    // series: [{name,color,points:[{x:"YYYY-MM-DD",y:number}]}] sharing the same x set
+    var W = 680, H = 220, L = 40, R = 12, T = 12, B = 26;
+    var xs = series[0].points.map(function (p) { return p.x; });
+    var max = 0; series.forEach(function (s) { s.points.forEach(function (p) { if (p.y > max) max = p.y; }); });
+    if (max === 0) max = 1;
+    var step = Math.pow(10, Math.floor(Math.log10(max))); max = Math.ceil(max / step) * step;
+    function X(i) { return L + (xs.length === 1 ? (W - L - R) / 2 : i * (W - L - R) / (xs.length - 1)); }
+    function Y(v) { return T + (1 - v / max) * (H - T - B); }
+    var g = "";
+    for (var k = 0; k <= 4; k++) {
+      var yv = max * k / 4, y = Y(yv);
+      g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '" stroke="rgba(255,255,255,0.07)"/>' +
+           '<text x="' + (L - 6) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" fill="rgba(245,245,247,0.38)">' + fmt(Math.round(yv)) + '</text>';
+    }
+    var every = Math.max(1, Math.ceil(xs.length / 6));
+    xs.forEach(function (x, i) {
+      if (i % every === 0 || i === xs.length - 1) {
+        var dt = new Date(x + "T00:00:00Z");
+        g += '<text x="' + X(i) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="11" fill="rgba(245,245,247,0.38)">' +
+             dt.toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" }) + '</text>';
+      }
+    });
+    series.forEach(function (s) {
+      var d = s.points.map(function (p, i) { return (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(p.y).toFixed(1); }).join(" ");
+      g += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>';
+      if (xs.length <= 2) s.points.forEach(function (p, i) { g += '<circle cx="' + X(i) + '" cy="' + Y(p.y) + '" r="4" fill="' + s.color + '"/>'; });
+    });
+    var id = "c" + Math.random().toString(36).slice(2, 8);
+    var html = '<div class="chartWrap" id="' + id + '"><svg class="chart" viewBox="0 0 ' + W + ' ' + H + '">' + g +
+      '<line class="cursor" y1="' + T + '" y2="' + (H - B) + '" stroke="rgba(255,255,255,0.25)" style="display:none"/>' +
+      '<rect class="hit" x="' + L + '" y="0" width="' + (W - L - R) + '" height="' + H + '" fill="transparent"/></svg><div class="tip"></div></div>';
+    setTimeout(function () {
+      var root = document.getElementById(id); if (!root) return;
+      var svg = root.querySelector("svg"), tip = root.querySelector(".tip"), cur = root.querySelector(".cursor");
+      function move(ev) {
+        var r = svg.getBoundingClientRect(), cx = (ev.touches ? ev.touches[0].clientX : ev.clientX);
+        var px = (cx - r.left) / r.width * W;
+        var i = xs.length === 1 ? 0 : Math.round((px - L) / ((W - L - R) / (xs.length - 1)));
+        i = Math.max(0, Math.min(xs.length - 1, i));
+        var dt = new Date(xs[i] + "T00:00:00Z");
+        var rows = series.map(function (s) {
+          return '<div><span><span class="dot" style="background:' + s.color + ';margin-right:6px"></span>' + esc(s.name) + '</span><b style="display:inline;color:var(--text)">' + fmt(s.points[i].y) + '</b></div>';
+        }).join("");
+        tip.innerHTML = '<b>' + dt.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) + '</b>' + rows;
+        tip.style.display = "block";
+        var xpx = X(i) / W * r.width;
+        tip.style.left = Math.min(Math.max(xpx - 60, 0), r.width - 150) + "px"; tip.style.top = "0px";
+        cur.setAttribute("x1", X(i)); cur.setAttribute("x2", X(i)); cur.style.display = "";
+      }
+      function leave() { tip.style.display = "none"; cur.style.display = "none"; }
+      svg.addEventListener("mousemove", move); svg.addEventListener("touchmove", move, { passive: true });
+      svg.addEventListener("mouseleave", leave); svg.addEventListener("touchend", leave);
+    }, 0);
+    var legend = series.length > 1 ? '<div class="legend">' + series.map(function (s) { return '<span><i class="dot" style="background:' + s.color + '"></i>' + esc(s.name) + '</span>'; }).join("") + '</div>' : "";
+    return html + legend;
+  }
+
+  /* ---------- data shaping ---------- */
+  function last30() {
+    var out = [], now = new Date();
+    for (var i = 29; i >= 0; i--) { var d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i)); out.push(dayKey(d)); }
+    return out;
+  }
+  function engagementSeries(id, days) {
+    var d = state.data[id], by = {}; days.forEach(function (x) { by[x] = 0; });
+    ((d && d.posts) || []).forEach(function (p) {
+      if (!p.ts) return; var k = String(p.ts).slice(0, 10);
+      if (k in by) by[k] += (p.likes || 0) + (p.comments || 0) + (p.shares || 0);
+    });
+    return days.map(function (x) { return { x: x, y: by[x] }; });
+  }
+  function followerSeries(ids) {
+    var days = {}; ids.forEach(function (id) { (state.history[id] || []).forEach(function (r) { days[r.day] = 1; }); });
+    var all = Object.keys(days).sort(); if (!all.length) return null;
+    function one(id) {
+      var map = {}; (state.history[id] || []).forEach(function (r) { map[r.day] = r.followers; });
+      var cur = null; return all.map(function (dy) { if (map[dy] != null) cur = map[dy]; return { x: dy, y: cur == null ? 0 : cur }; });
+    }
+    return { days: all, per: ids.map(function (id) { return { name: BY_ID[id].label, color: BY_ID[id].color, points: one(id) }; }) };
+  }
+  function combine(per, name, color) {
+    return [{ name: name, color: color || "#FF2B3C", points: per[0].points.map(function (p, i) {
+      return { x: p.x, y: per.reduce(function (a, s) { return a + s.points[i].y; }, 0) };
+    }) }];
+  }
+
+  /* ---------- overview ---------- */
+  function chips() {
+    var allOn = state.selected.length === PLATFORMS.length;
+    var h = '<div class="chips"><button class="chip all ' + (allOn ? "on" : "off") + '" data-chip="all">All</button>';
+    PLATFORMS.forEach(function (p) {
+      var on = state.selected.indexOf(p.id) >= 0;
+      h += '<button class="chip ' + (on ? "on" : "off") + '" data-chip="' + p.id + '"><span class="dot" style="background:' + p.color + '"></span>' + p.label + '</button>';
+    });
+    return h + "</div>";
+  }
+  function overview() {
+    var ids = state.selected.filter(function (i) { return state.data[i]; });
+    var h = '<div class="card"><div class="controls">' + chips() +
+      '<div class="seg" id="modeSeg"><button data-mode="compare" class="' + (state.mode === "compare" ? "active" : "") + '">Compare</button>' +
+      '<button data-mode="combined" class="' + (state.mode === "combined" ? "active" : "") + '">Combined</button></div></div></div>';
+    if (!ids.length) return h + '<div class="card"><div class="empty">Select at least one platform above.</div></div>';
+
+    var limited = ids.filter(function (i) { return state.data[i].state !== "ok"; });
+    if (limited.length) h += '<div class="banner">Some numbers show <b>n/a</b> because ' + limited.map(function (i) { return BY_ID[i].label; }).join(", ") +
+      ' doesn\'t share them with the permissions currently granted. Open that platform\'s tab to see what\'s missing.</div>';
+
+    if (state.mode === "combined") {
+      h += '<div class="kpis">' + METRICS.map(function (m) {
+        var v = sumNullable(ids.map(function (i) { return state.data[i].totals[m[0]]; }));
+        return '<div class="kpi"><div class="lbl">' + m[1] + '</div><div class="val' + (v == null ? " na" : "") + '">' + fmt(v) + '</div></div>';
+      }).join("") + '</div>';
+    } else {
+      h += '<div class="card">' + METRICS.map(function (m) {
+        var vals = ids.map(function (i) { return state.data[i].totals[m[0]]; });
+        var mx = Math.max.apply(null, vals.map(function (v) { return v || 0; })) || 1;
+        return '<div class="barBlock"><div class="t">' + m[1] + '</div>' + ids.map(function (i, ix) {
+          var v = vals[ix], p = BY_ID[i];
+          return '<div class="barRow"><span class="nm"><i class="dot" style="background:' + p.color + '"></i>' + p.label + '</span>' +
+            '<span class="bar"><i style="width:' + (v == null ? 0 : Math.max(2, v / mx * 100)) + '%;background:' + p.color + '"></i></span>' +
+            '<span class="num' + (v == null ? " na" : "") + '">' + fmt(v) + '</span></div>';
+        }).join("") + '</div>';
+      }).join("") + '</div>';
+    }
+
+    var days = last30(), per = ids.map(function (i) { return { name: BY_ID[i].label, color: BY_ID[i].color, points: engagementSeries(i, days) }; });
+    h += '<div class="card"><h3>Engagement</h3><p class="hint">Likes + comments + shares on posts published each day, last 30 days.</p>' +
+      lineChart(state.mode === "combined" ? combine(per, "All selected") : per) + '</div>';
+
+    var fs = followerSeries(ids);
+    h += '<div class="card"><h3>Followers over time</h3>';
+    if (!fs || fs.days.length < 2) {
+      h += '<p class="hint">WokeVision records your follower count once a day whenever you open this page, so this line fills in as the days go by.</p>' +
+        '<div class="empty">Tracking started today — check back tomorrow.</div>';
+    } else {
+      h += '<p class="hint">Daily follower count (from when tracking began).</p>' + lineChart(state.mode === "combined" ? combine(fs.per, "All selected") : fs.per);
+    }
+    return h + "</div>";
+  }
+
+  /* ---------- single platform ---------- */
+  function platformView(id) {
+    var d = state.data[id], p = BY_ID[id], h = "";
+    if (!d) return '<div class="empty">No data.</div>';
+    h += '<div class="card"><div style="display:flex;align-items:center;gap:10px"><span class="dot" style="background:' + p.color + ';width:12px;height:12px"></span>' +
+      '<h3 style="margin:0;font-size:18px">' + p.label + '</h3><span style="color:var(--text-faint);font-size:13.5px">' + esc(d.account || "") + '</span></div></div>';
+    if (d.state === "not_connected" || d.state === "error")
+      return h + '<div class="banner ' + (d.state === "error" ? "err" : "") + '">' + esc(d.note || "Not available.") +
+        (d.state === "not_connected" ? ' <a href="/editor" style="color:var(--accent)">Open the Video Editor</a> to connect it.' : "") + '</div>';
+    if (d.note) h += '<div class="banner">' + esc(d.note) + '</div>';
+    h += '<div class="kpis">' + METRICS.map(function (m) {
+      var v = d.totals[m[0]]; return '<div class="kpi"><div class="lbl">' + m[1] + '</div><div class="val' + (v == null ? " na" : "") + '">' + fmt(v) + '</div></div>';
+    }).join("") + '</div>';
+    var days = last30();
+    h += '<div class="card"><h3>Engagement</h3><p class="hint">Likes + comments + shares on posts published each day, last 30 days.</p>' +
+      lineChart([{ name: p.label, color: p.color, points: engagementSeries(id, days) }]) + '</div>';
+    var fs = followerSeries([id]);
+    h += '<div class="card"><h3>Followers over time</h3>' + ((!fs || fs.days.length < 2)
+      ? '<div class="empty">Tracking started — the line appears after a second day of data.</div>' : lineChart(fs.per)) + '</div>';
+    var posts = (d.posts || []).slice().sort(function (a, b) {
+      return ((b.views || 0) + (b.likes || 0) + 2 * (b.comments || 0)) - ((a.views || 0) + (a.likes || 0) + 2 * (a.comments || 0));
+    }).slice(0, 12);
+    h += '<div class="card"><h3>Top posts</h3><p class="hint">Ranked by engagement.</p>' + (posts.length ? '<div class="posts">' + posts.map(function (q) {
+      return '<a class="pcard" href="' + esc(q.url || "#") + '" target="_blank" rel="noopener">' +
+        '<div class="th" style="' + (q.thumb ? "background-image:url('" + esc(q.thumb) + "')" : "") + '"></div><div class="bd"><div class="tt">' + esc(q.title || "(no caption)") + '</div>' +
+        '<div class="st">' + (q.views != null ? '<span>▶ ' + fmt(q.views) + '</span>' : '') + '<span>♥ ' + fmt(q.likes) + '</span><span>💬 ' + fmt(q.comments) + '</span></div></div></a>';
+    }).join("") + '</div>' : '<div class="empty">No posts found.</div>') + '</div>';
+    return h;
+  }
+
+  /* ---------- messages ---------- */
+  function messagesView() {
+    var h = '<div class="card"><h3>Messages</h3><p class="hint">One inbox for every platform, each message tagged with where it came from, with replies sent straight from here.</p>' +
+      '<div class="empty" id="inboxEmpty">Loading…</div></div><div id="msgStatus"></div>';
+    setTimeout(loadMessages, 0);
+    return h;
+  }
+  function loadMessages() {
+    fetch("/api/messages").then(function (r) { return r.json(); }).then(function (m) {
+      var empty = document.getElementById("inboxEmpty"), st = document.getElementById("msgStatus"); if (!empty || !st) return;
+      var convos = m.conversations || [];
+      if (!convos.length) empty.textContent = "No conversations yet. Platforms appear below as their messaging access is switched on.";
+      else {
+        empty.outerHTML = '<div class="inbox"><div id="convoList"></div><div class="thread" id="thread"><div class="empty">Select a conversation</div></div></div>';
+        // Inbox rendering lands with the first platform's messaging access.
+      }
+      st.innerHTML = '<div class="card"><h3>Platform status</h3><div class="msgGrid">' + (m.platforms || []).map(function (p) {
+        var c = BY_ID[p.platform] || {};
+        return '<div class="msgRow"><i class="dot" style="background:' + (c.color || "#888") + ';margin-top:6px"></i><div><div class="pn">' + esc(p.label) + '</div><div class="pt">' + esc(p.note) + '</div></div>' +
+          '<span class="badge ' + (p.status === "needs_access" ? "soon" : "") + '">' + (p.status === "needs_access" ? "Needs access" : p.status === "unsupported" ? "No DM API" : "Live") + '</span></div>';
+      }).join("") + '</div></div>';
+    }).catch(function () { var e = document.getElementById("inboxEmpty"); if (e) e.textContent = "Couldn't load messages."; });
+  }
+
+  /* ---------- render + events ---------- */
+  function render() {
+    renderTabs();
+    if (state.tab === "overview") $view.innerHTML = overview();
+    else if (state.tab === "messages") $view.innerHTML = messagesView();
+    else if (BY_ID[state.tab]) $view.innerHTML = platformView(state.tab);
+    else { state.tab = "overview"; $view.innerHTML = overview(); }
+  }
+  $view.addEventListener("click", function (e) {
+    var c = e.target.closest("[data-chip]"), m = e.target.closest("[data-mode]");
+    if (c) {
+      var id = c.dataset.chip;
+      if (id === "all") state.selected = state.selected.length === PLATFORMS.length ? [] : PLATFORMS.map(function (p) { return p.id; });
+      else { var ix = state.selected.indexOf(id); if (ix >= 0) state.selected.splice(ix, 1); else state.selected.push(id); }
+      persist(); render();
+    } else if (m) { state.mode = m.dataset.mode; persist(); render(); }
+  });
+
+  function load(refresh) {
+    var btn = document.getElementById("refreshBtn"); btn.disabled = true;
+    fetch("/api/insights" + (refresh ? "?refresh=true" : "")).then(function (r) {
+      if (r.status === 401) { location.href = "/login?next=/dashboards"; throw new Error("auth"); }
+      return r.json();
+    }).then(function (j) {
+      j.platforms.forEach(function (p) { state.data[p.platform] = p; });
+      state.history = j.history || {};
+      document.getElementById("updated").textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      render();
+    }).catch(function (e) {
+      if (e.message !== "auth") $view.innerHTML = '<div class="banner err">Couldn\'t load your stats. Try Refresh.</div>';
+    }).finally(function () { btn.disabled = false; });
+  }
+  document.getElementById("refreshBtn").addEventListener("click", function () { load(true); });
+  window.addEventListener("hashchange", function () { state.tab = (location.hash || "#overview").slice(1); render(); });
+  renderTabs(); load(false);
+})();
+</script>
+</body>
+</html>

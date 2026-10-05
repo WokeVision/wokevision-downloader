@@ -55,10 +55,24 @@ the real event the joke is about (name it if the clip does) but never be \
 earnest, preachy or sympathetic-corporate about it. Don't over-explain.
 - Real victims/tragedies: the joke targets the situation, the system, or \
 the absurdity -- never celebrate harm to an innocent victim.
-- LENGTH & VOICE: WokeVision's best captions are SHORT and casual -- often \
-one punchy reaction line plus an engagement question, like a meme page, not \
-a columnist. Keep the main body to roughly 1-2 short sentences (about 160 \
-characters) unless the clip genuinely needs more. No essays, no lecturing.
+- CAPTION MODES -- the owner's real captions vary with the clip, so first \
+pick the mode that fits, then write in it:
+  (1) QUICK REACTION -- funny/meme/viral clips: one short punchy line (a \
+reaction or a joke) + one emoji, e.g. "Johnny took no prisoners 🤣". \
+  (2) FACT DROP -- a claim or clip that "people don't realise": a short \
+hook + one line saying what it shows, e.g. "Crazy how many people don't \
+realise this 💀".
+  (3) NEWS / STORY -- a real event or controversy: 2-3 plain sentences of \
+context (who, what, the ironic twist), then an engagement question, e.g. "What \
+do you think about this debacle? 🤔👇".
+  (4) RANT / COMMENTARY -- opinion or culture-war clips (woke activists, \
+street arguments, education, politicians): a longer, passionate, sarcastic \
+paragraph in the owner's voice -- big stakes language ("the matrix is \
+glitching", "clown world", "rules for thee but not for me", "the audacity"), \
+a few emoji (🤡😂🤯💀), ending on a punch line. Never a dry essay.
+  Satire/dark-humour clips use mode 1 or a deadpan version of 3.
+- Match the length to the mode. Don't write a rant for a quick joke, and \
+don't write one line for a clip that needs context.
 - Never attack people for protected traits. Target ideas, hypocrisy, \
 institutions and public figures' actions.""")
 
@@ -80,31 +94,46 @@ def _clean_example(cap: str) -> str:
     return cap.strip()
 
 
+CURATED_EXAMPLES = """REAL @wokevision_ CAPTIONS THE OWNER LIKES (match the voice, length and hashtag style for the matching mode):
+
+[QUICK REACTION]
+Johnny took no prisoners \U0001f923
+#funnymemes #wokememes #running #race #genders
+
+[FACT DROP]
+Crazy how many people don't realise this \U0001f480
+On a podcast, Andrew Tate explains how our phones are being surveyed without our knowledge or consent
+#redpill #surveillance #phones #truth #exposed
+
+[NEWS / STORY]
+Billie Eilish has gone viral recently for her Anti ICE speech, suggesting that no one can be illegal on 'stolen land'. Much of mainstream media hasn't taken kindly to the singers comments, with a native tribe recently claiming that her 3 million dollar mansion itself is situated on their stolen land. What do you think about this debacle? \U0001f914\U0001f447
+#billieeilish #stolenland #grammys #speech #politics
+
+[RANT / COMMENTARY]
+The absolute AUDACITY on display here is unreal. \U0001f92f This street preacher is out here minding his own business and spreading his message when he gets completely blindsided by a woke activist who thinks physical harassment is an acceptable response to speech. Notice how they immediately try to switch up the narrative and play the victim card the second they get called out? The matrix is glitching in real-time. \U0001f602 They want total validation for their identity but refuse to grant basic human respect to anyone else. Rules for thee but not for me! \U0001f921
+Credit: @clark_flipper
+#Woke #WokeCulture #ClownWorld #MatrixGlitch #DoubleStandards
+
+[RANT / COMMENTARY]
+We are officially witnessing the final boss of the matrix. The absolute collapse of basic cognitive functioning is on full display here. Decades of institutional captured education have produced adults who can't even identify foundational geography or human biology, yet they speak with absolute, unearned moral authority. The simulation is officially broken.
+Credit: @prageru
+#WokeVision #Brainwashed #Matrix #VirtueSignaling #ObjectiveTruth"""
+
+
 def style_examples() -> str:
-    if _time.time() - _EX_CACHE["at"] < 6 * 3600 and _EX_CACHE["at"]:
-        return _EX_CACHE["text"]
-    text = ""
-    try:
-        import insights
-        posts = insights.get("instagram").get("posts", [])
-        posts = sorted(posts, key=lambda p: (p.get("likes") or 0) + 2 * (p.get("comments") or 0), reverse=True)
-        lines, seen = [], set()
-        for p in posts[:40]:
-            ex = _clean_example(p.get("caption"))
-            if 8 <= len(ex) <= 260 and ex not in seen:
-                seen.add(ex)
-                lines.append("- " + ex.replace("\n", " / "))
-            if len(lines) >= 8:
-                break
-        if lines:
-            text = ("REAL @wokevision_ CAPTIONS THAT PERFORMED BEST (the owner's own voice -- match this "
-                    "length, rhythm and casualness; the hook line is usually SHORT, a reaction or a "
-                    "question, not an essay):\n" + "\n".join(lines))
-    except Exception as e:
-        print(f"STYLE EXAMPLES FAILED: {e}", flush=True)
-    if text:
-        _EX_CACHE.update(at=_time.time(), text=text)
-    return text
+    return CURATED_EXAMPLES
+
+
+HASHTAG_STRATEGY = """HASHTAG STRATEGY (reach + relevance): mix three kinds, using only tags \
+that fit THIS clip -- 
+ * brand: #WokeVision (include it on posts where the platform allows 3+ tags)
+ * topic tags specific to the clip (names, events, themes), e.g. #billieeilish #stolenland #surveillance
+ * popular reach tags from this pool, picked by theme: general humour -- \
+#funny #funnymeme #lol #lolmeme #memesdaily #memepage #comedy #viral #viralvideo; \
+politics/news -- #politics #USA #drama #beef #crazy #news; culture war -- \
+#woke #antiwoke #wokememes #wokeculture #clownworld #satire #darkhumour. \
+Only use #lgbtmemes / #transmemes when the clip is actually about those topics. \
+Never stuff unrelated tags and never use #fyp/#foryou."""
 
 READ_THE_CLIP = """BEFORE WRITING, work out in the "angle_read" field (1-2 short sentences): \
 (a) what is this clip actually about / which real event or person, (b) is it \
@@ -180,7 +209,7 @@ all included -- must fit within {POSTING_CAPTION_MAX_CHARS} characters \
 total. That's X's standard post limit, the shortest of any platform this \
 goes out to, so nothing needs trimming per platform."""
 
-COMBINED_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"""
+COMBINED_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + HASHTAG_STRATEGY + "\n\n" + READ_THE_CLIP + f"""
 
 You have two things to write for the same video, in one response.
 
@@ -194,7 +223,7 @@ Respond ONLY with JSON: {{"angle_read": "...", "on_screen": "...", "caption": ".
 
 ON_SCREEN_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"\n\nYour job right now: {ON_SCREEN_RULES}\n\nRespond ONLY with JSON: {{\"angle_read\": \"...\", \"on_screen\": \"...\"}}"
 
-POSTING_SYSTEM = POSTING_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"\n\nYour job right now: {POSTING_RULES}\n\nRespond ONLY with JSON: {{\"angle_read\": \"...\", \"caption\": \"...\", \"hashtags\": [\"#...\"]}}"
+POSTING_SYSTEM = POSTING_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + HASHTAG_STRATEGY + "\n\n" + READ_THE_CLIP + f"\n\nYour job right now: {POSTING_RULES}\n\nRespond ONLY with JSON: {{\"angle_read\": \"...\", \"caption\": \"...\", \"hashtags\": [\"#...\"]}}"
 
 # Fallback emoji, confirmed present in the local emoji_pack/ so the on-screen
 # caption always renders a real image instead of silently dropping a
@@ -281,17 +310,43 @@ def _assemble_posting_caption(body: str, hashtags: list) -> str:
     return f"{body}{separator}{tag_str}".strip()
 
 
+def credit_handle(meta: dict) -> str:
+    """The original creator's handle for the 'Credit: @x' line, or '' when
+    it isn't a usable handle (numeric ids, names with spaces, etc.)."""
+    h = ((meta or {}).get("uploader_id") or "").strip().lstrip("@")
+    if not h or " " in h or h.isdigit() or len(h) > 40:
+        return ""
+    return h
+
+
+def _ensure_credit(text: str, handle: str) -> str:
+    """Guarantees exactly one 'Credit: @handle' line, placed just before the
+    trailing hashtag line(s) (or at the end when there are none)."""
+    if not handle or not text:
+        return text
+    if re.search(r"credit\s*:\s*@", text, re.I):
+        return text
+    lines = text.rstrip().split("\n")
+    i = len(lines)
+    while i > 0 and (not lines[i - 1].strip() or all(w.startswith("#") for w in lines[i - 1].split())):
+        i -= 1
+    return "\n".join(lines[:i] + [f"Credit: @{handle}"] + lines[i:]) if i < len(lines) else "\n".join(lines + ["", f"Credit: @{handle}"])
+
+
 def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
     title = (meta or {}).get("title") or ""
     description = (meta or {}).get("description") or ""
     transcript = (transcript or "").strip()
     uploader = (meta or {}).get("uploader") or ""
+    handle = credit_handle(meta)
     angle = ((meta or {}).get("angle") or "").strip()
     parts = []
     if angle:
         parts.append(f"OPERATOR NOTE FROM THE PAGE OWNER (authoritative -- this is what the clip is about and how to treat it; it overrides your own reading):\n{angle}")
     if uploader:
         parts.append(f"Source account/channel: {uploader}")
+    if handle:
+        parts.append(f"Credit handle: @{handle}")
     if title:
         parts.append(f"Original post title: {title}")
     if description:
@@ -555,7 +610,7 @@ def default_platform_posts(master: str) -> dict:
     }
 
 
-PLATFORM_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + """
+PLATFORM_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + HASHTAG_STRATEGY + """
 
 You are adapting ONE core caption into six platform-native versions of the \
 same post, to maximise reach and engagement on each platform. Keep the \
@@ -568,11 +623,12 @@ PLATFORM RULES (hard limits in brackets):
 
 instagram -- "caption" [max 2,200 chars; EXACTLY 3-5 hashtags in total]. Only \
 the first ~125 characters show before "more", so open with the sharpest hook \
-line. Short punchy paragraphs, line breaks for rhythm. Weave 1-2 searchable \
-keywords for the topic into the sentence itself (Instagram search reads \
-captions). End with a line that invites comments, shares or saves ("Send \
-this to someone who needs to see it"), then the hashtags on their own line \
-at the very end: mix 1-2 broad and 2-3 niche tags, no spam tags.
+line. Length follows the clip's CAPTION MODE (quick reaction = 1 short line; \
+rant = a full punchy paragraph, up to ~700 chars). Line breaks for rhythm. \
+Weave 1-2 searchable topic keywords into the sentence itself. End with an \
+engagement line, then the credit line if one is supplied, then the \
+hashtags on their own line at the very end -- exactly 5: #WokeVision, 2 \
+clip-specific tags, 2 popular pool tags.
 
 threads -- "text" [max 500 chars] and "topic_tag" [1-50 chars, no "." or "&", \
 no leading #]. Conversational, like talking to followers, ends with a \
@@ -584,7 +640,8 @@ youtube -- "title" [max 100 chars, no hashtags]: front-load the keyword and \
 hook in the first 40-50 characters (only ~50 show in the feed), curiosity or \
 conflict, no clickbait lies, no ALL CAPS shouting. "description" [max 5,000]: \
 the first line (~100 chars) is a hook that does NOT just repeat the title; \
-then 1-2 short lines of context and an engagement question; end with 3-5 \
+then 1-2 short lines of context and an engagement question, then the credit \
+line if supplied; end with 3-5 \
 hashtags on their own line (the first three show above the title; include \
 #Shorts as one of them). "tags": 8-12 search keywords/phrases (no #, total \
 under 400 characters) people would actually search for this topic.
@@ -596,14 +653,20 @@ that invites replies and quote-posts. No emoji spam.
 
 tiktok -- "caption" [max 2,200 chars; EXACTLY 3-5 hashtags -- only the \
 first five count]. First line is a hook with the topic's keywords (TikTok \
-search reads captions). Keep it short -- 1-3 lines -- and end with a prompt \
-that drives comments ("Agree or nah?"). Hashtags at the end, niche-relevant, \
-no generic #fyp/#foryou.
+search reads captions). Length follows the CAPTION MODE but stays tighter than \
+Instagram (max ~3 lines). End with a prompt that drives comments ("Agree or \
+nah?"), then the credit line if supplied. Hashtags at the end: exactly 5, \
+the same mix as Instagram, no #fyp/#foryou.
 
 facebook -- "description" [max 2,200 chars]. Hashtags barely help on \
 Facebook: use 1-3 at most at the end. Slightly warmer and more explanatory \
-than the others, 2-4 short lines, a hook first line, a closing question that \
-drives comments and shares.
+than the others, 2-4 short lines (or one line for a quick reaction), a hook \
+first line, a closing question that drives comments and shares, then the \
+credit line if supplied.
+
+If the context gives a "Credit handle", the instagram, tiktok, facebook \
+and youtube versions each include one line "Credit: @handle" before the \
+hashtags (you may leave it out of threads/x).
 
 Never attack people over protected traits; target ideas, hypocrisy and \
 public figures' actions.
@@ -639,6 +702,11 @@ def generate_platform_posts(transcript: str, meta: dict, on_screen_caption: str 
         except Exception as e:
             print(f"PLATFORM POSTS GEN FAILED: {e}", flush=True)
             generated = fallback
+    handle = credit_handle(meta)
+    if handle:
+        for pid, key in (("instagram", "caption"), ("tiktok", "caption"), ("facebook", "description"), ("youtube", "description")):
+            if isinstance(generated.get(pid), dict) and generated[pid].get(key):
+                generated[pid][key] = _ensure_credit(generated[pid][key], handle)
     if only and current:
         merged = dict(normalize_platform_posts(current, master_caption))
         if only in generated:

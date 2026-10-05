@@ -234,6 +234,7 @@
   input[type="text"]::placeholder { color: var(--text-faint); }
 
   .fileBtn { display: block; width: 100%; box-sizing: border-box; text-align: center; padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; margin-bottom: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fileBtn.drag, .wvDrop.drag { border-color: var(--accent); background: rgba(255,43,60,0.14); }
   .fileBtn:active { background: rgba(255,255,255,0.1); }
   .fileBtn.hasFile { border-color: var(--accent); }
   .fileBtn input[type="file"] { display: none; }
@@ -648,7 +649,7 @@
     <div id="uploadPanel" class="panel">
       <form id="uploadForm">
         <label class="fileBtn" id="fileDropLabel">
-          <span id="fileDropText">Upload a file</span>
+          <span id="fileDropText">Upload a file <span style="opacity:.55;font-weight:400">or drag &amp; drop</span></span>
           <input type="file" id="fileInput" accept="video/*" />
         </label>
         <button type="submit" id="uploadBtn" class="primary" disabled>Submit</button>
@@ -1052,6 +1053,32 @@
       uploadBtn.disabled = !fileInput.files[0];
     }
   });
+
+  // Drag & drop onto the upload button + keep the watermark box between the
+  // input and the submit button of whichever tab is showing.
+  (function () {
+    const lbl = document.getElementById("fileDropLabel");
+    ["dragenter", "dragover"].forEach((ev) => lbl.addEventListener(ev, (e) => { e.preventDefault(); lbl.classList.add("drag"); }));
+    ["dragleave", "drop"].forEach((ev) => lbl.addEventListener(ev, (e) => { e.preventDefault(); lbl.classList.remove("drag"); }));
+    lbl.addEventListener("drop", (e) => {
+      const f = e.dataTransfer && e.dataTransfer.files[0];
+      if (!f) return;
+      if (f.type && !f.type.startsWith("video/")) { alert("That doesn't look like a video file."); return; }
+      const dt = new DataTransfer(); dt.items.add(f); fileInput.files = dt.files;
+      fileInput.dispatchEvent(new Event("change"));
+    });
+    // stop the browser opening a dropped file if it misses the target
+    window.addEventListener("dragover", (e) => e.preventDefault());
+    window.addEventListener("drop", (e) => e.preventDefault());
+    const wm = document.getElementById("wmRow");
+    function placeWm() {
+      const up = document.getElementById("uploadPanel").classList.contains("active");
+      const btn = document.getElementById(up ? "uploadBtn" : "submitBtn");
+      btn.parentNode.insertBefore(wm, btn);
+    }
+    document.querySelectorAll(".segBtn").forEach((b) => b.addEventListener("click", () => setTimeout(placeWm, 0)));
+    placeWm();
+  })();
 
   // --- Campaign watermark + closed captions ------------------------------
   let wmFile = null, wmPos = "right", wmTokenCache = null, jobWm = null;

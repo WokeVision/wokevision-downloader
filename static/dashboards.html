@@ -469,7 +469,19 @@
 
   /* ---------- messages ---------- */
   function messagesView() {
-    var h = '<div class="card"><h3>Messages</h3><p class="hint">One inbox for every platform, each message tagged with where it came from, with replies sent straight from here.</p>' +
+    var links = [
+      ["Meta Business Suite", "Instagram + Facebook (+ Threads) in one inbox", "https://business.facebook.com/latest/inbox/all", "#E1306C"],
+      ["Instagram DMs", "Direct inbox on instagram.com", "https://www.instagram.com/direct/inbox/", "#E1306C"],
+      ["Threads", "Threads app and web", "https://www.threads.com/", "#F5F5F7"],
+      ["TikTok", "TikTok web messages", "https://www.tiktok.com/messages", "#25F4EE"],
+      ["X", "X messages", "https://x.com/messages", "#8E8E93"]
+    ];
+    var h = '<div class="card"><h3>Open an inbox</h3><p class="hint">Fastest way to read and reply to DMs today. Each button opens that platform’s own inbox in a new tab.</p><div class="msgGrid">' +
+      links.map(function (l) {
+        return '<a class="msgRow" style="text-decoration:none;color:inherit" href="' + l[2] + '" target="_blank" rel="noopener"><i class="dot" style="background:' + l[3] + ';margin-top:6px"></i>' +
+          '<div><div class="pn">' + esc(l[0]) + '</div><div class="pt">' + esc(l[1]) + '</div></div><span class="badge">Open ↗</span></a>';
+      }).join("") + '</div></div>' +
+      '<div class="card"><h3>Messages</h3><p class="hint">One inbox for every platform, each message tagged with where it came from, with replies sent straight from here.</p>' +
       '<div class="empty" id="inboxEmpty">Loading…</div></div><div id="msgStatus"></div>';
     setTimeout(loadMessages, 0);
     return h;

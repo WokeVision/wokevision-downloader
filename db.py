@@ -304,6 +304,15 @@ def update_history_caption(entry_id: str, on_screen_caption: str = None, posting
                 cur.execute("UPDATE history SET posting_caption = %s WHERE id = %s", (posting_caption, entry_id))
 
 
+def update_history_meta(entry_id: str, meta: dict):
+    """Persists the (possibly angle-updated) meta for a history entry."""
+    if not configured():
+        return
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE history SET meta = %s WHERE id = %s", (json.dumps(meta or {}), entry_id))
+
+
 def update_history_platform_posts(entry_id: str, posts: dict):
     """Saves the per-platform post versions (generated or user-edited)."""
     if not configured():

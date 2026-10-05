@@ -5,7 +5,7 @@ import shutil
 import threading
 import traceback
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -261,6 +261,7 @@ def _set_stage(job_id, stage, within_stage=0.0):
 
 class ProcessRequest(BaseModel):
     url: str
+    angle: str = ""
 
 
 def _cleanup_later(path: str, delay: int = 1200):
@@ -279,6 +280,7 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
         "on_screen_caption": on_screen_caption,
         "caption": posting_caption,
         "download_method": meta.get("method", ""),
+        "angle": meta.get("angle", ""),
     }
 
 
@@ -325,6 +327,9 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
     output_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_final.mp4")
     staged_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_staged.mp4")
     try:
+        with JOBS_LOCK:
+            _angle = (JOBS.get(job_id) or {}).get("angle", "")
+        meta = {**(meta or {}), "angle": _angle}
         _set_stage(job_id, "transcribing")
         transcript = transcribe_audio(final_source_path)
         _set_job(job_id, transcript=transcript, meta=meta, source_path=final_source_path)
@@ -801,7 +806,7 @@ def process(req: ProcessRequest):
     job_id = str(uuid.uuid4())
     final_source_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
     with JOBS_LOCK:
-        JOBS[job_id] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running"}
+        JOBS[job_id] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": (req.angle or "").strip()[:1500]}
     threading.Thread(
         target=_run_download_then_pipeline, args=(job_id, req.url, final_source_path), daemon=True
     ).start()
@@ -809,7 +814,7 @@ def process(req: ProcessRequest):
 
 
 @app.post("/process-file")
-async def process_file(file: UploadFile = File(...)):
+async def process_file(file: UploadFile = File(...), angle: str = Form("")):
     """Direct upload path: skips the download step entirely. Use this when a
     link can't be fetched automatically (most often YouTube, when the host's
     IP is being rate-limited) -- download the video yourself and upload the
@@ -817,7 +822,7 @@ async def process_file(file: UploadFile = File(...)):
     job_id = str(uuid.uuid4())
     final_source_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
     with JOBS_LOCK:
-        JOBS[job_id] = {"stage": "uploading", "stage_label": "Receiving upload", "progress": 0.0, "status": "running"}
+        JOBS[job_id] = {"stage": "uploading", "stage_label": "Receiving upload", "progress": 0.0, "status": "running", "angle": (angle or "").strip()[:1500]}
 
     try:
         with open(final_source_path, "wb") as f:
@@ -961,6 +966,26 @@ def generate_platform_posts_route(job_id: str, req: PlatformPostsGenerateRequest
     )
     _save_platform_posts(job_id, posts)
     return {"platform_posts": posts}
+
+
+class AngleRequest(BaseModel):
+    angle: str = ""
+
+
+@app.put("/jobs/{job_id}/angle")
+def set_angle(job_id: str, req: AngleRequest):
+    """Saves the per-video 'what this clip is about / how to treat it' note.
+    It lives in the job's meta, so every later caption (re)generation sees
+    it, and it is persisted with the history entry."""
+    job = _done_job(job_id)
+    angle = (req.angle or "").strip()[:1500]
+    meta = {**(job.get("meta") or {}), "angle": angle}
+    _set_job(job_id, meta=meta, angle=angle)
+    try:
+        db.update_history_meta(job_id, meta)
+    except Exception as e:
+        print("ANGLE SAVE FAILED:", e, flush=True)
+    return {"angle": angle}
 
 
 class OnScreenCaptionRequest(BaseModel):

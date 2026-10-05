@@ -24,6 +24,45 @@ protected traits (race, religion, sexuality, disability, etc.) -- the \
 target is ideas, hypocrisy and politicians/public figures' actions, not \
 who someone is.""")
 
+
+# ---------------------------------------------------------------------------
+# Editorial stance guide -- the "who is WokeVision and what does it believe"
+# brief that every caption prompt carries. Written from the owner's own
+# answers. Override wholesale with the STANCE_GUIDE env var, or just edit
+# here. The model is told to treat it as the authority over its own default
+# instincts (which lean sympathetic/neutral and so get WokeVision wrong).
+# ---------------------------------------------------------------------------
+STANCE_GUIDE = os.environ.get("STANCE_GUIDE", """EDITORIAL STANCE (authoritative -- follow this over your own instincts):
+- WokeVision is right-leaning, anti-woke and anti-establishment, with a \
+common-sense, traditional-values bent: personal responsibility, family, \
+free speech, skepticism of institutions, media, politicians and corporations \
+pushing progressive agendas. Mocking the left, 'wokeness' and performative \
+politics is the default target; other establishments get mocked too.
+- Never take the progressive/'be kind'/'empowerment' side of a culture-war \
+topic. Never praise, defend or celebrate things WokeVision would mock. When \
+unsure which way a topic leans, take the skeptical, common-sense, \
+anti-establishment view -- never the sympathetic-to-the-trend one.
+- OnlyFans / sex work / 'degeneracy': mostly mock the people defending it \
+and the 'empowerment' framing -- the hypocrisy, the spin, the celebrity \
+cheerleading -- more than the individuals. Occasionally treat it as plainly \
+a symptom of cultural decline. Never celebrate it, never present it as \
+admirable, never be a cheerleader for it.
+- DARK HUMOUR / MEMES / ANIMATIONS: many clips are satire or dark comedy \
+about real events or people. Recognise this. Do NOT read a joke as a \
+sincere news report or sincere opinion, and do not moralise at it. Play \
+along in the same humour, or add a dry, deadpan, knowing one-liner. Nod at \
+the real event the joke is about (name it if the clip does) but never be \
+earnest, preachy or sympathetic-corporate about it. Don't over-explain.
+- Real victims/tragedies: the joke targets the situation, the system, or \
+the absurdity -- never celebrate harm to an innocent victim.
+- Never attack people for protected traits. Target ideas, hypocrisy, \
+institutions and public figures' actions.""")
+
+READ_THE_CLIP = """BEFORE WRITING, work out in the "angle_read" field (1-2 short sentences): \
+(a) what is this clip actually about / which real event or person, (b) is it \
+satire/dark humour/meme or a sincere clip, (c) which side WokeVision takes. \
+Then write everything to match that read."""
+
 # Shared instructions for the on-screen hook line, reused by both the
 # combined (fast, single-call) generator and the standalone regenerate-only
 # one. Emoji placement is spelled out explicitly because this is the part
@@ -93,7 +132,7 @@ all included -- must fit within {POSTING_CAPTION_MAX_CHARS} characters \
 total. That's X's standard post limit, the shortest of any platform this \
 goes out to, so nothing needs trimming per platform."""
 
-COMBINED_SYSTEM = BRAND_VOICE + f"""
+COMBINED_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"""
 
 You have two things to write for the same video, in one response.
 
@@ -103,11 +142,11 @@ You have two things to write for the same video, in one response.
 
 {POSTING_RULES}
 
-Respond ONLY with JSON: {{"on_screen": "...", "caption": "...", "hashtags": ["#...", "#..."]}}"""
+Respond ONLY with JSON: {{"angle_read": "...", "on_screen": "...", "caption": "...", "hashtags": ["#...", "#..."]}}"""
 
-ON_SCREEN_SYSTEM = BRAND_VOICE + f"\n\nYour job right now: {ON_SCREEN_RULES}\n\nRespond ONLY with JSON: {{\"on_screen\": \"...\"}}"
+ON_SCREEN_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"\n\nYour job right now: {ON_SCREEN_RULES}\n\nRespond ONLY with JSON: {{\"angle_read\": \"...\", \"on_screen\": \"...\"}}"
 
-POSTING_SYSTEM = POSTING_VOICE + f"\n\nYour job right now: {POSTING_RULES}\n\nRespond ONLY with JSON: {{\"caption\": \"...\", \"hashtags\": [\"#...\"]}}"
+POSTING_SYSTEM = POSTING_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"\n\nYour job right now: {POSTING_RULES}\n\nRespond ONLY with JSON: {{\"angle_read\": \"...\", \"caption\": \"...\", \"hashtags\": [\"#...\"]}}"
 
 # Fallback emoji, confirmed present in the local emoji_pack/ so the on-screen
 # caption always renders a real image instead of silently dropping a
@@ -197,12 +236,24 @@ def _assemble_posting_caption(body: str, hashtags: list) -> str:
 def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
     title = (meta or {}).get("title") or ""
     description = (meta or {}).get("description") or ""
-    context = (transcript or "").strip() or f"{title}\n{description}".strip()
-    if not context:
-        context = "No transcript, title or description available -- write something generic but on-brand."
+    transcript = (transcript or "").strip()
+    uploader = (meta or {}).get("uploader") or ""
+    angle = ((meta or {}).get("angle") or "").strip()
+    parts = []
+    if angle:
+        parts.append(f"OPERATOR NOTE FROM THE PAGE OWNER (authoritative -- this is what the clip is about and how to treat it; it overrides your own reading):\n{angle}")
+    if uploader:
+        parts.append(f"Source account/channel: {uploader}")
+    if title:
+        parts.append(f"Original post title: {title}")
+    if description:
+        parts.append(f"Original post description: {description[:700]}")
+    spoken = transcript[:3000] or "[none]"
+    parts.append(f"Spoken transcript (may be empty or music-only for memes/animations):\n{spoken}")
+    context = "\n\n".join(parts)
     if extra_note:
         context += f"\n\n{extra_note}"
-    return context[:4000]
+    return context[:5000]
 
 
 def _call_openai(system_prompt: str, user_content: str) -> dict:
@@ -210,7 +261,7 @@ def _call_openai(system_prompt: str, user_content: str) -> dict:
         CHAT_URL,
         headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
         json={
-            "model": "gpt-4o-mini",
+            "model": os.environ.get("CAPTION_MODEL", "gpt-4o"),
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
@@ -450,7 +501,7 @@ def default_platform_posts(master: str) -> dict:
     }
 
 
-PLATFORM_SYSTEM = BRAND_VOICE + """
+PLATFORM_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + """
 
 You are adapting ONE core caption into six platform-native versions of the \
 same post, to maximise reach and engagement on each platform. Keep the \

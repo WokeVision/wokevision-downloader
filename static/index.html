@@ -507,6 +507,9 @@
   <div class="banner" id="connectBanner"></div>
 
   <div class="card">
+    <label class="fieldLabel" for="angleBox">What's this clip about? <span style="opacity:.6;font-weight:400">(optional)</span></label>
+    <textarea id="angleBox" rows="2" maxlength="1500" placeholder="e.g. Dark humour animation about the Lindsay Clancy case &mdash; don't take it seriously. Or: mock the OnlyFans 'empowerment' angle."></textarea>
+    <p class="note" style="margin-top:6px">Tells the caption writer the context and tone it can't hear from the audio. Used for every caption it writes for this video &mdash; edit it any time, then hit Change caption / Rewrite.</p>
     <div class="segmented">
       <button type="button" class="segBtn active" data-panel="linkPanel">Paste a link</button>
       <button type="button" class="segBtn" data-panel="uploadPanel">Upload a file</button>
@@ -692,6 +695,7 @@
     document.getElementById("downloadLink").href = data.video_url;
     document.getElementById("onScreenBox").value = data.on_screen_caption || "";
     document.getElementById("captionBox").value = data.caption || "";
+    document.getElementById("angleBox").value = data.angle || document.getElementById("angleBox").value || "";
     updateCaptionCharCount();
     fillPosts(data.platform_posts);
     setSaveState("");
@@ -775,7 +779,7 @@
       const resp = await fetch("/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, angle: document.getElementById("angleBox").value }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
@@ -812,6 +816,7 @@
     resetUI();
     stageLabel.textContent = "Writing new caption";
     try {
+      await flushAngle();
       const resp = await fetch(`/jobs/${currentJobId}/regenerate-video`, { method: "POST" });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
@@ -872,6 +877,7 @@
     changeVideoCaptionBtn.disabled = true;
     postingCaptionSpinner.style.display = "inline";
     try {
+      await flushAngle();
       const resp = await fetch(`/jobs/${currentJobId}/regenerate-caption`, { method: "POST" });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
@@ -903,6 +909,7 @@
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("angle", document.getElementById("angleBox").value);
       const resp = await fetch("/process-file", { method: "POST", body: formData });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
@@ -1105,6 +1112,20 @@
     postsDirty = true; setSaveState("Editing…");
     clearTimeout(saveTimer); saveTimer = setTimeout(flushAllSaves, 700);
   }
+  let angleTimer = null;
+  document.getElementById("angleBox").addEventListener("input", () => {
+    if (!currentJobId || resultEl.style.display !== "block") return;
+    clearTimeout(angleTimer);
+    angleTimer = setTimeout(() => {
+      fetch(`/jobs/${currentJobId}/angle`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ angle: document.getElementById("angleBox").value }) }).catch(() => {});
+    }, 700);
+  });
+  async function flushAngle() {
+    clearTimeout(angleTimer);
+    if (!currentJobId || resultEl.style.display !== "block") return;
+    try { await fetch(`/jobs/${currentJobId}/angle`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ angle: document.getElementById("angleBox").value }) }); } catch (_) {}
+  }
+
   function scheduleMasterSave() {
     if (!currentJobId) return;
     masterDirty = true; setSaveState("Editing…");
@@ -1142,6 +1163,7 @@
     const allBtn = document.getElementById("rewriteAllBtn");
     allBtn.disabled = true; if (btn) btn.disabled = true; spin.style.display = "inline";
     try {
+      await flushAngle();
       const resp = await fetch(`/jobs/${currentJobId}/platform-posts/generate`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: platform || null }),
       });
@@ -1495,6 +1517,7 @@
 
       document.getElementById("onScreenBox").value = e.on_screen_caption || "";
       document.getElementById("captionBox").value = e.posting_caption || "";
+      document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";
       updateCaptionCharCount();
       fillPosts(e.platform_posts);
       setSaveState("");

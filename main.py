@@ -4,6 +4,7 @@ import render
 import uuid
 import time
 import shutil
+import subprocess
 import threading
 import traceback
 
@@ -1497,7 +1498,37 @@ def _clip_ingest_and_analyze(cid: str, url: str, focus_text: str):
         except DownloadError as e:
             _clip_set(cid, status="error", error=f"Could not download video: {e}. If it's YouTube, download it yourself and upload the file instead.")
             return
+    try:
+        _clip_shrink(cid)
+    except Exception as e:
+        print("CLIP PROXY FAILED:", e, flush=True)
+        _clip_set(cid, status="error", error="Couldn't prepare that video (it may be corrupt or too large for the server). Try compressing it first.")
+        return
+    _cleanup_later(CLIPS[cid]["source"], delay=3 * 3600)
     _clip_analyze(cid, focus_text)
+
+
+CLIP_PROXY_ABOVE = 250 * 1024 * 1024
+CLIP_MAX_BYTES = 2500 * 1024 * 1024
+
+
+def _clip_shrink(cid: str):
+    """Big sources are re-encoded once to a lighter file (max 960px tall) and
+    the original deleted, so the server disk isn't filled. The editor output
+    is 720x1280 anyway, so the final clips look the same."""
+    src = CLIPS[cid]["source"]
+    if os.path.getsize(src) <= CLIP_PROXY_ABOVE:
+        return
+    _clip_set(cid, stage_label="Optimising large video (a few minutes)")
+    proxy = src.replace("_source.mp4", "_proxy.mp4")
+    cmd = ["ffmpeg", "-y", "-i", src, "-vf", "scale=-2:'min(960,ih)'", "-c:v", "libx264",
+           "-preset", "ultrafast", "-crf", "25", "-c:a", "aac", "-b:a", "96k",
+           "-movflags", "+faststart", proxy]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0 or not os.path.exists(proxy):
+        raise RuntimeError(r.stderr[-500:])
+    os.remove(src)
+    _clip_set(cid, source=proxy)
 
 
 @app.get("/clipping")
@@ -1517,6 +1548,9 @@ async def clip_start(file: UploadFile = File(None), url: str = Form(""), focus: 
             await file.close()
         if os.path.getsize(source) == 0:
             raise HTTPException(status_code=400, detail="Upload failed: no file data received.")
+        if os.path.getsize(source) > CLIP_MAX_BYTES:
+            os.remove(source)
+            raise HTTPException(status_code=413, detail="That file is over 2.5GB. Compress it first (720p is plenty) and try again.")
         url = ""
     elif not url.strip():
         raise HTTPException(status_code=400, detail="Add a link or upload a video.")
@@ -1531,7 +1565,7 @@ def clip_status(cid: str):
         c = CLIPS.get(cid)
         if not c:
             raise HTTPException(status_code=404, detail="Unknown clipping session (the server may have restarted).")
-        return {k: v for k, v in c.items() if k not in ("speech", "source")} | {"video_url": f"/files/clip_{cid}_source.mp4"}
+        return {k: v for k, v in c.items() if k not in ("speech", "source")} | {"video_url": "/files/" + os.path.basename(c.get("source", ""))}
 
 
 class ClipFocus(BaseModel):

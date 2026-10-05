@@ -117,7 +117,7 @@ Credit: @clark_flipper
 [RANT / COMMENTARY]
 We are officially witnessing the final boss of the matrix. The absolute collapse of basic cognitive functioning is on full display here. Decades of institutional captured education have produced adults who can't even identify foundational geography or human biology, yet they speak with absolute, unearned moral authority. The simulation is officially broken.
 Credit: @prageru
-#WokeVision #Brainwashed #Matrix #VirtueSignaling #ObjectiveTruth"""
+#Brainwashed #Matrix #VirtueSignaling #ObjectiveTruth #antiwoke"""
 
 
 def style_examples() -> str:
@@ -126,7 +126,7 @@ def style_examples() -> str:
 
 HASHTAG_STRATEGY = """HASHTAG STRATEGY (reach + relevance): mix three kinds, using only tags \
 that fit THIS clip -- 
- * brand: #WokeVision (include it on posts where the platform allows 3+ tags)
+ * #WokeVision is NOT required -- skip it unless it genuinely fits; spend every slot on tags that drive reach and engagement
  * topic tags specific to the clip (names, events, themes), e.g. #billieeilish #stolenland #surveillance
  * popular reach tags from this pool, picked by theme: general humour -- \
 #funny #funnymeme #lol #lolmeme #memesdaily #memepage #comedy #viral #viralvideo; \
@@ -297,13 +297,13 @@ def _assemble_posting_caption(body: str, hashtags: list) -> str:
     # Pad with generic fallback tags (never a duplicate) until there are
     # exactly POSTING_HASHTAG_COUNT, regardless of how many the model
     # returned -- a single fallback tag used to only ever fill one slot.
-    fallback_pool = ["#WokeVision", "#Politics", "#News", "#Viral", "#Trending"]
+    fallback_pool = ["#Politics", "#Viral", "#News", "#Trending", "#Funny"]
     fallback_iter = iter(t for t in fallback_pool if t not in tags)
     while len(tags) < POSTING_HASHTAG_COUNT:
         try:
             tags.append(next(fallback_iter))
         except StopIteration:
-            tags.append("#WokeVision")
+            tags.append("#Viral")
     tags = tags[:POSTING_HASHTAG_COUNT]
     tag_str = " ".join(tags)
 
@@ -356,8 +356,9 @@ def enforce_tag_mix(text: str, theme_text: str = "", total: int = 5) -> str:
             break
         if t.lower() not in seen and t.lower() not in {a.lower() for a in adds}:
             adds.append(t)
-    keep_specific = max(0, total - 1 - len(pool_have) - len(adds))
-    final = [brand] + specific[:keep_specific] + pool_have + adds
+    keep_brand = [t for t in found if t.lower() == brand.lower()]
+    keep_specific = max(0, total - len(keep_brand) - len(pool_have) - len(adds))
+    final = keep_brand + specific[:keep_specific] + pool_have + adds
     final = final[:total]
     return f"{body}\n\n{' '.join(final)}" if body else " ".join(final)
 
@@ -679,8 +680,8 @@ line. Length follows the clip's CAPTION MODE (quick reaction = 1 short line; \
 rant = a full punchy paragraph, up to ~700 chars). Line breaks for rhythm. \
 Weave 1-2 searchable topic keywords into the sentence itself. End with an \
 engagement line, then the credit line if one is supplied, then the \
-hashtags on their own line at the very end -- exactly 5: #WokeVision, 2 \
-clip-specific tags, 2 popular pool tags.
+hashtags on their own line at the very end -- exactly 5: 2-3 clip-specific \
+tags and 2-3 popular pool tags (#WokeVision is optional, not required).
 
 threads -- "text" [max 500 chars] and "topic_tag" [1-50 chars, no "." or "&", \
 no leading #]. Conversational, like talking to followers, ends with a \
@@ -708,7 +709,7 @@ first five count]. First line is a hook with the topic's keywords (TikTok \
 search reads captions). Length follows the CAPTION MODE but stays tighter than \
 Instagram (max ~3 lines). End with a prompt that drives comments ("Agree or \
 nah?"), then the credit line if supplied. Hashtags at the end: exactly 5, \
-the same mix as Instagram, no #fyp/#foryou.
+the same mix as Instagram (no #WokeVision required), no #fyp/#foryou.
 
 facebook -- "description" [max 2,200 chars]. Hashtags barely help on \
 Facebook: use 1-3 at most at the end. Slightly warmer and more explanatory \

@@ -9,7 +9,7 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 .wvNavInner {
-  max-width: 1100px; margin: 0 auto;
+  max-width: 1480px; margin: 0 auto;
   display: flex; align-items: center; gap: 6px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
 }
@@ -32,4 +32,8 @@
 .wvNavAuth:hover { color: #F5F5F7; }
 @media (max-width: 420px) {
   .wvNavLink { padding: 8px 10px; font-size: 13.5px; }
+}
+
+@media (min-width: 900px) {
+  .wvNav { padding-left: 28px; padding-right: 28px; }
 }

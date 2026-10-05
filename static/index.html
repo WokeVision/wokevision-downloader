@@ -51,19 +51,73 @@
     margin: 0 auto;
   }
 
-  /* Wider layouts (iPad) get a roomier two-column caption area and a
-     slightly wider shell -- same component styles throughout, just more
-     breathing room and a side-by-side split where it helps. */
-  @media (min-width: 760px) {
-    .page { max-width: 680px; }
-    .captionGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  /* ---- Studio layout ------------------------------------------------
+     Phone: one column, in workflow order (source -> history -> status ->
+     video -> captions -> platform versions -> post-to). The three column
+     wrappers dissolve (display: contents) and `order` sequences the cards.
+     iPad / small laptop (>=900px): two columns -- source, video and the
+     Post-to switches on the left; captions on the right.
+     Desktop (>=1320px): three zones -- source/history | video + post-to |
+     captions -- so a whole post is visible and editable without scrolling
+     a long single strip. */
+  .studio { display: flex; flex-direction: column; }
+  .col { display: contents; }
+  #sourceCard { order: 1; } #historyCard { order: 2; } #statusCard { order: 3; }
+  #videoCard { order: 4; } .captionGrid { order: 5; } #platformPostsCard { order: 6; } #platformsCard { order: 7; }
+  .resultPart { display: none; }
+  body.has-result .resultPart { display: block; }
+  body.has-result .captionGrid.resultPart { display: grid; }
+  .captionGrid { grid-template-columns: 1fr; gap: 0; }
+
+  @media (min-width: 700px) {
+    .page { max-width: 720px; }
+    .captionGrid { grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  }
+
+  @media (min-width: 900px) {
+    body { padding-left: 28px; padding-right: 28px; }
+    .page { max-width: 1240px; }
+    .studio {
+      display: grid; gap: 0 22px; align-items: start;
+      grid-template-columns: 380px minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+      grid-template-areas: "a c" "b c";
+    }
+    .col { display: flex; flex-direction: column; min-width: 0; }
+    .colA { grid-area: a; } .colB { grid-area: b; } .colC { grid-area: c; }
+    #sourceCard, #historyCard, #statusCard, #videoCard, .captionGrid, #platformPostsCard, #platformsCard { order: 0; }
+    video { max-width: 100%; max-height: 62vh; width: auto; }
+    .platPanel textarea, #onScreenBox, #captionBox { min-height: 140px; }
+    #historyList { max-height: 300px; }
+    #onScreenBox { min-height: 84px; }
+    header.brand { margin-bottom: 16px; }
+  }
+
+  @media (min-width: 1320px) {
+    .page { max-width: 1480px; }
+    .studio {
+      grid-template-columns: 340px 330px minmax(0, 1fr);
+      grid-template-rows: auto;
+      grid-template-areas: "a b c";
+    }
+    video { max-height: 56vh; }
+    .platPanel textarea { min-height: 170px; }
+  }
+
+  /* Touch devices: bigger, easier targets */
+  @media (pointer: coarse) {
+    button.secondary { min-height: 44px; }
+    .platTab { min-height: 42px; }
+    .connectLink { min-height: 44px; padding: 6px 8px; }
+    .platformRow { padding: 13px 0; }
+    input[type="text"], .platPanel select { min-height: 46px; }
   }
 
   header.brand {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 26px;
+    margin-bottom: 20px;
   }
   header.brand img {
     width: 42px;
@@ -244,8 +298,6 @@
     white-space: pre-wrap;
     margin-top: 10px;
   }
-
-  #result { display: none; }
 
   video {
     width: 100%;
@@ -506,7 +558,9 @@
 
   <div class="banner" id="connectBanner"></div>
 
-  <div class="card">
+  <div class="studio">
+  <div class="col colA">
+  <div class="card" id="sourceCard">
     <label class="fieldLabel" for="angleBox">What's this clip about? <span style="opacity:.6;font-weight:400">(optional)</span></label>
     <textarea id="angleBox" rows="2" maxlength="1500" placeholder="e.g. Dark humour animation about the Lindsay Clancy case &mdash; don't take it seriously. Or: mock the OnlyFans 'empowerment' angle."></textarea>
     <p class="note" style="margin-top:6px">Tells the caption writer the context and tone it can't hear from the audio. Used for every caption it writes for this video &mdash; edit it any time, then hit Change caption / Rewrite.</p>
@@ -562,13 +616,27 @@
     <div id="errorBox"></div>
   </div>
 
-  <div id="result">
-    <div class="card" style="text-align:center;">
+  </div><!-- /colA -->
+
+  <div class="col colB">
+    <div class="card resultPart" id="videoCard" style="text-align:center;">
       <video id="preview" controls playsinline></video>
       <a class="dl" id="downloadLink" download="wokevision.mp4">Download video</a>
     </div>
 
-    <div class="captionGrid">
+  <div class="card" id="platformsCard">
+    <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Post to</h3>
+    <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
+      Switch on the platforms this video should go out to, then Upload. Tap Connect/Reconnect to fix a dropped connection.
+    </p>
+    <div id="platformList"></div>
+    <button class="primary" id="uploadToPlatformsBtn" type="button">Upload</button>
+    <div class="publishResults" id="publishResults"></div>
+  </div>
+  </div><!-- /colB -->
+
+  <div class="col colC">
+    <div class="captionGrid resultPart" id="captionGrid">
       <div class="card captionCard">
         <h3>On-screen caption</h3>
         <p class="hint">The hook overlaid on the video itself, in the white space above it. Edit the text directly, then tap Save caption.</p>
@@ -593,9 +661,9 @@
       </div>
     </div>
 
-    <div class="card captionCard" id="platformPostsCard">
+    <div class="card captionCard resultPart" id="platformPostsCard">
       <h3>Platform versions</h3>
-      <p class="hint">Written natively for each platform's limits and what tends to get reach there. Everything is editable and saves automatically &mdash; this is exactly what gets posted. A green dot means that platform is switched on below.</p>
+      <p class="hint">Written natively for each platform's limits and what tends to get reach there. Everything is editable and saves automatically &mdash; this is exactly what gets posted. A green dot means that platform is switched on.</p>
       <div class="platTabs" id="platTabs"></div>
       <div id="platPanels"></div>
       <div class="actionRow">
@@ -604,29 +672,15 @@
         <span class="saveState" id="saveState"></span>
       </div>
     </div>
-  </div>
-
-  <!-- Platforms: one single, permanent section -- always on screen (not
-       tied to whether a video has finished processing), always showing
-       every platform immediately (no empty/loading flash while
-       /connections resolves -- see PLATFORM_PLACEHOLDERS below), with
-       live connection status, Connect/Reconnect links, the per-upload
-       toggles and the Upload button all in the same place. -->
-  <div class="card" id="platformsCard">
-    <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Platforms</h3>
-    <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
-      Toggle on whichever platforms this video should go out to, then upload. Tap Connect/Reconnect to fix a dropped connection.
-    </p>
-    <div id="platformList"></div>
-    <button class="primary" id="uploadToPlatformsBtn" type="button">Upload</button>
-    <div class="publishResults" id="publishResults"></div>
-  </div>
+  </div><!-- /colC -->
+  </div><!-- /studio -->
 
 </div>
 
 <script>
   const statusCard = document.getElementById("statusCard");
-  const resultEl = document.getElementById("result");
+  const setResult = (on) => document.body.classList.toggle("has-result", !!on);
+  const resultShown = () => document.body.classList.contains("has-result");
   const progressFill = document.getElementById("progressFill");
   const stageLabel = document.getElementById("stageLabel");
   const etaLabel = document.getElementById("etaLabel");
@@ -672,7 +726,7 @@
   }
 
   function resetUI() {
-    resultEl.style.display = "none";
+    setResult(false);
     errorBox.style.display = "none";
     statusCard.classList.add("active");
     progressFill.style.width = "0%";
@@ -699,7 +753,7 @@
     updateCaptionCharCount();
     fillPosts(data.platform_posts);
     setSaveState("");
-    resultEl.style.display = "block";
+    setResult(true); autoGrowAll();
     if (typeof loadConnections === "function") loadConnections();
   }
 
@@ -1036,6 +1090,7 @@
   function selectPlat(id) {
     activePlat = id;
     platTabs.querySelectorAll(".platTab").forEach((t) => t.classList.toggle("active", t.dataset.p === id));
+    setTimeout(autoGrowAll, 0);
     platPanels.querySelectorAll(".platPanel").forEach((t) => t.classList.toggle("active", t.dataset.p === id));
   }
 
@@ -1072,6 +1127,19 @@
     });
   }
 
+  // Text boxes grow to fit their content (no inner scrolling on a post that
+  // is all on screen), capped so a very long caption can't swallow the page.
+  function autoGrow(el) {
+    if (!el || el.offsetParent === null) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight + 2, 520) + "px";
+  }
+  function autoGrowAll() {
+    document.querySelectorAll("#onScreenBox, #captionBox, #angleBox, .platPanel textarea").forEach(autoGrow);
+  }
+  document.addEventListener("input", (e) => { if (e.target && e.target.tagName === "TEXTAREA") autoGrow(e.target); });
+  window.addEventListener("resize", autoGrowAll);
+
   function fillPosts(posts) {
     posts = posts || {};
     PLAT.forEach((p) => {
@@ -1086,6 +1154,7 @@
       });
       updateCounts(p.id);
     });
+    autoGrowAll();
   }
 
   function collectPosts() {
@@ -1114,7 +1183,7 @@
   }
   let angleTimer = null;
   document.getElementById("angleBox").addEventListener("input", () => {
-    if (!currentJobId || resultEl.style.display !== "block") return;
+    if (!currentJobId || !resultShown()) return;
     clearTimeout(angleTimer);
     angleTimer = setTimeout(() => {
       fetch(`/jobs/${currentJobId}/angle`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ angle: document.getElementById("angleBox").value }) }).catch(() => {});
@@ -1122,7 +1191,7 @@
   });
   async function flushAngle() {
     clearTimeout(angleTimer);
-    if (!currentJobId || resultEl.style.display !== "block") return;
+    if (!currentJobId || !resultShown()) return;
     try { await fetch(`/jobs/${currentJobId}/angle`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ angle: document.getElementById("angleBox").value }) }); } catch (_) {}
   }
 
@@ -1511,7 +1580,7 @@
           note.id = "historyExpiredNote";
           note.className = "historyExpiredNote";
           note.textContent = "The original video file for this edit has expired, so there's no preview or re-publish available -- captions and platform history are still shown below.";
-          resultEl.insertBefore(note, resultEl.firstChild);
+          const vc = document.getElementById("videoCard"); vc.parentNode.insertBefore(note, vc);
         }
       }
 
@@ -1521,7 +1590,7 @@
       updateCaptionCharCount();
       fillPosts(e.platform_posts);
       setSaveState("");
-      resultEl.style.display = "block";
+      setResult(true); autoGrowAll();
       loadConnections();
     } catch (err) {
       alert("Error: " + err.message);

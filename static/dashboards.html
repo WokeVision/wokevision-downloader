@@ -123,6 +123,28 @@
   .replyBar button { flex: none; border: none; background: var(--accent); color: #fff; font-weight: 700; padding: 0 20px; border-radius: 999px; cursor: pointer; font-size: 14.5px; }
   .replyBar button:disabled { background: rgba(255,255,255,0.12); color: var(--text-faint); }
 
+
+  /* ---- Wide screens: use the room ---------------------------------- */
+  .duo { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 14px; align-items: start; }
+  .tabs { position: sticky; top: calc(54px + env(safe-area-inset-top, 0px)); z-index: 20; margin-left: -18px; margin-right: -18px; padding: 8px 18px 8px;
+    background: rgba(10,10,12,0.78); backdrop-filter: saturate(180%) blur(18px); -webkit-backdrop-filter: saturate(180%) blur(18px); }
+  @media (min-width: 900px) {
+    .wrap { max-width: 1480px; padding: 26px 28px 0; }
+    .tabs { margin-left: -28px; margin-right: -28px; padding-left: 28px; padding-right: 28px; }
+    .duo { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .barsCard { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 36px; }
+    .posts { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+    h1 { font-size: 30px; }
+  }
+  @media (min-width: 1320px) {
+    .barsCard { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .posts { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+  }
+  @media (pointer: coarse) {
+    .tab, .chip { min-height: 44px; }
+    .btn2, .seg button { min-height: 40px; }
+  }
+
   /* Date range bar */
   .rangeBar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
   .rangeBar .seg { flex-wrap: wrap; max-width: 100%; }
@@ -424,7 +446,7 @@
         return kpiTile(m[1], v, extra);
       }).join("") + '</div>';
     } else {
-      h += '<div class="card">' + METRICS.map(function (m) {
+      h += '<div class="card barsCard">' + METRICS.map(function (m) {
         var vals = ids.map(function (i) { return metric(i, m[0]); });
         var mx = Math.max.apply(null, vals.map(function (v) { return v || 0; })) || 1;
         return '<div class="barBlock"><div class="t">' + m[1] + '</div>' + ids.map(function (i, ix) {
@@ -435,7 +457,7 @@
         }).join("") + '</div>';
       }).join("") + '</div>';
     }
-    h += engagementCard(ids, state.mode === "combined") + followersCard(ids, state.mode === "combined");
+    h += '<div class="duo">' + engagementCard(ids, state.mode === "combined") + followersCard(ids, state.mode === "combined") + '</div>';
     return h;
   }
 
@@ -455,7 +477,7 @@
       if (m[0] === "views" && id === "instagram" && state.igViews && state.igViews.clamped) extra = '<div class="sub2">last ~13 months</div>';
       return kpiTile(m[1], metric(id, m[0]), extra);
     }).join("") + '</div>';
-    h += engagementCard([id], false) + followersCard([id], false);
+    h += '<div class="duo">' + engagementCard([id], false) + followersCard([id], false) + '</div>';
     var posts = postsIn(id).sort(function (a, b) {
       return ((b.views || 0) + (b.likes || 0) + 2 * (b.comments || 0)) - ((a.views || 0) + (a.likes || 0) + 2 * (a.comments || 0));
     }).slice(0, 12);

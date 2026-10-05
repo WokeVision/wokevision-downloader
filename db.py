@@ -107,6 +107,9 @@ def init_db():
             # rather than requiring a manual migration.
             cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS source_filename TEXT")
             cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS transcript TEXT")
+            # Per-platform versions of the posting caption (and the user's
+            # edits to them), so nothing typed in the editor is lost.
+            cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS platform_posts JSONB")
 
 
 def _encrypt(value: str):
@@ -299,6 +302,15 @@ def update_history_caption(entry_id: str, on_screen_caption: str = None, posting
                 cur.execute("UPDATE history SET on_screen_caption = %s WHERE id = %s", (on_screen_caption, entry_id))
             if posting_caption is not None:
                 cur.execute("UPDATE history SET posting_caption = %s WHERE id = %s", (posting_caption, entry_id))
+
+
+def update_history_platform_posts(entry_id: str, posts: dict):
+    """Saves the per-platform post versions (generated or user-edited)."""
+    if not configured():
+        return
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE history SET platform_posts = %s WHERE id = %s", (json.dumps(posts or {}), entry_id))
 
 
 def update_history_publish_results(entry_id: str, results: dict):

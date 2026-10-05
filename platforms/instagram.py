@@ -193,11 +193,13 @@ def check_status() -> dict:
         return {"connected": True, "ok": False, "label": "Connection error", "error": str(e)}
 
 
-def publish_video(video_url: str, caption: str) -> dict:
+def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     """Uploads+publishes a video as a Reel. video_url must be a public URL
     (this app's own /files/<name>.mp4 route). Returns {"media_id": ...}.
     Raises InstagramError on any failure, with the underlying platform
     message included so the UI can show something actionable."""
+    # `post` carries the Instagram-specific version written/edited in the editor.
+    caption = (post or {}).get("caption", caption)
     conn = db.get_connection(PLATFORM)
     if not conn or not conn.get("access_token"):
         raise InstagramError("Instagram isn't connected.")

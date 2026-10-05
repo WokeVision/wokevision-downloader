@@ -249,12 +249,13 @@ def check_status() -> dict:
         return {"connected": True, "ok": False, "label": "Connection error", "error": str(e)}
 
 
-def publish_video(video_url: str, caption: str) -> dict:
+def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     """Uploads+publishes a video as a Facebook Reel on the connected Page.
     video_url must be a public URL (this app's own /files/<name>.mp4
     route). Returns {"media_id": ...}. Raises FacebookError on any
     failure, with the underlying platform message included so the UI can
     show something actionable."""
+    caption = (post or {}).get("description", caption)
     conn = db.get_connection(PLATFORM)
     if not conn or not conn.get("access_token"):
         raise FacebookError("Facebook isn't connected.")

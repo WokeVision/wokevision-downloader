@@ -312,11 +312,12 @@ def _upload_video(access_token: str, video_url: str) -> str:
     return media_id
 
 
-def publish_video(video_url: str, caption: str) -> dict:
+def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     """Uploads the rendered video and posts it. video_url must be a public
     URL (this app's own /files/<name>.mp4 route). Returns {"tweet_id": ...}.
     Raises XError on any failure, with the underlying platform message
     included so the UI can show something actionable."""
+    caption = (post or {}).get("text", caption)
     conn = db.get_connection(PLATFORM)
     if not conn or not conn.get("access_token"):
         raise XError("X isn't connected.")

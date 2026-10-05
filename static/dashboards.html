@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0A0A0C" />
 <link rel="icon" href="/static/assets/logo-mark.png" />
 <link rel="apple-touch-icon" href="/static/assets/logo-mark.png" />
-<title>Dashboards · WokeVision</title>
+<title>Dashboard · WokeVision</title>
 <link rel="stylesheet" href="/static/nav.css" />
 <style>
   :root {
@@ -61,7 +61,7 @@
 
   /* KPI tiles */
   .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
-  @media (min-width: 700px) { .kpis { grid-template-columns: repeat(5, 1fr); } }
+  @media (min-width: 700px) { .kpis { grid-template-columns: repeat(6, 1fr); } }
   .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; }
   .kpi .lbl { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); font-weight: 700; }
   .kpi .val { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; margin-top: 6px; font-variant-numeric: tabular-nums; }
@@ -145,7 +145,7 @@
 <div class="wrap">
   <div class="titleRow">
     <div>
-      <h1>Dashboards</h1>
+      <h1>Dashboard</h1>
       <div class="sub" id="updated">Loading…</div>
     </div>
     <button class="btn2" id="refreshBtn">Refresh</button>
@@ -166,7 +166,7 @@
     { id: "facebook",  label: "Facebook",  color: "#4C8DFF" }
   ];
   var BY_ID = {}; PLATFORMS.forEach(function (p) { BY_ID[p.id] = p; });
-  var METRICS = [["followers", "Followers"], ["views", "Views"], ["likes", "Likes"], ["comments", "Comments"], ["posts", "Posts"]];
+  var METRICS = [["followers", "Followers"], ["views", "Views"], ["likes", "Likes"], ["comments", "Comments"], ["shares", "Shares"], ["posts", "Posts"]];
 
   var state = {
     data: {},            // platform id -> normalised stats

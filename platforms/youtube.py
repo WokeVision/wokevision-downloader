@@ -188,7 +188,7 @@ def check_status() -> dict:
         return {"connected": True, "ok": False, "label": "Connection error", "error": str(e)}
 
 
-def publish_video(video_url: str, caption: str) -> dict:
+def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     """Streams the rendered video from video_url into a YouTube resumable
     upload session and publishes it as public. video_url must be a public
     URL (this app's own /files/<name>.mp4 route). Returns {"video_id":
@@ -201,12 +201,22 @@ def publish_video(video_url: str, caption: str) -> dict:
     conn = db.get_connection(PLATFORM)
     access_token = conn["access_token"]
 
+    post = post or {}
     caption = caption or ""
-    first_line = caption.splitlines()[0].strip() if caption.strip() else "WokeVision"
-    title = (first_line or "WokeVision")[:95]
-    if "short" not in title.lower():
-        title = (title + " #Shorts")[:100]
-    description = caption if "#shorts" in caption.lower() else (caption + "\n\n#Shorts").strip()
+    if post.get("title") or post.get("description"):
+        # Written/edited in the editor: separate title + description, tags, category.
+        title = (post.get("title") or "").strip() or "WokeVision"
+        description = (post.get("description") or "").strip()
+        tags = [t for t in (post.get("tags") or []) if t]
+        category_id = str(post.get("category") or "25")
+    else:
+        first_line = caption.splitlines()[0].strip() if caption.strip() else "WokeVision"
+        title = (first_line or "WokeVision")[:95]
+        if "short" not in title.lower():
+            title = (title + " #Shorts")[:100]
+        description = caption if "#shorts" in caption.lower() else (caption + "\n\n#Shorts").strip()
+        tags, category_id = [], "22"
+    title = title[:100]
 
     # Pull the source video with a streaming GET so we never hold the
     # whole file in memory, and so we know its exact size up front (the
@@ -229,7 +239,8 @@ def publish_video(video_url: str, caption: str) -> dict:
             "X-Upload-Content-Length": content_length,
         },
         json={
-            "snippet": {"title": title, "description": description, "categoryId": "22"},
+            "snippet": {"title": title, "description": description, "categoryId": category_id,
+                        **({"tags": tags} if tags else {})},
             "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
         },
         timeout=30,

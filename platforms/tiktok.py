@@ -233,7 +233,7 @@ def check_status() -> dict:
         return {"connected": True, "ok": False, "label": "Connection error", "error": str(e)}
 
 
-def _upload_video(access_token: str, video_url: str, caption: str) -> str:
+def _upload_video(access_token: str, video_url: str, caption: str, options: dict = None) -> str:
     """Runs the full chunked FILE_UPLOAD publish cycle (init -> chunked PUTs
     -> poll status) and returns the resulting publish_id. Streams the
     source video rather than buffering it whole, chunking it as it reads so
@@ -255,6 +255,7 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
     nominal_chunk_size = chunk_sizes[0]
 
     title = (caption or "").strip()[:2200]
+    options = options or {}
 
     init_resp = requests.post(
         INIT_URL,
@@ -263,9 +264,9 @@ def _upload_video(access_token: str, video_url: str, caption: str) -> str:
             "post_info": {
                 "title": title,
                 "privacy_level": os.environ.get("TIKTOK_PRIVACY_LEVEL", "PUBLIC_TO_EVERYONE"),
-                "disable_duet": False,
-                "disable_stitch": False,
-                "disable_comment": False,
+                "disable_duet": not options.get("allow_duet", True),
+                "disable_stitch": not options.get("allow_stitch", True),
+                "disable_comment": not options.get("allow_comments", True),
                 "video_cover_timestamp_ms": 1000,
                 "brand_content_toggle": False,
                 "brand_organic_toggle": False,
@@ -343,7 +344,7 @@ def _poll_publish_status(access_token: str, publish_id: str):
     raise TikTokError("Timed out waiting for TikTok to finish processing the video.")
 
 
-def publish_video(video_url: str, caption: str) -> dict:
+def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     """Uploads+publishes a video as a TikTok post. video_url must be a
     public URL (this app's own /files/<name>.mp4 route). Returns
     {"publish_id": ...}. Raises TikTokError on any failure, with the
@@ -351,6 +352,7 @@ def publish_video(video_url: str, caption: str) -> dict:
     actionable. Note: until this app passes TikTok's content-posting audit,
     every post lands as SELF_ONLY (private) no matter what privacy_level is
     requested -- that's a TikTok-side restriction, not an error here."""
+    caption = (post or {}).get("caption", caption)
     conn = db.get_connection(PLATFORM)
     if not conn or not conn.get("access_token"):
         raise TikTokError("TikTok isn't connected.")
@@ -358,6 +360,6 @@ def publish_video(video_url: str, caption: str) -> dict:
     conn = db.get_connection(PLATFORM)
     access_token = conn["access_token"]
 
-    publish_id = _upload_video(access_token, video_url, caption)
+    publish_id = _upload_video(access_token, video_url, caption, options=post)
     _poll_publish_status(access_token, publish_id)
     return {"publish_id": publish_id}

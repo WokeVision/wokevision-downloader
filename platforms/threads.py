@@ -194,12 +194,14 @@ def check_status() -> dict:
         return {"connected": True, "ok": False, "label": "Connection error", "error": str(e)}
 
 
-def publish_video(video_url: str, caption: str) -> dict:
+def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     """Uploads+publishes a video as a Threads post. video_url must be a
     public URL (this app's own /files/<name>.mp4 route). Returns
     {"media_id": ...}. Raises ThreadsError on any failure, with the
     underlying platform message included so the UI can show something
     actionable."""
+    caption = (post or {}).get("text", caption)
+    topic_tag = ((post or {}).get("topic_tag") or "").strip()
     conn = db.get_connection(PLATFORM)
     if not conn or not conn.get("access_token"):
         raise ThreadsError("Threads isn't connected.")
@@ -210,14 +212,19 @@ def publish_video(video_url: str, caption: str) -> dict:
     if not threads_user_id:
         raise ThreadsError("No Threads account id on file -- try reconnecting.")
 
+    create_data = {
+        "video_url": video_url,
+        "media_type": "VIDEO",
+        "text": caption or "",
+        "access_token": access_token,
+    }
+    if topic_tag:
+        # Threads allows ONE topic tag per post, set here rather than as a
+        # #hashtag in the text (1-50 chars, no "." or "&").
+        create_data["topic_tag"] = topic_tag
     create_resp = requests.post(
         f"{GRAPH_BASE}/{threads_user_id}/threads",
-        data={
-            "video_url": video_url,
-            "media_type": "VIDEO",
-            "text": caption or "",
-            "access_token": access_token,
-        },
+        data=create_data,
         timeout=60,
     )
     if create_resp.status_code != 200:

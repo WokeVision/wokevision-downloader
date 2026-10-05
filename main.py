@@ -12,7 +12,8 @@ from pydantic import BaseModel
 
 from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
-from caption import generate_captions, generate_on_screen_caption, generate_posting_caption
+from caption import (generate_captions, generate_on_screen_caption, generate_posting_caption,
+                     generate_platform_posts, normalize_platform_posts, PLATFORM_IDS)
 from render import render_staged, apply_caption
 import db
 import auth
@@ -270,9 +271,10 @@ def _cleanup_later(path: str, delay: int = 1200):
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption: str) -> dict:
+def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption: str, platform_posts: dict = None) -> dict:
     base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
     return {
+        "platform_posts": platform_posts or {},
         "video_url": f"{base_url}/files/{job_id}_final.mp4",
         "on_screen_caption": on_screen_caption,
         "caption": posting_caption,
@@ -303,6 +305,13 @@ def _save_history(job_id: str, meta: dict, on_screen_caption: str, posting_capti
         print(f"HISTORY SAVE FAILED ({job_id}): {e}", flush=True)
 
 
+def _save_platform_posts(job_id: str, posts: dict):
+    try:
+        db.update_history_platform_posts(job_id, posts)
+    except Exception as e:
+        print(f"HISTORY PLATFORM-POSTS SAVE FAILED ({job_id}): {e}", flush=True)
+
+
 def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
     """Shared steps once a source video is on disk, regardless of whether it
     got there via download or direct upload: transcribe -> caption -> render
@@ -322,6 +331,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
 
         _set_stage(job_id, "captioning")
         on_screen_caption, posting_caption = generate_captions(transcript, meta)
+        platform_posts = generate_platform_posts(transcript, meta, on_screen_caption, posting_caption)
 
         # Rendering happens in two cached stages: render_staged() does the
         # crop/scale/logo/watermark compositing (everything that has nothing
@@ -356,9 +366,11 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
             stage="done", stage_label="Done", progress=1.0, status="done", eta_seconds=0,
             on_screen_caption=on_screen_caption,
             posting_caption=posting_caption,
-            result=_result_for(job_id, meta, on_screen_caption, posting_caption),
+            platform_posts=platform_posts,
+            result=_result_for(job_id, meta, on_screen_caption, posting_caption, platform_posts),
         )
         _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
+        _save_platform_posts(job_id, platform_posts)
         # Mirror to durable storage (no-op if not configured) so the video
         # and the files behind fast caption edits survive redeploys.
         storage.upload_many_async([
@@ -374,7 +386,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
         _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
 
 
-def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: str):
+def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: str, platform_posts: dict = None):
     """Shared fast re-render: applies on_screen_caption to the job's cached
     staged video (see render_staged/apply_caption in render.py), rebuilding
     that staged composite from the kept raw source first if its own
@@ -432,14 +444,18 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
         raise RuntimeError("Render finished but no output file was produced.")
 
     _cleanup_later(output_path, delay=KEEP_ALIVE_SECONDS)
+    if platform_posts is None:
+        platform_posts = job.get("platform_posts") or {}
     _set_job(
         job_id,
         stage="done", stage_label="Done", progress=1.0, status="done", eta_seconds=0,
         on_screen_caption=on_screen_caption,
         posting_caption=posting_caption,
-        result=_result_for(job_id, meta, on_screen_caption, posting_caption),
+        platform_posts=platform_posts,
+        result=_result_for(job_id, meta, on_screen_caption, posting_caption, platform_posts),
     )
     _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
+    _save_platform_posts(job_id, platform_posts)
     # The re-rendered final replaces the stored one; staged is re-uploaded
     # too in case it had to be rebuilt.
     storage.upload_many_async([
@@ -467,7 +483,8 @@ def _run_regenerate_video(job_id: str):
         _set_stage(job_id, "captioning")
         on_screen_caption = generate_on_screen_caption(transcript, meta, avoid=prev_on_screen)
         posting_caption = generate_posting_caption(transcript, meta, on_screen_caption)
-        _render_with_caption(job_id, on_screen_caption, posting_caption)
+        platform_posts = generate_platform_posts(transcript, meta, on_screen_caption, posting_caption)
+        _render_with_caption(job_id, on_screen_caption, posting_caption, platform_posts)
     except Exception as e:
         tb = traceback.format_exc()
         print("REGENERATE VIDEO FAILED:", tb, flush=True)
@@ -507,15 +524,18 @@ def _run_regenerate_caption(job_id: str):
         posting_caption = generate_posting_caption(
             transcript, meta, on_screen_caption, avoid=prev_posting
         )
+        platform_posts = generate_platform_posts(transcript, meta, on_screen_caption, posting_caption)
         _set_job(
             job_id,
             posting_caption=posting_caption,
-            result=_result_for(job_id, meta, on_screen_caption, posting_caption),
+            platform_posts=platform_posts,
+            result=_result_for(job_id, meta, on_screen_caption, posting_caption, platform_posts),
         )
         try:
             db.update_history_caption(job_id, posting_caption=posting_caption)
         except Exception as e:
             print(f"HISTORY UPDATE FAILED ({job_id}): {e}", flush=True)
+        _save_platform_posts(job_id, platform_posts)
     except Exception as e:
         tb = traceback.format_exc()
         print("REGENERATE CAPTION FAILED:", tb, flush=True)
@@ -859,7 +879,88 @@ def regenerate_caption(job_id: str):
         job = JOBS.get(job_id)
     if job.get("stage") == "error":
         raise HTTPException(status_code=500, detail=job.get("error", "Something went wrong."))
-    return {"posting_caption": job.get("posting_caption", ""), "result": job.get("result")}
+    return {"posting_caption": job.get("posting_caption", ""), "platform_posts": job.get("platform_posts") or {},
+            "result": job.get("result")}
+
+
+class PostingCaptionRequest(BaseModel):
+    caption: str
+
+
+class PlatformPostsRequest(BaseModel):
+    posts: dict
+
+
+class PlatformPostsGenerateRequest(BaseModel):
+    platform: str | None = None
+
+
+def _done_job(job_id: str) -> dict:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job id")
+        if job.get("status") != "done":
+            raise HTTPException(status_code=409, detail="Job isn't finished yet.")
+        return job
+
+
+@app.put("/jobs/{job_id}/posting-caption")
+def save_posting_caption(job_id: str, req: PostingCaptionRequest):
+    """Saves the user's edit of the master posting caption (on the job and in
+    History) so it survives a reload, a redeploy and a device switch."""
+    job = _done_job(job_id)
+    caption = req.caption or ""
+    meta = job.get("meta", {})
+    _set_job(
+        job_id, posting_caption=caption,
+        result=_result_for(job_id, meta, job.get("on_screen_caption", ""), caption, job.get("platform_posts")),
+    )
+    try:
+        db.update_history_caption(job_id, posting_caption=caption)
+    except Exception as e:
+        print(f"HISTORY UPDATE FAILED ({job_id}): {e}", flush=True)
+    return {"ok": True}
+
+
+@app.put("/jobs/{job_id}/platform-posts")
+def save_platform_posts(job_id: str, req: PlatformPostsRequest):
+    """Saves the user's edits to the per-platform versions. Stored as the
+    user typed them (only structurally validated and hard-capped), so
+    publishing sends exactly what they saw in the editor."""
+    job = _done_job(job_id)
+    merged = {**(job.get("platform_posts") or {})}
+    for pid, val in (req.posts or {}).items():
+        if pid in PLATFORM_IDS and isinstance(val, dict):
+            merged[pid] = val
+    posts = normalize_platform_posts(merged, job.get("posting_caption", ""))
+    meta = job.get("meta", {})
+    _set_job(
+        job_id, platform_posts=posts,
+        result=_result_for(job_id, meta, job.get("on_screen_caption", ""), job.get("posting_caption", ""), posts),
+    )
+    _save_platform_posts(job_id, posts)
+    return {"platform_posts": posts}
+
+
+@app.post("/jobs/{job_id}/platform-posts/generate")
+def generate_platform_posts_route(job_id: str, req: PlatformPostsGenerateRequest):
+    """(Re)writes the per-platform versions from the master caption --
+    all platforms, or just `platform` (leaving the others as the user has
+    them). Also used to fill in History entries that predate this feature."""
+    job = _done_job(job_id)
+    only = req.platform if req.platform in PLATFORM_IDS else None
+    posts = generate_platform_posts(
+        job.get("transcript", ""), job.get("meta", {}), job.get("on_screen_caption", ""),
+        job.get("posting_caption", ""), only=only, current=job.get("platform_posts"),
+    )
+    meta = job.get("meta", {})
+    _set_job(
+        job_id, platform_posts=posts,
+        result=_result_for(job_id, meta, job.get("on_screen_caption", ""), job.get("posting_caption", ""), posts),
+    )
+    _save_platform_posts(job_id, posts)
+    return {"platform_posts": posts}
 
 
 class OnScreenCaptionRequest(BaseModel):
@@ -989,7 +1090,8 @@ class PublishRequest(BaseModel):
     platforms: list[str]
 
 
-def _run_publish(publish_job_id: str, history_id: str, platforms: list, video_url: str, caption: str):
+def _run_publish(publish_job_id: str, history_id: str, platforms: list, video_url: str, caption: str,
+                 platform_posts: dict = None):
     """Runs one publish_video() call per platform, each in its own thread,
     so a slow platform (or one that's genuinely stuck) never blocks the
     others -- and the job's per-platform results are visible to a poller
@@ -1001,7 +1103,7 @@ def _run_publish(publish_job_id: str, history_id: str, platforms: list, video_ur
             result = {"status": "done", "ok": False, "error": "This platform isn't connected yet."}
         else:
             try:
-                outcome = module.publish_video(video_url, caption)
+                outcome = module.publish_video(video_url, caption, post=(platform_posts or {}).get(platform))
                 result = {"status": "done", "ok": True, **outcome}
             except Exception as e:
                 print(f"PUBLISH FAILED ({platform}): {e}", flush=True)
@@ -1036,6 +1138,7 @@ def publish(req: PublishRequest):
     if base_url and video_url.startswith("/"):
         video_url = base_url + video_url
     caption = job.get("posting_caption") or job["result"].get("caption") or ""
+    platform_posts = normalize_platform_posts(job.get("platform_posts") or {}, caption)
 
     publish_job_id = str(uuid.uuid4())
     with JOBS_LOCK:
@@ -1044,7 +1147,7 @@ def publish(req: PublishRequest):
             "results": {platform: {"status": "pending"} for platform in req.platforms},
         }
     threading.Thread(
-        target=_run_publish, args=(publish_job_id, req.job_id, req.platforms, video_url, caption), daemon=True
+        target=_run_publish, args=(publish_job_id, req.job_id, req.platforms, video_url, caption, platform_posts), daemon=True
     ).start()
     return {"publish_job_id": publish_job_id}
 
@@ -1096,6 +1199,7 @@ def get_history(entry_id: str):
         "title": e.get("title"),
         "on_screen_caption": e.get("on_screen_caption"),
         "posting_caption": e.get("posting_caption"),
+        "platform_posts": normalize_platform_posts(e.get("platform_posts") or {}, e.get("posting_caption") or ""),
         "video_available": video_available,
         "source_available": source_available,
         "video_url": f"{base_url}/files/{e['video_filename']}" if video_available else None,
@@ -1132,6 +1236,7 @@ def reopen_history(entry_id: str):
     meta = e.get("meta") or {}
     on_screen_caption = e.get("on_screen_caption") or ""
     posting_caption = e.get("posting_caption") or ""
+    platform_posts = normalize_platform_posts(e.get("platform_posts") or {}, posting_caption)
     with JOBS_LOCK:
         JOBS[entry_id] = {
             "stage": "done", "stage_label": "Done", "progress": 1.0, "status": "done", "eta_seconds": 0,
@@ -1141,7 +1246,8 @@ def reopen_history(entry_id: str):
             "staged_path": staged_path,
             "on_screen_caption": on_screen_caption,
             "posting_caption": posting_caption,
-            "result": _result_for(entry_id, meta, on_screen_caption, posting_caption),
+            "platform_posts": platform_posts,
+            "result": _result_for(entry_id, meta, on_screen_caption, posting_caption, platform_posts),
         }
     return {"ok": True}
 

@@ -288,3 +288,255 @@ def generate_posting_caption(transcript: str, meta: dict, on_screen_caption: str
     except Exception as e:
         print(f"POSTING CAPTION GEN FAILED: {e}", flush=True)
         return fallback
+
+
+# ---------------------------------------------------------------------------
+# Per-platform versions of the posting caption
+# ---------------------------------------------------------------------------
+# The master posting caption above is written to survive every platform
+# unedited (280 chars, 5 hashtags). That is a compromise, so each platform
+# also gets its own native version, built from these rules (researched Oct
+# 2026 -- limits and best practice per platform):
+#   Instagram  2,200 chars; app hard-caps 5 hashtags; only the first ~125
+#              chars show before "more" so the hook goes first.
+#   Threads    500 chars; ONE topic tag (API `topic_tag`, 1-50 chars, no
+#              "." or "&"), set separately from the text, not as #hashtags.
+#   YouTube    title <=100 (only ~50 show in feed -- keywords first, no
+#              hashtags); description <=5,000 (first ~100 chars show), 3-5
+#              hashtags at the end (3 surface above the title); tags field
+#              <=500 chars total; category.
+#   X          280 chars (standard accounts); 0-2 hashtags at most -- X's own
+#              guidance says <=2, and engagement-wise zero or one is best.
+#   TikTok     2,200 chars via the API; only the first 5 hashtags count;
+#              keywords/hook in the first line; skip generic #fyp.
+#   Facebook   hashtags barely help discovery -- 1-3; conversational hook.
+PLATFORM_IDS = ["instagram", "threads", "youtube", "tiktok", "x", "facebook"]
+LIM = {
+    "ig_caption": 2200, "ig_tags": 5,
+    "threads_text": 500, "threads_tag": 50,
+    "yt_title": 100, "yt_desc": 5000, "yt_tags_chars": 500, "yt_hashtags": 5,
+    "x_text": 280, "x_tags": 1,
+    "tiktok_caption": 2200, "tiktok_tags": 5,
+    "fb_desc": 2200, "fb_tags": 3,
+}
+YT_DEFAULT_CATEGORY = "25"  # News & Politics
+_HASHTAG_RE = re.compile(r"#\w+")
+
+
+def _split_master(master: str):
+    """(body, [hashtags]) from a caption that ends in hashtags."""
+    master = (master or "").strip()
+    tags = _HASHTAG_RE.findall(master)
+    body = _HASHTAG_RE.sub("", master)
+    body = re.sub(r"[ \t]+\n", "\n", body)
+    body = re.sub(r"[ \t]{2,}", " ", body).strip()
+    return body, tags
+
+
+def _limit_hashtags(text: str, n: int) -> str:
+    """Keeps the first n hashtags in text and strips the rest (word and all)."""
+    count = 0
+
+    def repl(m):
+        nonlocal count
+        count += 1
+        return m.group(0) if count <= n else ""
+    out = _HASHTAG_RE.sub(repl, text or "")
+    return re.sub(r"[ \t]{2,}", " ", out).rstrip()
+
+
+def _strip_hashtags(text: str) -> str:
+    out = _HASHTAG_RE.sub("", text or "")
+    return re.sub(r"[ \t]{2,}", " ", out).strip()
+
+
+def _clean_topic_tag(tag: str) -> str:
+    tag = (tag or "").strip().lstrip("#").replace(".", "").replace("&", "")
+    tag = re.sub(r"\s+", " ", tag).strip()
+    return tag[:LIM["threads_tag"]]
+
+
+def _clean_yt_tags(tags) -> list:
+    if isinstance(tags, str):
+        tags = re.split(r"[,\n]", tags)
+    out, seen, total = [], set(), 0
+    for t in tags or []:
+        t = str(t).strip().lstrip("#").strip()
+        if not t or t.lower() in seen:
+            continue
+        cost = len(t) + (1 if out else 0) + (2 if " " in t else 0)
+        if total + cost > LIM["yt_tags_chars"]:
+            break
+        seen.add(t.lower())
+        out.append(t)
+        total += cost
+    return out
+
+
+def normalize_platform_posts(raw: dict, master: str = "") -> dict:
+    """Makes any platform_posts dict (model output OR a user's saved edits)
+    structurally valid: every platform present, every field the right type,
+    and the hard limits that would make a platform reject the post enforced.
+    Missing platforms fall back to a version derived from the master caption."""
+    raw = raw or {}
+    base = default_platform_posts(master)
+    out = {}
+
+    g = lambda p, k: (raw.get(p) or {}).get(k) if isinstance(raw.get(p), dict) else None
+
+    ig = g("instagram", "caption")
+    ig = base["instagram"]["caption"] if ig is None else str(ig)
+    out["instagram"] = {"caption": _trim_to_chars(_limit_hashtags(ig, LIM["ig_tags"]).strip(), LIM["ig_caption"])}
+
+    th = g("threads", "text")
+    th = base["threads"]["text"] if th is None else str(th)
+    tt = g("threads", "topic_tag")
+    tt = base["threads"]["topic_tag"] if tt is None else str(tt)
+    out["threads"] = {"text": _trim_to_chars(_strip_hashtags(th), LIM["threads_text"]), "topic_tag": _clean_topic_tag(tt)}
+
+    yt_title = g("youtube", "title")
+    yt_title = base["youtube"]["title"] if yt_title is None else str(yt_title)
+    yt_desc = g("youtube", "description")
+    yt_desc = base["youtube"]["description"] if yt_desc is None else str(yt_desc)
+    yt_tags = g("youtube", "tags")
+    yt_tags = base["youtube"]["tags"] if yt_tags is None else yt_tags
+    cat = str(g("youtube", "category") or YT_DEFAULT_CATEGORY)
+    out["youtube"] = {
+        "title": _trim_to_chars(_strip_hashtags(yt_title).strip(), LIM["yt_title"]),
+        "description": _trim_to_chars(_limit_hashtags(yt_desc, LIM["yt_hashtags"]).strip(), LIM["yt_desc"]),
+        "tags": _clean_yt_tags(yt_tags),
+        "category": cat if cat.isdigit() else YT_DEFAULT_CATEGORY,
+    }
+
+    xt = g("x", "text")
+    xt = base["x"]["text"] if xt is None else str(xt)
+    out["x"] = {"text": _trim_to_chars(_limit_hashtags(xt, LIM["x_tags"]).strip(), LIM["x_text"])}
+
+    tk = g("tiktok", "caption")
+    tk = base["tiktok"]["caption"] if tk is None else str(tk)
+    tkd = raw.get("tiktok") if isinstance(raw.get("tiktok"), dict) else {}
+    flag = lambda k: bool(tkd.get(k)) if k in tkd else True
+    out["tiktok"] = {
+        "caption": _trim_to_chars(_limit_hashtags(tk, LIM["tiktok_tags"]).strip(), LIM["tiktok_caption"]),
+        "allow_comments": flag("allow_comments"), "allow_duet": flag("allow_duet"), "allow_stitch": flag("allow_stitch"),
+    }
+
+    fb = g("facebook", "description")
+    fb = base["facebook"]["description"] if fb is None else str(fb)
+    out["facebook"] = {"description": _trim_to_chars(_limit_hashtags(fb, LIM["fb_tags"]).strip(), LIM["fb_desc"])}
+    return out
+
+
+def default_platform_posts(master: str) -> dict:
+    """Deterministic (no AI) per-platform versions built from the master
+    caption -- used when there's no OPENAI_API_KEY, when generation fails,
+    and to fill any platform a saved record is missing."""
+    body, tags = _split_master(master)
+    first_line = (body.splitlines() or [""])[0].strip() or "WokeVision"
+    tag_words = [t.lstrip("#") for t in tags]
+    tags5 = " ".join(tags[:5])
+    return {
+        "instagram": {"caption": (body + ("\n\n" + tags5 if tags5 else "")).strip()},
+        "threads": {"text": body, "topic_tag": tag_words[0] if tag_words else "WokeVision"},
+        "youtube": {
+            "title": first_line[:100],
+            "description": (body + "\n\n" + " ".join((tags[:4] + ["#Shorts"])[:5])).strip(),
+            "tags": tag_words, "category": YT_DEFAULT_CATEGORY,
+        },
+        "x": {"text": body},
+        "tiktok": {"caption": (body + ("\n\n" + tags5 if tags5 else "")).strip(),
+                   "allow_comments": True, "allow_duet": True, "allow_stitch": True},
+        "facebook": {"description": (body + ("\n\n" + " ".join(tags[:2]) if tags else "")).strip()},
+    }
+
+
+PLATFORM_SYSTEM = BRAND_VOICE + """
+
+You are adapting ONE core caption into six platform-native versions of the \
+same post, to maximise reach and engagement on each platform. Keep the \
+same take, jabs and voice everywhere -- but each version must read as if it \
+was written natively for that platform, not copy-pasted. Do not invent \
+facts beyond what the transcript and caption support. The final engagement \
+line should be a question or a punchy statement; vary it per platform.
+
+PLATFORM RULES (hard limits in brackets):
+
+instagram -- "caption" [max 2,200 chars; EXACTLY 3-5 hashtags in total]. Only \
+the first ~125 characters show before "more", so open with the sharpest hook \
+line. Short punchy paragraphs, line breaks for rhythm. Weave 1-2 searchable \
+keywords for the topic into the sentence itself (Instagram search reads \
+captions). End with a line that invites comments, shares or saves ("Send \
+this to someone who needs to see it"), then the hashtags on their own line \
+at the very end: mix 1-2 broad and 2-3 niche tags, no spam tags.
+
+threads -- "text" [max 500 chars] and "topic_tag" [1-50 chars, no "." or "&", \
+no leading #]. Conversational, like talking to followers, ends with a \
+genuine question to start replies (Threads rewards replies). NO #hashtags in \
+the text. "topic_tag" is the single most specific topic people browse \
+(e.g. "Politics", "Free Speech", "Policing") -- one tag only.
+
+youtube -- "title" [max 100 chars, no hashtags]: front-load the keyword and \
+hook in the first 40-50 characters (only ~50 show in the feed), curiosity or \
+conflict, no clickbait lies, no ALL CAPS shouting. "description" [max 5,000]: \
+the first line (~100 chars) is a hook that does NOT just repeat the title; \
+then 1-2 short lines of context and an engagement question; end with 3-5 \
+hashtags on their own line (the first three show above the title; include \
+#Shorts as one of them). "tags": 8-12 search keywords/phrases (no #, total \
+under 400 characters) people would actually search for this topic.
+
+x -- "text" [max 280 chars INCLUDING any hashtag]. One sharp, tight take. \
+Hashtags rarely help on X: use 0, and at most 1 only if it is a genuinely \
+trending topic tag. Lead with the punch, finish with a question or hot line \
+that invites replies and quote-posts. No emoji spam.
+
+tiktok -- "caption" [max 2,200 chars; EXACTLY 3-5 hashtags -- only the \
+first five count]. First line is a hook with the topic's keywords (TikTok \
+search reads captions). Keep it short -- 1-3 lines -- and end with a prompt \
+that drives comments ("Agree or nah?"). Hashtags at the end, niche-relevant, \
+no generic #fyp/#foryou.
+
+facebook -- "description" [max 2,200 chars]. Hashtags barely help on \
+Facebook: use 1-3 at most at the end. Slightly warmer and more explanatory \
+than the others, 2-4 short lines, a hook first line, a closing question that \
+drives comments and shares.
+
+Never attack people over protected traits; target ideas, hypocrisy and \
+public figures' actions.
+
+Respond ONLY with JSON in exactly this shape:
+{"instagram": {"caption": "..."},
+ "threads": {"text": "...", "topic_tag": "..."},
+ "youtube": {"title": "...", "description": "...", "tags": ["...", "..."]},
+ "x": {"text": "..."},
+ "tiktok": {"caption": "..."},
+ "facebook": {"description": "..."}}"""
+
+
+def generate_platform_posts(transcript: str, meta: dict, on_screen_caption: str = "",
+                            master_caption: str = "", only: str = None, current: dict = None) -> dict:
+    """Builds the per-platform versions in one OpenAI call (so it costs one
+    round trip, not six). `only` regenerates a single platform while leaving
+    the rest of `current` exactly as the user has them. Always returns a
+    fully valid dict -- falls back to deterministic derivations from the
+    master caption when there's no API key or the call fails."""
+    fallback = normalize_platform_posts(default_platform_posts(master_caption), master_caption)
+    if not OPENAI_API_KEY:
+        generated = fallback
+    else:
+        note = f'The core posting caption is:\n"""{master_caption}"""'
+        if on_screen_caption:
+            note += f'\nThe on-screen hook on the video is: "{on_screen_caption}".'
+        if only:
+            note += f'\nWrite a fresh, genuinely different take for the "{only}" version.'
+        try:
+            data = _call_openai(PLATFORM_SYSTEM, _build_context(transcript, meta, note))
+            generated = normalize_platform_posts(data, master_caption)
+        except Exception as e:
+            print(f"PLATFORM POSTS GEN FAILED: {e}", flush=True)
+            generated = fallback
+    if only and current:
+        merged = dict(normalize_platform_posts(current, master_caption))
+        if only in generated:
+            merged[only] = generated[only]
+        return merged
+    return generated

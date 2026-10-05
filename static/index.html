@@ -317,6 +317,37 @@
   }
   .actionRow button { margin: 0; }
 
+
+  /* Per-platform post versions */
+  .platTabs { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+  .platTabs::-webkit-scrollbar { display: none; }
+  .platTab {
+    flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px; border-radius: 999px;
+    border: 1px solid var(--border); background: rgba(255,255,255,0.04); color: var(--text-dim);
+    font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+  }
+  .platTab.active { background: var(--text); color: #0A0A0C; border-color: transparent; }
+  .platTab i { width: 7px; height: 7px; border-radius: 50%; background: transparent; display: none; }
+  .platTab.on i { display: inline-block; background: #30D158; }
+  .platPanel { display: none; }
+  .platPanel.active { display: block; }
+  .fieldLabel { font-size: 12px; font-weight: 700; color: var(--text-dim); margin: 12px 0 5px; display: flex; justify-content: space-between; gap: 8px; }
+  .fieldLabel:first-child { margin-top: 0; }
+  .fieldLabel .cnt { font-weight: 600; color: var(--text-faint); }
+  .fieldLabel .cnt.over { color: var(--accent); }
+  .fieldHint { font-size: 11.5px; color: var(--text-faint); margin: 4px 0 0; line-height: 1.4; }
+  .platPanel input[type="text"], .platPanel select {
+    width: 100%; background: rgba(0,0,0,0.3); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius-sm); padding: 11px 12px; font-size: 14.5px; font-family: inherit;
+  }
+  .platPanel textarea { min-height: 120px; }
+  .fold { margin-top: 8px; font-size: 12.5px; color: var(--text-dim); background: rgba(0,0,0,0.25); border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 8px 10px; white-space: pre-wrap; word-break: break-word; }
+  .fold b { color: var(--text); font-weight: 600; }
+  .optRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13.5px; }
+  .optRow:first-of-type { border-top: none; }
+  .saveState { font-size: 12px; color: var(--text-faint); }
+  .saveState.err { color: var(--accent); }
+
   .inlineSpinner {
     font-size: 12.5px;
     color: var(--text-dim);
@@ -547,15 +578,27 @@
       </div>
 
       <div class="card captionCard">
-        <h3>Posting caption</h3>
-        <p class="hint">For the post itself -- Instagram, YouTube, X, TikTok, Threads &amp; Facebook.</p>
+        <h3>Core caption</h3>
+        <p class="hint">The base message (short enough to work anywhere). Each platform's own version below is written from it &mdash; edit those to change what actually gets posted.</p>
         <textarea id="captionBox"></textarea>
         <div class="charCount" id="captionCharCount"></div>
         <div class="actionRow">
           <button class="secondary" id="copyBtn" type="button">Copy caption</button>
           <button class="secondary" id="changePostingCaptionBtn" type="button">Change caption</button>
-          <span class="inlineSpinner" id="postingCaptionSpinner">Refreshing...</span>
+          <span class="inlineSpinner" id="postingCaptionSpinner">Rewriting...</span>
         </div>
+      </div>
+    </div>
+
+    <div class="card captionCard" id="platformPostsCard">
+      <h3>Platform versions</h3>
+      <p class="hint">Written natively for each platform's limits and what tends to get reach there. Everything is editable and saves automatically &mdash; this is exactly what gets posted. A green dot means that platform is switched on below.</p>
+      <div class="platTabs" id="platTabs"></div>
+      <div id="platPanels"></div>
+      <div class="actionRow">
+        <button class="secondary" id="rewriteAllBtn" type="button">Rewrite all platforms</button>
+        <span class="inlineSpinner" id="rewriteSpinner">Rewriting...</span>
+        <span class="saveState" id="saveState"></span>
       </div>
     </div>
   </div>
@@ -650,6 +693,8 @@
     document.getElementById("onScreenBox").value = data.on_screen_caption || "";
     document.getElementById("captionBox").value = data.caption || "";
     updateCaptionCharCount();
+    fillPosts(data.platform_posts);
+    setSaveState("");
     resultEl.style.display = "block";
     if (typeof loadConnections === "function") loadConnections();
   }
@@ -832,6 +877,8 @@
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
       document.getElementById("captionBox").value = data.posting_caption || "";
       updateCaptionCharCount();
+      fillPosts(data.platform_posts);
+      setSaveState("");
     } catch (err) {
       alert("Error: " + err.message);
     } finally {
@@ -866,6 +913,252 @@
       uploadBtn.disabled = false;
     }
   });
+
+  // --- Per-platform post versions: editable, autosaved ------------------
+  // Each platform gets its own native version of the caption (see
+  // caption.py's PLATFORM_SYSTEM for the research behind the defaults).
+  // Whatever is in these fields is exactly what /publish sends.
+  const YT_CATS = [["25", "News & Politics"], ["24", "Entertainment"], ["22", "People & Blogs"], ["23", "Comedy"], ["27", "Education"]];
+  const PLAT = [
+    { id: "instagram", label: "Instagram" }, { id: "threads", label: "Threads" },
+    { id: "youtube", label: "YouTube Shorts" }, { id: "tiktok", label: "TikTok" },
+    { id: "x", label: "X" }, { id: "facebook", label: "Facebook" },
+  ];
+  const FIELDS = {
+    instagram: [
+      { k: "caption", type: "area", label: "Caption", max: 2200, tags: 5, fold: 125,
+        hint: "Only the first ~125 characters show before “more”, so lead with the hook. Instagram allows at most 5 hashtags." },
+    ],
+    threads: [
+      { k: "text", type: "area", label: "Post text", max: 500, tags: 0,
+        hint: "Conversational, ending on a question to start replies. No hashtags here — Threads uses a single topic tag instead (below)." },
+      { k: "topic_tag", type: "line", label: "Topic tag", max: 50,
+        hint: "One tag only. No #, “.” or “&”. People browsing that topic can find the post." },
+    ],
+    youtube: [
+      { k: "title", type: "line", label: "Title", max: 100, soft: 50,
+        hint: "Only the first ~50 characters show in the feed, so put the keyword and the hook first. No hashtags in the title." },
+      { k: "description", type: "area", label: "Description", max: 5000, tags: 5,
+        hint: "The first line (~100 characters) is your hook. End with 3–5 hashtags; the first three show above the title." },
+      { k: "tags", type: "tags", label: "Tags", max: 500,
+        hint: "Comma-separated search keywords. Viewers don’t see these, but YouTube uses them for search and suggestions." },
+      { k: "category", type: "select", label: "Category" },
+    ],
+    tiktok: [
+      { k: "caption", type: "area", label: "Caption", max: 2200, tags: 5,
+        hint: "Hook and keywords in the first line (TikTok search reads captions). Only the first 5 hashtags count." },
+      { k: "allow_comments", type: "switch", label: "Allow comments" },
+      { k: "allow_duet", type: "switch", label: "Allow duets" },
+      { k: "allow_stitch", type: "switch", label: "Allow stitches" },
+    ],
+    x: [
+      { k: "text", type: "area", label: "Post", max: 280, tags: 1,
+        hint: "Standard accounts are capped at 280 characters. Hashtags rarely help on X — none or one works best." },
+    ],
+    facebook: [
+      { k: "description", type: "area", label: "Description", max: 2200, tags: 3,
+        hint: "Hashtags barely help on Facebook — 1 to 3 at most. A hook first line and a closing question work best." },
+    ],
+  };
+
+  const platTabs = document.getElementById("platTabs");
+  const platPanels = document.getElementById("platPanels");
+  const saveStateEl = document.getElementById("saveState");
+  const hashtagCount = (t) => (String(t).match(/#\w+/g) || []).length;
+  let activePlat = "instagram";
+
+  function buildPlatformPanels() {
+    PLAT.forEach((p) => {
+      const tab = document.createElement("button");
+      tab.type = "button"; tab.className = "platTab"; tab.dataset.p = p.id;
+      tab.innerHTML = "<i></i>" + p.label;
+      tab.addEventListener("click", () => selectPlat(p.id));
+      platTabs.appendChild(tab);
+
+      const panel = document.createElement("div");
+      panel.className = "platPanel"; panel.dataset.p = p.id;
+      FIELDS[p.id].forEach((f) => {
+        const id = `pp_${p.id}_${f.k}`;
+        if (f.type === "switch") {
+          const row = document.createElement("div");
+          row.className = "optRow";
+          row.innerHTML = `<span>${f.label}</span><label class="switch"><input type="checkbox" id="${id}" checked><span class="track"></span></label>`;
+          row.querySelector("input").addEventListener("change", scheduleSave);
+          panel.appendChild(row);
+          return;
+        }
+        const lab = document.createElement("div");
+        lab.className = "fieldLabel";
+        lab.innerHTML = `<span>${f.label}</span><span class="cnt" id="${id}_cnt"></span>`;
+        panel.appendChild(lab);
+        let el;
+        if (f.type === "area") el = document.createElement("textarea");
+        else if (f.type === "select") {
+          el = document.createElement("select");
+          YT_CATS.forEach(([v, n]) => { const o = document.createElement("option"); o.value = v; o.textContent = n; el.appendChild(o); });
+        } else { el = document.createElement("input"); el.type = "text"; }
+        el.id = id;
+        el.addEventListener("input", () => { updateCounts(p.id); scheduleSave(); });
+        el.addEventListener("change", () => { updateCounts(p.id); scheduleSave(); });
+        panel.appendChild(el);
+        if (f.fold) { const fd = document.createElement("div"); fd.className = "fold"; fd.id = id + "_fold"; panel.appendChild(fd); }
+        if (f.hint) { const h = document.createElement("div"); h.className = "fieldHint"; h.textContent = f.hint; panel.appendChild(h); }
+      });
+      const row = document.createElement("div");
+      row.className = "actionRow";
+      const rw = document.createElement("button");
+      rw.type = "button"; rw.className = "secondary"; rw.textContent = "Rewrite for " + p.label.replace(" Shorts", "");
+      rw.addEventListener("click", () => rewritePosts(p.id, rw));
+      const cp = document.createElement("button");
+      cp.type = "button"; cp.className = "secondary"; cp.textContent = "Copy";
+      cp.addEventListener("click", async () => {
+        const f0 = FIELDS[p.id].find((f) => f.type === "area" || f.type === "line");
+        const txt = (p.id === "youtube")
+          ? document.getElementById("pp_youtube_title").value + "\n\n" + document.getElementById("pp_youtube_description").value
+          : document.getElementById(`pp_${p.id}_${f0.k}`).value;
+        try { await navigator.clipboard.writeText(txt); } catch (e) {}
+        const o = cp.textContent; cp.textContent = "Copied!"; setTimeout(() => { cp.textContent = o; }, 1500);
+      });
+      row.appendChild(rw); row.appendChild(cp);
+      panel.appendChild(row);
+      platPanels.appendChild(panel);
+    });
+    selectPlat("instagram");
+  }
+
+  function selectPlat(id) {
+    activePlat = id;
+    platTabs.querySelectorAll(".platTab").forEach((t) => t.classList.toggle("active", t.dataset.p === id));
+    platPanels.querySelectorAll(".platPanel").forEach((t) => t.classList.toggle("active", t.dataset.p === id));
+  }
+
+  function refreshTabMarks() {
+    platTabs.querySelectorAll(".platTab").forEach((t) => t.classList.toggle("on", toggledOn.has(t.dataset.p)));
+  }
+
+  function updateCounts(pid) {
+    FIELDS[pid].forEach((f) => {
+      const el = document.getElementById(`pp_${pid}_${f.k}`);
+      const cnt = document.getElementById(`pp_${pid}_${f.k}_cnt`);
+      if (!el || !cnt || f.type === "select") return;
+      const v = el.value;
+      let over = false, txt = "";
+      if (f.type === "tags") {
+        const n = v.split(",").map((s) => s.trim()).filter(Boolean).join(",").length;
+        txt = `${n} / ${f.max}`; over = n > f.max;
+      } else {
+        txt = `${v.length} / ${f.max}`; over = v.length > f.max;
+        if (f.soft) txt += ` · ~${f.soft} show in feed`;
+        if (f.tags !== undefined) {
+          const n = hashtagCount(v);
+          if (f.tags === 0) { if (n) { txt += ` · ${n} hashtag${n > 1 ? "s" : ""} (not used here)`; over = true; } }
+          else { txt += ` · ${n}/${f.tags} hashtag${f.tags > 1 ? "s" : ""}`; if (n > f.tags) over = true; }
+        }
+      }
+      cnt.textContent = txt;
+      cnt.classList.toggle("over", over);
+      if (f.fold) {
+        const fd = document.getElementById(`pp_${pid}_${f.k}_fold`);
+        const shown = v.slice(0, f.fold);
+        fd.innerHTML = `<b>Shows before “more”:</b> ` + (shown.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))) + (v.length > f.fold ? "…" : "");
+      }
+    });
+  }
+
+  function fillPosts(posts) {
+    posts = posts || {};
+    PLAT.forEach((p) => {
+      const d = posts[p.id] || {};
+      FIELDS[p.id].forEach((f) => {
+        const el = document.getElementById(`pp_${p.id}_${f.k}`);
+        if (!el) return;
+        if (f.type === "switch") el.checked = d[f.k] === undefined ? true : !!d[f.k];
+        else if (f.type === "tags") el.value = (d[f.k] || []).join(", ");
+        else if (f.type === "select") el.value = String(d[f.k] || "25");
+        else el.value = d[f.k] || "";
+      });
+      updateCounts(p.id);
+    });
+  }
+
+  function collectPosts() {
+    const out = {};
+    PLAT.forEach((p) => {
+      out[p.id] = {};
+      FIELDS[p.id].forEach((f) => {
+        const el = document.getElementById(`pp_${p.id}_${f.k}`);
+        if (!el) return;
+        if (f.type === "switch") out[p.id][f.k] = el.checked;
+        else if (f.type === "tags") out[p.id][f.k] = el.value.split(",").map((s) => s.trim()).filter(Boolean);
+        else out[p.id][f.k] = el.value;
+      });
+    });
+    return out;
+  }
+
+  // Autosave: every edit (platform versions and the core caption) is written
+  // to the server a moment after typing stops, and flushed before publishing.
+  let postsDirty = false, masterDirty = false, saveTimer = null;
+  function setSaveState(text, isErr) { saveStateEl.textContent = text; saveStateEl.classList.toggle("err", !!isErr); }
+  function scheduleSave() {
+    if (!currentJobId) return;
+    postsDirty = true; setSaveState("Editing…");
+    clearTimeout(saveTimer); saveTimer = setTimeout(flushAllSaves, 700);
+  }
+  function scheduleMasterSave() {
+    if (!currentJobId) return;
+    masterDirty = true; setSaveState("Editing…");
+    clearTimeout(saveTimer); saveTimer = setTimeout(flushAllSaves, 700);
+  }
+  async function flushAllSaves() {
+    clearTimeout(saveTimer);
+    if (!currentJobId || (!postsDirty && !masterDirty)) return true;
+    const jid = currentJobId, doPosts = postsDirty, doMaster = masterDirty;
+    postsDirty = false; masterDirty = false;
+    setSaveState("Saving…");
+    try {
+      if (doMaster) {
+        const r = await fetch(`/jobs/${jid}/posting-caption`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ caption: document.getElementById("captionBox").value }) });
+        if (!r.ok) throw new Error("save failed");
+      }
+      if (doPosts) {
+        const r = await fetch(`/jobs/${jid}/platform-posts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ posts: collectPosts() }) });
+        if (!r.ok) throw new Error("save failed");
+      }
+      setSaveState("Saved ✓");
+      return true;
+    } catch (e) {
+      postsDirty = postsDirty || doPosts; masterDirty = masterDirty || doMaster;
+      setSaveState("Couldn’t save — will retry", true);
+      clearTimeout(saveTimer); saveTimer = setTimeout(flushAllSaves, 4000);
+      return false;
+    }
+  }
+
+  async function rewritePosts(platform, btn) {
+    if (!currentJobId) return;
+    await flushAllSaves();
+    const spin = document.getElementById("rewriteSpinner");
+    const allBtn = document.getElementById("rewriteAllBtn");
+    allBtn.disabled = true; if (btn) btn.disabled = true; spin.style.display = "inline";
+    try {
+      const resp = await fetch(`/jobs/${currentJobId}/platform-posts/generate`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: platform || null }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+      fillPosts(data.platform_posts);
+      setSaveState("Saved ✓");
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      allBtn.disabled = false; if (btn) btn.disabled = false; spin.style.display = "none";
+    }
+  }
+  document.getElementById("rewriteAllBtn").addEventListener("click", () => rewritePosts(null, null));
+  captionBox.addEventListener("input", scheduleMasterSave);
+  buildPlatformPanels();
+
 
   // --- Platforms: single permanent section, connections + toggles -------
 
@@ -950,6 +1243,7 @@
         input.addEventListener("change", () => {
           if (input.checked) toggledOn.add(c.platform);
           else toggledOn.delete(c.platform);
+          refreshTabMarks();
         });
         const track = document.createElement("span");
         track.className = "track";
@@ -974,6 +1268,7 @@
 
       container.appendChild(row);
     });
+    refreshTabMarks();
   }
 
   // Render the placeholder frame immediately, before the first fetch even
@@ -1049,6 +1344,8 @@
     publishResults.innerHTML = "";
 
     try {
+      // Make sure every edit is on the server before it's published.
+      if (!(await flushAllSaves())) throw new Error("Couldn't save your latest edits \u2014 check your connection and try again.");
       const resp = await fetch("/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1161,6 +1458,7 @@
   };
 
   async function openHistoryEntry(entryId) {
+    await flushAllSaves();
     setActiveHistoryRow(entryId);
     try {
       await fetch(`/history/${entryId}/reopen`, { method: "POST" });
@@ -1198,6 +1496,8 @@
       document.getElementById("onScreenBox").value = e.on_screen_caption || "";
       document.getElementById("captionBox").value = e.posting_caption || "";
       updateCaptionCharCount();
+      fillPosts(e.platform_posts);
+      setSaveState("");
       resultEl.style.display = "block";
       loadConnections();
     } catch (err) {

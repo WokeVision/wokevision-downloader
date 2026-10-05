@@ -55,8 +55,56 @@ the real event the joke is about (name it if the clip does) but never be \
 earnest, preachy or sympathetic-corporate about it. Don't over-explain.
 - Real victims/tragedies: the joke targets the situation, the system, or \
 the absurdity -- never celebrate harm to an innocent victim.
+- LENGTH & VOICE: WokeVision's best captions are SHORT and casual -- often \
+one punchy reaction line plus an engagement question, like a meme page, not \
+a columnist. Keep the main body to roughly 1-2 short sentences (about 160 \
+characters) unless the clip genuinely needs more. No essays, no lecturing.
 - Never attack people for protected traits. Target ideas, hypocrisy, \
 institutions and public figures' actions.""")
+
+
+# ---------------------------------------------------------------------------
+# Real-voice examples: the page's own best-performing captions, pulled live
+# from Instagram (cached), cleaned of store promos/hashtags, and shown to the
+# model as the target voice and LENGTH. The owner's top posts are short,
+# casual reactions -- the model's default is a paragraph, so examples matter.
+# ---------------------------------------------------------------------------
+import time as _time
+_EX_CACHE = {"at": 0.0, "text": ""}
+
+
+def _clean_example(cap: str) -> str:
+    # Everything before the first "-" separator line / hashtag block / promo.
+    cap = (cap or "").replace("\r", "")
+    cap = re.split(r"\n\s*-\s*(?:\n|$)|\n\s*#|DON.T FORGET|link in bio", cap, flags=re.I)[0]
+    return cap.strip()
+
+
+def style_examples() -> str:
+    if _time.time() - _EX_CACHE["at"] < 6 * 3600 and _EX_CACHE["at"]:
+        return _EX_CACHE["text"]
+    text = ""
+    try:
+        import insights
+        posts = insights.get("instagram").get("posts", [])
+        posts = sorted(posts, key=lambda p: (p.get("likes") or 0) + 2 * (p.get("comments") or 0), reverse=True)
+        lines, seen = [], set()
+        for p in posts[:40]:
+            ex = _clean_example(p.get("caption"))
+            if 8 <= len(ex) <= 260 and ex not in seen:
+                seen.add(ex)
+                lines.append("- " + ex.replace("\n", " / "))
+            if len(lines) >= 8:
+                break
+        if lines:
+            text = ("REAL @wokevision_ CAPTIONS THAT PERFORMED BEST (the owner's own voice -- match this "
+                    "length, rhythm and casualness; the hook line is usually SHORT, a reaction or a "
+                    "question, not an essay):\n" + "\n".join(lines))
+    except Exception as e:
+        print(f"STYLE EXAMPLES FAILED: {e}", flush=True)
+    if text:
+        _EX_CACHE.update(at=_time.time(), text=text)
+    return text
 
 READ_THE_CLIP = """BEFORE WRITING, work out in the "angle_read" field (1-2 short sentences): \
 (a) what is this clip actually about / which real event or person, (b) is it \
@@ -257,6 +305,12 @@ def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
 
 
 def _call_openai(system_prompt: str, user_content: str) -> dict:
+    try:
+        ex = style_examples()
+        if ex:
+            system_prompt = system_prompt + "\n\n" + ex
+    except Exception:
+        pass
     resp = requests.post(
         CHAT_URL,
         headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},

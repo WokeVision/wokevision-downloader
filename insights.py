@@ -104,7 +104,7 @@ def _instagram():
     posts = []
     for p in items:
         posts.append({
-            "id": p["id"], "title": (p.get("caption") or "")[:140], "url": p.get("permalink"),
+            "id": p["id"], "title": (p.get("caption") or "")[:140], "caption": p.get("caption") or "", "url": p.get("permalink"),
             "thumb": p.get("thumbnail_url") or p.get("media_url"), "ts": p.get("timestamp"),
             "views": None, "likes": p.get("like_count"), "comments": p.get("comments_count"),
             "shares": None, "type": p.get("media_type"),

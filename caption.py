@@ -204,9 +204,12 @@ Include exactly {POSTING_HASHTAG_COUNT} hashtags, each a separate \
 #WokeVision-style tag relevant to the content -- this count works unedited \
 on every platform this goes out to.
 
-The ENTIRE caption -- body, the question/statement line, and the hashtag \
+The ENTIRE caption -- body, the question/statement line, and the hashtags \
 all included -- must fit within {POSTING_CAPTION_MAX_CHARS} characters \
-total. That's X's standard post limit, the shortest of any platform this \
+total. Hashtags take about 55 of those, so the text before them MUST be \
+under {POSTING_CAPTION_MAX_CHARS - 65} characters INCLUDING the closing \
+question and emoji -- count carefully and finish the sentence; never run \
+long and get cut off. That's X's standard post limit, the shortest of any platform this \
 goes out to, so nothing needs trimming per platform."""
 
 COMBINED_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + HASHTAG_STRATEGY + "\n\n" + READ_THE_CLIP + f"""

@@ -308,6 +308,33 @@ def _facebook():
             "comments": p.get("comments", {}).get("summary", {}).get("total_count"),
             "shares": (p.get("shares") or {}).get("count", 0),
         })
+    # Reels / videos don't appear in /posts, so read those edges too.
+    seen = {p["id"] for p in posts}
+    for edge in ("video_reels", "videos"):
+        vitems, _vr = _graph_pages(f"{m.GRAPH_BASE}/{pid}/{edge}", {
+            "fields": "id,description,permalink_url,created_time,picture,views,"
+                      "likes.summary(true).limit(0),comments.summary(true).limit(0)",
+            "limit": 50, "access_token": tok})
+        if not vitems and _vr.status_code != 200:
+            # Retry without the optional `views` field, which some tokens can't read.
+            vitems, _vr = _graph_pages(f"{m.GRAPH_BASE}/{pid}/{edge}", {
+                "fields": "id,description,permalink_url,created_time,picture,"
+                          "likes.summary(true).limit(0),comments.summary(true).limit(0)",
+                "limit": 50, "access_token": tok})
+        for v in vitems:
+            if v["id"] in seen:
+                continue
+            seen.add(v["id"])
+            url = v.get("permalink_url") or ""
+            if url.startswith("/"):
+                url = "https://www.facebook.com" + url
+            posts.append({
+                "id": v["id"], "title": (v.get("description") or "")[:140], "url": url,
+                "thumb": v.get("picture"), "ts": v.get("created_time"), "views": v.get("views"),
+                "likes": v.get("likes", {}).get("summary", {}).get("total_count"),
+                "comments": v.get("comments", {}).get("summary", {}).get("total_count"),
+                "shares": None,
+            })
     out = _empty("facebook", "ok", None, pg.get("name"))
     # Page views over the last 28 days (needs read_insights).
     views, now = None, int(time.time())

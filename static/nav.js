@@ -11,6 +11,7 @@
       '<a class="wvNavLogo' + (active("/") ? " active" : "") + '" href="/" aria-label="WokeVision home">' +
         '<img src="/static/assets/logo-mark.png" alt="WokeVision" /></a>' +
       '<a class="wvNavLink' + (active("/editor") ? " active" : "") + '" href="/editor">Video Editor</a>' +
+      '<a class="wvNavLink' + (active("/clipping") ? " active" : "") + '" href="/clipping">Clipping</a>' +
       '<a class="wvNavLink' + (active("/schedule") ? " active" : "") + '" href="/schedule">Schedule</a>' +
       '<a class="wvNavLink' + (active("/accounts") ? " active" : "") + '" href="/accounts">Accounts</a>' +
       '<a class="wvNavLink' + (active("/dashboards") ? " active" : "") + '" href="/dashboards">Analytics Hub</a>' +

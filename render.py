@@ -292,7 +292,7 @@ def _build_stage_graph(source_path: str):
     inputs = ["-i", source_path]
     filters = [
         f"color=white:s={CANVAS_W}x{CANVAS_H}[bg]",
-        f"[0:v]crop=iw:iw*4/3:0:(ih-iw*4/3)/2,scale={VIDEO_W}:{VIDEO_H}[vid]",
+        f"[0:v]crop=min(iw\\,ih*3/4):min(ih\\,iw*4/3):(iw-out_w)/2:(ih-out_h)/2,scale={VIDEO_W}:{VIDEO_H}[vid]",
         f"[bg][vid]overlay={VIDEO_X}:{VIDEO_Y}[stage]",
     ]
     last_label = "stage"
@@ -356,30 +356,72 @@ def render_staged(source_path: str, output_path: str, progress_cb=None):
     _run_ffmpeg(cmd, progress_cb, duration)
 
 
-def apply_caption(staged_path: str, caption_text: str, output_path: str, progress_cb=None):
-    """The fast path: overlays just the on-screen caption onto an already-
-    staged video (see render_staged) and re-encodes. The filter graph here is
-    a single overlay onto a canvas-sized input, instead of the full crop +
-    scale + logo + watermark + caption chain -- so changing the caption text
-    no longer repeats compositing work that has nothing to do with the text
-    itself. (The encode pass itself still has to touch every frame, since
-    the caption is burned into the pixels, not a toggleable subtitle track --
-    but this skips re-decoding/re-filtering the original source.)"""
+WM_POSITIONS = ("left", "middle", "right")
+WM_WIDTH_RATIO = 0.42   # campaign watermark width vs the video width
+WM_OVERLAP = 0.40       # fraction of the watermark that hangs inside the video
+SPEECH_BASE_LIFT = 70   # px above the video bottom edge for speech captions
+
+
+def _watermark_geometry(wm_path, pos):
+    wm_w = round(VIDEO_W * WM_WIDTH_RATIO)
+    wm_h = get_scaled_height(wm_path, wm_w)
+    if wm_h > 230:  # very tall logos: cap height, keep aspect
+        wm_w = round(wm_w * 230 / wm_h)
+        wm_h = 230
+    if pos == "left":
+        x = VIDEO_X
+    elif pos == "right":
+        x = VIDEO_X + VIDEO_W - wm_w
+    else:
+        x = VIDEO_X + round((VIDEO_W - wm_w) / 2)
+    y = VIDEO_Y + VIDEO_H - round(WM_OVERLAP * wm_h)
+    return wm_w, wm_h, x, y
+
+
+def apply_caption(staged_path: str, caption_text: str, output_path: str, progress_cb=None,
+                  cues=None, watermark=None):
+    """The fast path: overlays the on-screen caption, the optional campaign
+    watermark ({"path","pos"}) and the optional burned-in speech captions
+    (cues: [{start,end,text}]) onto an already-staged video and re-encodes.
+    None of these need the original source re-decoded or re-cropped."""
     caption_img_path, cap_w, cap_h = build_caption_image(caption_text)
     caption_x = VIDEO_X
     caption_y = VIDEO_Y - CAPTION_GAP - cap_h
 
     inputs = ["-i", staged_path, "-i", caption_img_path]
-    filter_complex = (
-        f"[1:v]format=rgba[capimg];[0:v][capimg]overlay={caption_x}:{caption_y}[final]"
-    )
+    chain = [f"[1:v]format=rgba[capimg]", f"[0:v][capimg]overlay={caption_x}:{caption_y}[v1]"]
+    last = "v1"
+    lift = SPEECH_BASE_LIFT
+    ass_path = None
+
+    if watermark and watermark.get("path") and os.path.exists(watermark["path"]):
+        pos = watermark.get("pos") if watermark.get("pos") in WM_POSITIONS else "right"
+        wm_w, wm_h, wm_x, wm_y = _watermark_geometry(watermark["path"], pos)
+        inputs += ["-i", watermark["path"]]
+        chain.append(f"[2:v]scale={wm_w}:{wm_h},format=rgba[cwm]")
+        chain.append(f"[{last}][cwm]overlay={wm_x}:{wm_y}[v2]")
+        last = "v2"
+        lift = max(lift, round(WM_OVERLAP * wm_h) + 22)
+
+    if cues:
+        from speech import build_ass
+        ass_path = f"{output_path}.cues.ass"
+        margin_v = (CANVAS_H - (VIDEO_Y + VIDEO_H)) + lift
+        with open(ass_path, "w", encoding="utf-8") as f:
+            f.write(build_ass(cues, CANVAS_W, CANVAS_H, margin_v))
+        esc_ass = ass_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        esc_fonts = FONT_DIR.replace(":", "\\:")
+        chain.append(f"[{last}]subtitles='{esc_ass}':fontsdir='{esc_fonts}'[v3]")
+        last = "v3"
+
+    filter_complex = ";".join(chain)
     duration = _probe_duration(staged_path) if progress_cb else None
 
     cmd = [
         "ffmpeg", "-y",
         *inputs,
         "-filter_complex", filter_complex,
-        "-map", "[final]",
+        "-map", f"[{last}]",
         "-map", "0:a?",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
         "-c:a", "aac",
@@ -391,8 +433,9 @@ def apply_caption(staged_path: str, caption_text: str, output_path: str, progres
     try:
         _run_ffmpeg(cmd, progress_cb, duration)
     finally:
-        if os.path.exists(caption_img_path):
-            os.remove(caption_img_path)
+        for pth in (caption_img_path, ass_path):
+            if pth and os.path.exists(pth):
+                os.remove(pth)
 
 
 def render_video(source_path: str, caption_text: str, output_path: str, progress_cb=None):

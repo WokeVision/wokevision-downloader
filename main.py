@@ -1,4 +1,6 @@
 import os
+import re
+import render
 import uuid
 import time
 import shutil
@@ -12,6 +14,7 @@ from pydantic import BaseModel
 
 from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
+import speech
 from caption import (generate_captions, generate_on_screen_caption, generate_posting_caption,
                      generate_platform_posts, normalize_platform_posts, PLATFORM_IDS)
 from render import render_staged, apply_caption
@@ -269,6 +272,8 @@ def _set_stage(job_id, stage, within_stage=0.0):
 class ProcessRequest(BaseModel):
     url: str
     angle: str = ""
+    wm_token: str = ""
+    wm_pos: str = "right"
 
 
 def _cleanup_later(path: str, delay: int = 1200):
@@ -288,6 +293,11 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
         "caption": posting_caption,
         "download_method": meta.get("method", ""),
         "angle": meta.get("angle", ""),
+        "cues": meta.get("cues") or [],
+        "captions_on": bool(meta.get("captions_on", False)),
+        "watermark": ({"pos": (meta.get("wm") or {}).get("pos", "right"),
+                       "url": f"{base_url}/files/{(meta.get('wm') or {}).get('file')}"}
+                      if (meta.get("wm") or {}).get("file") else None),
     }
 
 
@@ -321,7 +331,47 @@ def _save_platform_posts(job_id: str, posts: dict):
         print(f"HISTORY PLATFORM-POSTS SAVE FAILED ({job_id}): {e}", flush=True)
 
 
-def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
+_HEX = re.compile(r"^[0-9a-f\-]{8,40}$")
+
+
+def _wm_args(meta: dict):
+    """Campaign watermark for apply_caption(): {"path","pos"} or None. Pulls
+    the PNG back from durable storage if the local copy has aged out."""
+    wm = (meta or {}).get("wm") or {}
+    fn = wm.get("file")
+    if not fn:
+        return None
+    path = os.path.join(DOWNLOAD_DIR, fn)
+    if not os.path.exists(path):
+        storage.fetch_to(path, fn)
+    if not os.path.exists(path):
+        return None
+    return {"path": path, "pos": wm.get("pos") or "right"}
+
+
+def _cues_args(meta: dict):
+    meta = meta or {}
+    return (meta.get("cues") or None) if meta.get("captions_on") else None
+
+
+def _claim_watermark(job_id: str, token: str, pos: str, meta: dict) -> dict:
+    """Attaches an uploaded-ahead watermark (token from /api/watermark) to
+    this job's meta under a job-specific filename."""
+    token = (token or "").strip().lower()
+    if not token or not _HEX.match(token):
+        return meta
+    src = os.path.join(DOWNLOAD_DIR, f"wm_{token}.png")
+    if not os.path.exists(src):
+        storage.fetch_to(src, os.path.basename(src))
+    if not os.path.exists(src):
+        return meta
+    fn = f"{job_id}_wm.png"
+    shutil.copyfile(src, os.path.join(DOWNLOAD_DIR, fn))
+    storage.upload_many_async([(os.path.join(DOWNLOAD_DIR, fn), fn)])
+    return {**meta, "wm": {"file": fn, "pos": pos if pos in render.WM_POSITIONS else "right"}}
+
+
+def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: dict = None):
     """Shared steps once a source video is on disk, regardless of whether it
     got there via download or direct upload: transcribe -> caption -> render
     -> store the result on the job. Runs in a background thread; all
@@ -337,8 +387,15 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
         with JOBS_LOCK:
             _angle = (JOBS.get(job_id) or {}).get("angle", "")
         meta = {**(meta or {}), "angle": _angle}
+        with JOBS_LOCK:
+            _j = JOBS.get(job_id) or {}
+            _wm_token, _wm_pos = _j.get("wm_token", ""), _j.get("wm_pos", "right")
+        meta = _claim_watermark(job_id, _wm_token, _wm_pos, meta)
         _set_stage(job_id, "transcribing")
-        transcript = transcribe_audio(final_source_path)
+        sp = pre_speech or speech.transcribe_words(final_source_path)
+        transcript = sp.get("text", "")
+        cues = speech.build_cues(sp.get("words") or [])
+        meta = {**meta, "cues": cues, "captions_on": bool(cues)}
         _set_job(job_id, transcript=transcript, meta=meta, source_path=final_source_path)
 
         _set_stage(job_id, "captioning")
@@ -363,6 +420,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict):
             caption_text=on_screen_caption,
             output_path=output_path,
             progress_cb=lambda frac: _set_stage(job_id, "rendering", 0.5 + frac * 0.5),
+            cues=_cues_args(meta), watermark=_wm_args(meta),
         )
         with JOBS_LOCK:
             _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
@@ -448,6 +506,7 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
     apply_caption(
         staged_path=staged_path, caption_text=on_screen_caption, output_path=output_path,
         progress_cb=lambda frac: _set_stage(job_id, "rendering", progress_base + frac * (1 - progress_base)),
+        cues=_cues_args(meta), watermark=_wm_args(meta),
     )
     with JOBS_LOCK:
         _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
@@ -818,7 +877,7 @@ def process(req: ProcessRequest):
     job_id = str(uuid.uuid4())
     final_source_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
     with JOBS_LOCK:
-        JOBS[job_id] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": (req.angle or "").strip()[:1500]}
+        JOBS[job_id] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos}
     threading.Thread(
         target=_run_download_then_pipeline, args=(job_id, req.url, final_source_path), daemon=True
     ).start()
@@ -826,7 +885,7 @@ def process(req: ProcessRequest):
 
 
 @app.post("/process-file")
-async def process_file(file: UploadFile = File(...), angle: str = Form("")):
+async def process_file(file: UploadFile = File(...), angle: str = Form(""), wm_token: str = Form(""), wm_pos: str = Form("right")):
     """Direct upload path: skips the download step entirely. Use this when a
     link can't be fetched automatically (most often YouTube, when the host's
     IP is being rate-limited) -- download the video yourself and upload the
@@ -834,7 +893,7 @@ async def process_file(file: UploadFile = File(...), angle: str = Form("")):
     job_id = str(uuid.uuid4())
     final_source_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
     with JOBS_LOCK:
-        JOBS[job_id] = {"stage": "uploading", "stage_label": "Receiving upload", "progress": 0.0, "status": "running", "angle": (angle or "").strip()[:1500]}
+        JOBS[job_id] = {"stage": "uploading", "stage_label": "Receiving upload", "progress": 0.0, "status": "running", "angle": (angle or "").strip()[:1500], "wm_token": wm_token, "wm_pos": wm_pos}
 
     try:
         with open(final_source_path, "wb") as f:
@@ -1241,7 +1300,112 @@ def get_history(entry_id: str):
         "source_available": source_available,
         "video_url": f"{base_url}/files/{e['video_filename']}" if video_available else None,
         "publish_results": e.get("publish_results") or {},
+        "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
+        **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
+           if k in ("cues", "captions_on", "watermark")},
     }
+
+
+@app.post("/api/watermark")
+async def upload_watermark(file: UploadFile = File(...)):
+    """Stores a campaign watermark ahead of processing; the returned token is
+    passed to /process or /process-file."""
+    raw = await file.read()
+    await file.close()
+    if not raw or len(raw) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Watermark must be an image under 8MB.")
+    token = uuid.uuid4().hex
+    path = os.path.join(DOWNLOAD_DIR, f"wm_{token}.png")
+    try:
+        from PIL import Image
+        import io
+        im = Image.open(io.BytesIO(raw))
+        im = im.convert("RGBA")
+        im.thumbnail((1200, 1200))
+        im.save(path, "PNG")
+    except Exception:
+        raise HTTPException(status_code=400, detail="That file isn't a readable image (use PNG, JPG or WebP).")
+    storage.upload_many_async([(path, os.path.basename(path))])
+    base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    return {"token": token, "url": f"{base_url}/files/wm_{token}.png"}
+
+
+def _begin_rerender(job_id: str, label: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job id")
+        if job.get("status") != "done":
+            raise HTTPException(status_code=409, detail="Job isn't finished yet.")
+        job["status"] = "running"
+        job["stage"] = "rendering"
+        job["stage_label"] = label
+        job["progress"] = STAGE_WEIGHTS["rendering"][0]
+        job["_stage_started_at"] = time.time()
+        job["eta_seconds"] = _estimate_eta_seconds(job)
+        return job
+
+
+class CueModel(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
+class ClosedCaptionsRequest(BaseModel):
+    cues: list[CueModel]
+    enabled: bool = True
+
+
+@app.put("/jobs/{job_id}/closed-captions")
+def set_closed_captions(job_id: str, req: ClosedCaptionsRequest):
+    cues = [{"start": round(c.start, 2), "end": round(c.end, 2), "text": c.text.strip()[:200]}
+            for c in req.cues if c.text.strip() and c.end > c.start]
+    cues.sort(key=lambda c: c["start"])
+    job = _begin_rerender(job_id, "Updating captions")
+    with JOBS_LOCK:
+        job["meta"] = {**(job.get("meta") or {}), "cues": cues, "captions_on": bool(req.enabled and cues)}
+    threading.Thread(target=_run_set_on_screen_caption,
+                     args=(job_id, job.get("on_screen_caption", "")), daemon=True).start()
+    return {"ok": True}
+
+
+@app.post("/jobs/{job_id}/watermark")
+async def set_job_watermark(job_id: str, file: UploadFile = File(None), pos: str = Form("right"), remove: str = Form("")):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job id")
+    meta = dict(job.get("meta") or {})
+    if remove:
+        meta.pop("wm", None)
+    else:
+        pos = pos if pos in render.WM_POSITIONS else "right"
+        wm = dict(meta.get("wm") or {})
+        if file is not None and file.filename:
+            raw = await file.read()
+            await file.close()
+            try:
+                from PIL import Image
+                import io
+                im = Image.open(io.BytesIO(raw)).convert("RGBA")
+                im.thumbnail((1200, 1200))
+                fn = f"{job_id}_wm.png"
+                im.save(os.path.join(DOWNLOAD_DIR, fn), "PNG")
+                storage.upload_many_async([(os.path.join(DOWNLOAD_DIR, fn), fn)])
+                wm["file"] = fn
+            except Exception:
+                raise HTTPException(status_code=400, detail="That file isn't a readable image.")
+        if not wm.get("file"):
+            raise HTTPException(status_code=400, detail="Choose a watermark image first.")
+        wm["pos"] = pos
+        meta["wm"] = wm
+    job = _begin_rerender(job_id, "Updating watermark")
+    with JOBS_LOCK:
+        job["meta"] = meta
+    threading.Thread(target=_run_set_on_screen_caption,
+                     args=(job_id, job.get("on_screen_caption", "")), daemon=True).start()
+    return {"ok": True}
 
 
 @app.post("/history/{entry_id}/reopen")
@@ -1287,6 +1451,142 @@ def reopen_history(entry_id: str):
             "result": _result_for(entry_id, meta, on_screen_caption, posting_caption, platform_posts),
         }
     return {"ok": True}
+
+
+# --- Clipping -----------------------------------------------------------------
+
+CLIPS = {}
+CLIPS_LOCK = threading.Lock()
+
+
+def _clip_set(cid, **kw):
+    with CLIPS_LOCK:
+        CLIPS.setdefault(cid, {}).update(kw)
+
+
+def _clip_analyze(cid: str, focus_text: str):
+    try:
+        c = CLIPS[cid]
+        _clip_set(cid, status="running", stage_label="Transcribing the whole video", clips=[])
+        sp = c.get("speech")
+        if not sp:
+            sp = speech.transcribe_words(c["source"])
+            if not sp.get("segments"):
+                raise RuntimeError("No speech could be transcribed (is OPENAI_API_KEY set, and does the video have talking?).")
+            _clip_set(cid, speech=sp)
+        _clip_set(cid, stage_label="Finding the best moments")
+        ranges, notes = speech.parse_focus(focus_text or "")
+        clips = speech.pick_clips(sp, sp.get("duration") or 0, ranges or None, notes)
+        for i, k in enumerate(clips):
+            k["id"] = i
+            k["text"] = " ".join(w["w"] for w in sp["words"] if k["start"] <= w["start"] < k["end"])[:400]
+        if not clips:
+            raise RuntimeError("The clipper couldn't find a clean moment" + (" in those timestamps." if ranges else "."))
+        _clip_set(cid, status="done", stage_label="Done", clips=clips, duration=sp.get("duration") or 0)
+    except Exception as e:
+        print("CLIP ANALYZE FAILED:", traceback.format_exc(), flush=True)
+        _clip_set(cid, status="error", error=str(e))
+
+
+def _clip_ingest_and_analyze(cid: str, url: str, focus_text: str):
+    c = CLIPS[cid]
+    if url:
+        try:
+            _clip_set(cid, status="running", stage_label="Downloading video")
+            download_video(url, c["source"])
+        except DownloadError as e:
+            _clip_set(cid, status="error", error=f"Could not download video: {e}. If it's YouTube, download it yourself and upload the file instead.")
+            return
+    _clip_analyze(cid, focus_text)
+
+
+@app.get("/clipping")
+def clipping_page():
+    return FileResponse("static/clipping.html")
+
+
+@app.post("/api/clip")
+async def clip_start(file: UploadFile = File(None), url: str = Form(""), focus: str = Form("")):
+    cid = uuid.uuid4().hex
+    source = os.path.join(DOWNLOAD_DIR, f"clip_{cid}_source.mp4")
+    if file is not None and file.filename:
+        try:
+            with open(source, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+        finally:
+            await file.close()
+        if os.path.getsize(source) == 0:
+            raise HTTPException(status_code=400, detail="Upload failed: no file data received.")
+        url = ""
+    elif not url.strip():
+        raise HTTPException(status_code=400, detail="Add a link or upload a video.")
+    _clip_set(cid, status="running", stage_label="Starting", source=source, clips=[])
+    threading.Thread(target=_clip_ingest_and_analyze, args=(cid, url.strip(), focus), daemon=True).start()
+    return {"clip_id": cid}
+
+
+@app.get("/api/clip/{cid}")
+def clip_status(cid: str):
+    with CLIPS_LOCK:
+        c = CLIPS.get(cid)
+        if not c:
+            raise HTTPException(status_code=404, detail="Unknown clipping session (the server may have restarted).")
+        return {k: v for k, v in c.items() if k not in ("speech", "source")} | {"video_url": f"/files/clip_{cid}_source.mp4"}
+
+
+class ClipFocus(BaseModel):
+    focus: str = ""
+
+
+@app.post("/api/clip/{cid}/reanalyze")
+def clip_reanalyze(cid: str, req: ClipFocus):
+    with CLIPS_LOCK:
+        c = CLIPS.get(cid)
+        if not c:
+            raise HTTPException(status_code=404, detail="Unknown clipping session.")
+        if c.get("status") == "running":
+            raise HTTPException(status_code=409, detail="Still working.")
+        c["status"] = "running"; c["stage_label"] = "Finding the best moments"; c.pop("error", None)
+    threading.Thread(target=_clip_analyze, args=(cid, req.focus), daemon=True).start()
+    return {"ok": True}
+
+
+class ClipPick(BaseModel):
+    start: float
+    end: float
+    title: str = ""
+
+
+def _run_clip_to_editor(job_id: str, cid: str, start: float, end: float, title: str):
+    try:
+        c = CLIPS[cid]
+        out = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
+        _set_job(job_id, stage="downloading", stage_label="Cutting the clip", progress=0.1)
+        speech.cut_clip(c["source"], start, end, out)
+        words = speech.clip_words(c["speech"]["words"], start, end)
+        pre = {"text": " ".join(w["w"] for w in words), "words": words}
+        meta = {"title": title or "Clip", "description": "", "method": f"clipped {int(start)}s-{int(end)}s"}
+        _run_pipeline(job_id, out, meta, pre_speech=pre)
+    except Exception as e:
+        print("CLIP TO EDITOR FAILED:", traceback.format_exc(), flush=True)
+        _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
+
+
+@app.post("/api/clip/{cid}/edit")
+def clip_to_editor(cid: str, req: ClipPick):
+    with CLIPS_LOCK:
+        c = CLIPS.get(cid)
+    if not c or not c.get("speech"):
+        raise HTTPException(status_code=404, detail="Unknown clipping session.")
+    dur = c["speech"].get("duration") or 0
+    start, end = max(0.0, req.start), min(req.end, dur or req.end)
+    if end - start < 3:
+        raise HTTPException(status_code=400, detail="Clip is too short.")
+    job_id = str(uuid.uuid4())
+    with JOBS_LOCK:
+        JOBS[job_id] = {"stage": "downloading", "stage_label": "Cutting the clip", "progress": 0.05, "status": "running", "angle": ""}
+    threading.Thread(target=_run_clip_to_editor, args=(job_id, cid, start, end, req.title), daemon=True).start()
+    return {"job_id": job_id}
 
 
 # Serves the submission page's own static assets, if any are added later

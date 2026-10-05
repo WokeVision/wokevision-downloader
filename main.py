@@ -1411,7 +1411,7 @@ def schedule_health():
     }
 
 
-@app.post("/api/cron/tick")
+@app.api_route("/api/cron/tick", methods=["GET", "POST", "HEAD"])
 def cron_tick(request: Request, key: str = ""):
     """Hit every minute by an outside timer. Public path, but only with the
     CRON_SECRET; its job is to wake the (free-tier, sleeping) app and publish

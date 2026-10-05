@@ -491,6 +491,20 @@
   .switch input:checked + .track::before { transform: translateX(19px); }
   .switch input:disabled + .track { opacity: 0.35; cursor: not-allowed; }
 
+  .whenBox { margin-top: 14px; }
+  .whenBox .segmented { margin-bottom: 10px; }
+  #schedPane input[type="datetime-local"] {
+    width: 100%; background: rgba(0,0,0,0.35); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius-sm); padding: 12px 12px; font-size: 16px; font-family: inherit; color-scheme: dark; min-height: 46px;
+  }
+  #schedPane input[type="datetime-local"]:focus { outline: none; border-color: var(--accent); }
+  .quickPicks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .quickPicks button { border: 1px solid var(--border); background: rgba(255,255,255,0.04); color: var(--text-dim); font-size: 12.5px; font-weight: 600; padding: 7px 11px; border-radius: 999px; cursor: pointer; font-family: inherit; }
+  .quickPicks button:active { background: rgba(255,255,255,0.1); }
+  .perRow { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .perRow .pl { width: 92px; flex: none; font-size: 13.5px; font-weight: 600; }
+  .perRow input { flex: 1; min-width: 0; }
+  .schedBadge { display: inline-block; margin-top: 4px; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: rgba(10,132,255,0.18); color: #6CB2FF; }
   .publishResults { margin-top: 12px; display: none; }
   .publishResultRow {
     font-size: 13px;
@@ -630,6 +644,25 @@
       Switch on the platforms this video should go out to, then Upload. Tap Connect/Reconnect to fix a dropped connection.
     </p>
     <div id="platformList"></div>
+
+    <div class="whenBox">
+      <div class="segmented" id="whenSeg">
+        <button type="button" class="active" data-when="now">Post now</button>
+        <button type="button" data-when="schedule">Schedule</button>
+      </div>
+      <div id="schedPane" style="display:none">
+        <label class="fieldLabel" for="schedAll">Date &amp; time <span id="schedAllHint" style="font-weight:500;text-transform:none;letter-spacing:0">(all platforms)</span></label>
+        <input type="datetime-local" id="schedAll" />
+        <div class="quickPicks" id="quickPicks"></div>
+        <label class="optRow" style="border-top:none;padding-top:12px">
+          <span>Different time for each platform</span>
+          <span class="switch"><input type="checkbox" id="schedSplit" /><span class="track"></span></span>
+        </label>
+        <div id="schedPer"></div>
+        <p class="note" id="schedNote" style="margin-top:8px"></p>
+      </div>
+    </div>
+
     <button class="primary" id="uploadToPlatformsBtn" type="button">Upload</button>
     <div class="publishResults" id="publishResults"></div>
   </div>
@@ -678,6 +711,7 @@
 </div>
 
 <script>
+  let currentSchedules = {};   // platform -> {id, run_at, status, ...} for the loaded edit
   const statusCard = document.getElementById("statusCard");
   const setResult = (on) => document.body.classList.toggle("has-result", !!on);
   const resultShown = () => document.body.classList.contains("has-result");
@@ -734,6 +768,7 @@
     etaLabel.textContent = "";
     pctLabel.textContent = "";
     currentPublishResults = {};
+    currentSchedules = {};
     setActiveHistoryRow(null);
     if (typeof loadConnections === "function") loadConnections();
   }
@@ -754,7 +789,7 @@
     fillPosts(data.platform_posts);
     setSaveState("");
     setResult(true); autoGrowAll();
-    if (typeof loadConnections === "function") loadConnections();
+    if (typeof loadSchedules === "function") loadSchedules(); else if (typeof loadConnections === "function") loadConnections();
   }
 
   // Posting caption is user-editable, so show a live character count
@@ -1318,6 +1353,17 @@
         info.appendChild(badge);
       }
 
+      const sch = currentSchedules[c.platform];
+      if (sch && sch.status === "scheduled") {
+        const b = document.createElement("span");
+        b.className = "schedBadge"; b.textContent = "Scheduled " + fmtWhen(sch.run_at);
+        info.appendChild(b);
+      } else if (sch && (sch.status === "error" || sch.status === "missed")) {
+        const b = document.createElement("span");
+        b.className = "historyBadge err"; b.textContent = sch.status === "missed" ? "Missed its time" : "Scheduled post failed";
+        info.appendChild(b);
+      }
+
       row.appendChild(dot);
       row.appendChild(info);
 
@@ -1418,7 +1464,128 @@
     }
   }
 
+
+  // --- Scheduling ------------------------------------------------------
+  let whenMode = "now";
+  const schedPane = document.getElementById("schedPane");
+  const schedAll = document.getElementById("schedAll");
+  const schedSplit = document.getElementById("schedSplit");
+  const schedPer = document.getElementById("schedPer");
+  const schedNote = document.getElementById("schedNote");
+  const PLATFORM_NAMES = { instagram: "Instagram", threads: "Threads", youtube: "YouTube Shorts", tiktok: "TikTok", x: "X", facebook: "Facebook" };
+
+  const pad2 = (n) => String(n).padStart(2, "0");
+  function toLocalInput(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+  function fmtWhen(iso) {
+    return new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  }
+  const tzName = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return "your time zone"; } })();
+
+  function quickDate(kind) {
+    const d = new Date(); d.setSeconds(0, 0);
+    if (kind === "hour") d.setHours(d.getHours() + 1);
+    else {
+      const [day, hh] = kind.split("@");
+      if (day === "tomorrow") d.setDate(d.getDate() + 1);
+      d.setHours(parseInt(hh, 10), 0, 0, 0);
+      if (day === "today" && d <= new Date()) d.setDate(d.getDate() + 1);
+    }
+    return d;
+  }
+  const QUICK = [["In 1 hour", "hour"], ["Today 19:00", "today@19"], ["Tomorrow 08:00", "tomorrow@8"], ["Tomorrow 12:00", "tomorrow@12"], ["Tomorrow 18:00", "tomorrow@18"], ["Tomorrow 20:00", "tomorrow@20"]];
+  document.getElementById("quickPicks").innerHTML = QUICK.map(([t, k]) => `<button type="button" data-q="${k}">${t}</button>`).join("");
+  document.getElementById("quickPicks").addEventListener("click", (e) => {
+    const k = e.target && e.target.dataset && e.target.dataset.q; if (!k) return;
+    const v = toLocalInput(quickDate(k));
+    schedAll.value = v;
+    schedPer.querySelectorAll("input").forEach((i) => { i.value = v; });
+  });
+
+  function renderSchedPer() {
+    schedPer.style.display = schedSplit.checked ? "block" : "none";
+    document.getElementById("schedAllHint").textContent = schedSplit.checked ? "(default for the platforms below)" : "(all platforms)";
+    if (!schedSplit.checked) return;
+    const keep = {};
+    schedPer.querySelectorAll("input").forEach((i) => { keep[i.dataset.p] = i.value; });
+    const plats = Array.from(toggledOn);
+    schedPer.innerHTML = plats.length ? plats.map((p) => {
+      const v = keep[p] || (currentSchedules[p] && currentSchedules[p].status === "scheduled" ? toLocalInput(new Date(currentSchedules[p].run_at)) : schedAll.value) || "";
+      return `<div class="perRow"><span class="pl">${PLATFORM_NAMES[p] || p}</span><input type="datetime-local" data-p="${p}" value="${v}" /></div>`;
+    }).join("") : '<p class="note">Switch on a platform above first.</p>';
+  }
+  schedSplit.addEventListener("change", renderSchedPer);
+  schedAll.addEventListener("change", () => { if (schedSplit.checked) schedPer.querySelectorAll("input").forEach((i) => { if (!i.value) i.value = schedAll.value; }); });
+
+  function setWhen(mode) {
+    whenMode = mode;
+    document.querySelectorAll("#whenSeg button").forEach((b) => b.classList.toggle("active", b.dataset.when === mode));
+    schedPane.style.display = mode === "schedule" ? "block" : "none";
+    uploadToPlatformsBtn.textContent = mode === "schedule" ? "Schedule" : "Upload";
+    if (mode === "schedule") {
+      if (!schedAll.value) {
+        const existing = Object.values(currentSchedules).find((s) => s.status === "scheduled");
+        schedAll.value = toLocalInput(existing ? new Date(existing.run_at) : quickDate("tomorrow@12"));
+      }
+      schedAll.min = toLocalInput(new Date());
+      schedNote.textContent = `Times are in your device's time zone (${tzName}). Posts go out within about a minute of the time you pick. Anything you edit before then is what gets posted.`;
+      renderSchedPer();
+    }
+  }
+  document.getElementById("whenSeg").addEventListener("click", (e) => { const m = e.target && e.target.dataset && e.target.dataset.when; if (m) setWhen(m); });
+  const _origRefreshTabMarks = refreshTabMarks;
+  refreshTabMarks = function () { _origRefreshTabMarks(); if (whenMode === "schedule") renderSchedPer(); };
+
+  async function loadSchedules() {
+    currentSchedules = {};
+    if (!currentJobId) { loadConnections(); return; }
+    try {
+      const r = await fetch(`/api/schedule?history_id=${currentJobId}`);
+      const j = await r.json();
+      (j.items || []).forEach((s) => { if (s.status !== "done") currentSchedules[s.platform] = s; });
+      // Pre-switch-on platforms that already have a pending schedule, so
+      // re-opening a scheduled post shows exactly what is queued.
+      Object.values(currentSchedules).forEach((s) => { if (s.status === "scheduled") toggledOn.add(s.platform); });
+      const first = Object.values(currentSchedules).find((s) => s.status === "scheduled");
+      if (first) { schedAll.value = toLocalInput(new Date(first.run_at)); }
+    } catch (e) { /* offline: just show no schedule */ }
+    loadConnections();
+    if (whenMode === "schedule") renderSchedPer();
+  }
+
+  async function submitSchedule() {
+    const plats = Array.from(toggledOn);
+    if (!plats.length) { alert("Toggle on at least one platform first."); return; }
+    const items = [];
+    for (const p of plats) {
+      const el = schedSplit.checked ? schedPer.querySelector(`input[data-p="${p}"]`) : null;
+      const v = (el && el.value) || schedAll.value;
+      if (!v) { alert(`Pick a date and time${schedSplit.checked ? " for " + (PLATFORM_NAMES[p] || p) : ""}.`); return; }
+      const d = new Date(v);
+      if (isNaN(d) || d.getTime() < Date.now() - 60000) { alert(`${PLATFORM_NAMES[p] || p}: pick a time in the future.`); return; }
+      items.push({ platform: p, run_at: d.toISOString() });
+    }
+    uploadToPlatformsBtn.disabled = true; uploadToPlatformsBtn.textContent = "Scheduling...";
+    publishResults.style.display = "none"; publishResults.innerHTML = "";
+    try {
+      if (!(await flushAllSaves())) throw new Error("Couldn't save your latest edits \u2014 check your connection and try again.");
+      const resp = await fetch("/api/schedule", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ history_id: currentJobId, items }) });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Couldn't schedule that.");
+      publishResults.style.display = "block";
+      publishResults.innerHTML = (data.items || []).map((s) => `<div class="publishResultRow"><span class="r-ok">\u2713</span><span>${s.label} \u2014 ${fmtWhen(s.run_at)}</span></div>`).join("") +
+        '<div class="publishResultRow"><span></span><a href="/schedule" style="color:var(--accent);font-weight:600;text-decoration:none">View schedule \u2192</a></div>';
+      await loadSchedules();
+    } catch (err) {
+      publishResults.style.display = "block";
+      publishResults.innerHTML = `<div class="publishResultRow"><span class="r-err">\u2717</span><span>${err.message}</span></div>`;
+    } finally {
+      uploadToPlatformsBtn.disabled = false;
+      uploadToPlatformsBtn.textContent = whenMode === "schedule" ? "Schedule" : "Upload";
+    }
+  }
+
   uploadToPlatformsBtn.addEventListener("click", async () => {
+    if (whenMode === "schedule") { if (!currentJobId) { alert("Process a video first."); return; } return submitSchedule(); }
     if (!currentJobId) {
       alert("Process a video first, then come back here to publish it.");
       return;
@@ -1591,7 +1758,7 @@
       fillPosts(e.platform_posts);
       setSaveState("");
       setResult(true); autoGrowAll();
-      loadConnections();
+      loadSchedules();
     } catch (err) {
       alert("Error: " + err.message);
     }
@@ -1624,6 +1791,12 @@
   })();
 
   loadConnections();
+
+  // Deep link from the Schedule page: /editor#entry=<id> opens that edit.
+  (function () {
+    const m = (location.hash || "").match(/^#entry=([0-9a-f-]{36})/i);
+    if (m) openHistoryEntry(m[1]);
+  })();
 </script>
 </body>
 </html>

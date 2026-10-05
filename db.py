@@ -83,6 +83,24 @@ def init_db():
                     last_used_at TIMESTAMPTZ
                 )
             """)
+            # Scheduled posts: one row per (edit, platform) so every platform
+            # can have its own time. The caption/platform text is NOT copied
+            # here -- it is read from the history row when the post fires, so
+            # edits made after scheduling are what actually goes out.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS scheduled_posts (
+                    id UUID PRIMARY KEY,
+                    history_id UUID NOT NULL,
+                    platform TEXT NOT NULL,
+                    run_at TIMESTAMPTZ NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'scheduled',
+                    attempts INT NOT NULL DEFAULT 0,
+                    started_at TIMESTAMPTZ,
+                    result JSONB,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS scheduled_posts_due ON scheduled_posts (status, run_at)")
             # One row per processed video -- the editor's history. Kept
             # indefinitely (unlike the rendered video file itself, which is
             # cleaned up from local disk after a while -- see KEEP_ALIVE_SECONDS
@@ -354,3 +372,109 @@ def get_history_entry(entry_id: str):
             cur.execute("SELECT * FROM history WHERE id = %s", (entry_id,))
             row = cur.fetchone()
     return dict(row) if row else None
+
+
+# --- Scheduled posts ----------------------------------------------------------
+
+def _row(r):
+    r = dict(r)
+    for k in ("id", "history_id"):
+        if r.get(k) is not None:
+            r[k] = str(r[k])
+    for k in ("run_at", "started_at", "created_at"):
+        if r.get(k) is not None:
+            r[k] = r[k].isoformat()
+    return r
+
+
+def sched_upsert(history_id: str, platform: str, run_at):
+    """Schedules (or re-schedules) one platform of one edit. An existing
+    not-yet-posted row for the same edit+platform is updated rather than
+    duplicated."""
+    import uuid
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""SELECT id FROM scheduled_posts WHERE history_id = %s AND platform = %s
+                           AND status IN ('scheduled', 'missed', 'error') ORDER BY created_at DESC LIMIT 1""",
+                        (history_id, platform))
+            ex = cur.fetchone()
+            if ex:
+                cur.execute("""UPDATE scheduled_posts SET run_at = %s, status = 'scheduled', attempts = 0,
+                               started_at = NULL, result = NULL WHERE id = %s RETURNING *""", (run_at, ex["id"]))
+            else:
+                cur.execute("""INSERT INTO scheduled_posts (id, history_id, platform, run_at) VALUES (%s, %s, %s, %s) RETURNING *""",
+                            (str(uuid.uuid4()), history_id, platform, run_at))
+            return _row(cur.fetchone())
+
+
+def sched_list(history_id: str = None, include_past: bool = True, limit: int = 300):
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            q = """SELECT s.*, h.title, h.on_screen_caption, h.posting_caption, h.video_filename
+                   FROM scheduled_posts s LEFT JOIN history h ON h.id = s.history_id"""
+            cond, args = [], []
+            if history_id:
+                cond.append("s.history_id = %s"); args.append(history_id)
+            if not include_past:
+                cond.append("s.status IN ('scheduled', 'publishing', 'missed', 'error')")
+            if cond:
+                q += " WHERE " + " AND ".join(cond)
+            q += " ORDER BY s.run_at ASC LIMIT %s"
+            args.append(limit)
+            cur.execute(q, args)
+            return [_row(r) for r in cur.fetchall()]
+
+
+def sched_get(sid: str):
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM scheduled_posts WHERE id = %s", (sid,))
+            r = cur.fetchone()
+    return _row(r) if r else None
+
+
+def sched_set_time(sid: str, run_at):
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""UPDATE scheduled_posts SET run_at = %s, status = 'scheduled', attempts = 0, started_at = NULL, result = NULL
+                           WHERE id = %s AND status <> 'publishing' RETURNING *""", (run_at, sid))
+            r = cur.fetchone()
+    return _row(r) if r else None
+
+
+def sched_delete(sid: str) -> bool:
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM scheduled_posts WHERE id = %s AND status <> 'publishing'", (sid,))
+            return cur.rowcount > 0
+
+
+def sched_claim_due(missed_after_minutes: int = 180, limit: int = 12):
+    """Atomically claims due posts for publishing (safe against two ticks
+    running at once). Posts more than `missed_after_minutes` overdue (e.g. the
+    server was down) are parked as 'missed' for the owner to decide, rather
+    than going out hours late unannounced. Stuck 'publishing' rows (process
+    died mid-post) are flagged as errors, never silently re-posted."""
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""UPDATE scheduled_posts SET status = 'error',
+                           result = '{"error": "Interrupted while posting -- check the platform before retrying, it may have gone out."}'::jsonb
+                           WHERE status = 'publishing' AND started_at < now() - interval '20 minutes'""")
+            cur.execute("""UPDATE scheduled_posts SET status = 'missed',
+                           result = '{"error": "The app was not running at the scheduled time, so this was not posted. Post it now or pick a new time."}'::jsonb
+                           WHERE status = 'scheduled' AND run_at < now() - make_interval(mins => %s)""", (missed_after_minutes,))
+            cur.execute("""UPDATE scheduled_posts SET status = 'publishing', attempts = attempts + 1, started_at = now()
+                           WHERE id IN (SELECT id FROM scheduled_posts WHERE status = 'scheduled' AND run_at <= now()
+                                        ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT %s) RETURNING *""", (limit,))
+            return [_row(r) for r in cur.fetchall()]
+
+
+def sched_finish(sid: str, status: str, result: dict, retry_in_minutes: int = None):
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            if retry_in_minutes:
+                cur.execute("""UPDATE scheduled_posts SET status = 'scheduled', run_at = now() + make_interval(mins => %s),
+                               result = %s WHERE id = %s""", (retry_in_minutes, json.dumps(result or {}), sid))
+            else:
+                cur.execute("UPDATE scheduled_posts SET status = %s, result = %s WHERE id = %s",
+                            (status, json.dumps(result or {}), sid))

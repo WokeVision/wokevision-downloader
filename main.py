@@ -19,6 +19,7 @@ import db
 import auth
 import storage
 import insights
+import scheduler
 from platforms import instagram, threads, youtube, x, tiktok, facebook
 
 app = FastAPI()
@@ -33,6 +34,10 @@ def _startup():
         db.init_db()
     except Exception as e:
         print(f"DB INIT FAILED (platform connections will be unavailable): {e}", flush=True)
+    try:
+        scheduler.start_loop(PLATFORM_MODULES)
+    except Exception as e:
+        print(f"SCHEDULER START FAILED: {e}", flush=True)
     try:
         insights.init_snapshots()
     except Exception as e:
@@ -52,6 +57,7 @@ PUBLIC_PATHS = {
     "/api/home/popular",    # public: top Instagram posts for the homepage carousel
     "/login",
     "/health",
+    "/api/cron/tick",       # public but secret-gated (CRON_SECRET) -- the outside timer that wakes the app
     "/tiktokf2TEyaKWItLVEN7IU6Sr0Fyd4eBclual.txt",
     "/tiktokXoc4Y47fr98En3040kRaFWp20XNF2taG.txt",
 }
@@ -1280,3 +1286,148 @@ def reopen_history(entry_id: str):
 # Serves the submission page's own static assets, if any are added later
 # (CSS/JS files). The page itself is served by the "/" route above.
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+# --- Scheduling ---------------------------------------------------------------
+
+import datetime as _dt
+import hmac as _hmac
+
+
+def _parse_when(value: str) -> _dt.datetime:
+    try:
+        d = _dt.datetime.fromisoformat((value or "").replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="That date/time isn't valid.")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=_dt.timezone.utc)
+    return d.astimezone(_dt.timezone.utc)
+
+
+class ScheduleItem(BaseModel):
+    platform: str
+    run_at: str
+
+
+class ScheduleRequest(BaseModel):
+    history_id: str
+    items: list[ScheduleItem]
+
+
+class ScheduleTimeRequest(BaseModel):
+    run_at: str
+
+
+def _post_url(platform: str, res: dict):
+    if platform == "youtube" and res.get("video_id"):
+        return f"https://www.youtube.com/shorts/{res['video_id']}"
+    if platform == "x" and res.get("tweet_id"):
+        return f"https://x.com/i/status/{res['tweet_id']}"
+    return None
+
+
+def _sched_public(r: dict) -> dict:
+    base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    fn = r.get("video_filename")
+    return {
+        "id": r["id"], "history_id": r["history_id"], "platform": r["platform"],
+        "label": PLATFORM_LABELS.get(r["platform"], r["platform"]),
+        "run_at": r["run_at"], "status": r["status"], "attempts": r.get("attempts", 0),
+        "error": ((r.get("result") or {}).get("error") if r["status"] in ("error", "missed") else None),
+        "post_url": _post_url(r["platform"], r.get("result") or {}) if r["status"] == "done" else None,
+        "title": r.get("title") or "", "on_screen_caption": r.get("on_screen_caption") or "",
+        "video_url": f"{base_url}/files/{fn}" if fn else None,
+    }
+
+
+@app.get("/api/schedule")
+def schedule_list(history_id: str = None, past: bool = True):
+    if not db.configured():
+        return {"items": []}
+    return {"items": [_sched_public(r) for r in db.sched_list(history_id=history_id, include_past=past)]}
+
+
+@app.post("/api/schedule")
+def schedule_create(req: ScheduleRequest):
+    """Schedules each listed platform of a saved edit at its own time (send the
+    same time for all to schedule them together). Re-scheduling a platform that
+    is already scheduled just moves it."""
+    if not db.configured():
+        raise HTTPException(status_code=503, detail="Scheduling needs the database to be set up.")
+    if not req.items:
+        raise HTTPException(status_code=400, detail="Pick at least one platform.")
+    if not db.get_history_entry(req.history_id):
+        raise HTTPException(status_code=404, detail="That edit isn't saved yet.")
+    now = _dt.datetime.now(_dt.timezone.utc)
+    out = []
+    for it in req.items:
+        if it.platform not in PLATFORM_MODULES:
+            raise HTTPException(status_code=400, detail=f"Unknown platform: {it.platform}")
+        when = _parse_when(it.run_at)
+        if when < now - _dt.timedelta(seconds=60):
+            raise HTTPException(status_code=400, detail="Pick a time in the future.")
+        out.append(db.sched_upsert(req.history_id, it.platform, when))
+    rows = {r["id"] for r in out}
+    return {"items": [_sched_public(r) for r in db.sched_list(history_id=req.history_id) if r["id"] in rows]}
+
+
+@app.put("/api/schedule/{sid}")
+def schedule_move(sid: str, req: ScheduleTimeRequest):
+    when = _parse_when(req.run_at)
+    if when < _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=60):
+        raise HTTPException(status_code=400, detail="Pick a time in the future.")
+    r = db.sched_set_time(sid, when)
+    if not r:
+        raise HTTPException(status_code=409, detail="That post can't be changed right now (it may be posting).")
+    return {"ok": True}
+
+
+@app.delete("/api/schedule/{sid}")
+def schedule_cancel(sid: str):
+    if not db.sched_delete(sid):
+        raise HTTPException(status_code=409, detail="Couldn't remove it (it may be posting right now).")
+    return {"ok": True}
+
+
+@app.post("/api/schedule/{sid}/post-now")
+def schedule_post_now(sid: str):
+    r = db.sched_set_time(sid, _dt.datetime.now(_dt.timezone.utc))
+    if not r:
+        raise HTTPException(status_code=409, detail="That post can't be changed right now (it may be posting).")
+    threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
+    return {"ok": True}
+
+
+_LAST_TICK = {"at": None}
+
+
+@app.get("/api/schedule-health")
+def schedule_health():
+    """Lets the Schedule page warn when nothing is poking the app awake."""
+    at = _LAST_TICK["at"]
+    return {
+        "timer_configured": bool(os.environ.get("CRON_SECRET")),
+        "last_tick_seconds_ago": None if at is None else int(time.time() - at),
+    }
+
+
+@app.post("/api/cron/tick")
+def cron_tick(request: Request, key: str = ""):
+    """Hit every minute by an outside timer. Public path, but only with the
+    CRON_SECRET; its job is to wake the (free-tier, sleeping) app and publish
+    whatever has come due. Returns immediately -- publishing runs in the
+    background so the timer service never times out."""
+    secret = os.environ.get("CRON_SECRET", "")
+    given = key or request.headers.get("x-cron-key", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="CRON_SECRET isn't set on the server.")
+    if not _hmac.compare_digest(given.encode(), secret.encode()):
+        raise HTTPException(status_code=403, detail="Bad key.")
+    _LAST_TICK["at"] = time.time()
+    threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
+    return {"ok": True}
+
+
+@app.get("/schedule")
+def schedule_page():
+    return FileResponse("static/schedule.html")

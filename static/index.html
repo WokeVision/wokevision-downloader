@@ -61,47 +61,51 @@
      captions -- so a whole post is visible and editable without scrolling
      a long single strip. */
   .studio { display: flex; flex-direction: column; }
-  .col { display: contents; }
-  #sourceCard { order: 1; } #historyCard { order: 2; } #statusCard { order: 3; }
-  #videoCard { order: 4; } .captionGrid { order: 5; } #platformPostsCard { order: 6; } #platformsCard { order: 7; }
-  .resultPart { display: none; }
-  body.has-result .resultPart { display: block; }
-  body.has-result .captionGrid.resultPart { display: grid; }
-  .captionGrid { grid-template-columns: 1fr; gap: 0; }
+  #sourceCard { order: 1; } #statusCard { order: 2; } #historyCard { order: 3; }
+  #videoCard { order: 4; } #onScreenCard { order: 5; } #coreCard { order: 6; } #platformPostsCard { order: 7; } #platformsCard { order: 8; }
+  /* Fields are always present; until a video is processed they're dimmed and inert. */
+  body:not(.has-result) .resultPart { opacity: 0.45; pointer-events: none; user-select: none; }
+  body:not(.has-result) .resultPart textarea { caret-color: transparent; }
+  .vidEmpty { display: flex; align-items: center; justify-content: center; width: 100%; max-width: 280px; aspect-ratio: 9/16; margin: 0 auto 14px; border-radius: var(--radius-md); border: 1.5px dashed var(--border); color: var(--text-faint); font-size: 13.5px; padding: 18px; box-sizing: border-box; }
+  body.has-video .vidEmpty { display: none; }
+  body:not(.has-video) #preview, body:not(.has-video) #downloadLink { display: none; }
+  #statusCard { display: block; }
+  #statusCard .progressFill { transition: width .3s ease; }
+  .studio > .card { margin-bottom: 14px; }
 
   @media (min-width: 700px) {
     .page { max-width: 720px; }
-    .captionGrid { grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
   }
 
+  /* iPad landscape / laptop / desktop: the layout from the owner's mockup.
+       row 1: link/upload (+ progress bar)  |  History
+       row 2: on-screen caption | complete edit (video) | posting caption
+       row 3: platform captions (wide)       |  post to */
   @media (min-width: 900px) {
     body { padding-left: 28px; padding-right: 28px; }
-    .page { max-width: 1240px; }
-    .studio {
-      display: grid; gap: 0 22px; align-items: start;
-      grid-template-columns: 380px minmax(0, 1fr);
-      grid-template-rows: auto 1fr;
-      grid-template-areas: "a c" "b c";
-    }
-    .col { display: flex; flex-direction: column; min-width: 0; }
-    .colA { grid-area: a; } .colB { grid-area: b; } .colC { grid-area: c; }
-    #sourceCard, #historyCard, #statusCard, #videoCard, .captionGrid, #platformPostsCard, #platformsCard { order: 0; }
-    video { max-width: 100%; max-height: 62vh; width: auto; }
-    .platPanel textarea, #onScreenBox, #captionBox { min-height: 140px; }
-    #historyList { max-height: 300px; }
-    #onScreenBox { min-height: 84px; }
-    header.brand { margin-bottom: 16px; }
-  }
-
-  @media (min-width: 1320px) {
     .page { max-width: 1480px; }
     .studio {
-      grid-template-columns: 340px 330px minmax(0, 1fr);
-      grid-template-rows: auto;
-      grid-template-areas: "a b c";
+      display: grid; gap: 14px 18px; align-items: stretch;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) minmax(0, 1fr);
+      grid-template-areas:
+        "src src hist"
+        "bar bar hist"
+        "ons vid core"
+        "plat plat post";
     }
-    video { max-height: 56vh; }
+    #sourceCard { grid-area: src; } #statusCard { grid-area: bar; } #historyCard { grid-area: hist; align-self: stretch; }
+    #onScreenCard { grid-area: ons; } #videoCard { grid-area: vid; } #coreCard { grid-area: core; }
+    #platformPostsCard { grid-area: plat; } #platformsCard { grid-area: post; }
+    #sourceCard, #historyCard, #statusCard, #videoCard, #onScreenCard, #coreCard, #platformPostsCard, #platformsCard { order: 0; }
+    .studio > .card { margin-bottom: 0; }
+    #historyCard { overflow: auto; }
+    video, .vidEmpty { max-width: 100%; }
+    video { max-height: 52vh; width: auto; }
+    .vidEmpty { max-width: 260px; }
+    #onScreenBox, #captionBox { min-height: 200px; }
     .platPanel textarea { min-height: 170px; }
+    #historyList { max-height: 300px; }
+    header.brand { margin-bottom: 16px; }
   }
 
   /* Touch devices: bigger, easier targets */
@@ -256,8 +260,6 @@
     margin-top: 12px;
   }
 
-  #statusCard { display: none; }
-  #statusCard.active { display: block; }
 
   .progressHead {
     display: flex;
@@ -577,7 +579,6 @@
   <div class="banner" id="connectBanner"></div>
 
   <div class="studio">
-  <div class="col colA">
   <div class="card" id="sourceCard">
     <label class="fieldLabel" for="angleBox">What's this clip about? <span style="opacity:.6;font-weight:400">(optional)</span></label>
     <textarea id="angleBox" rows="2" maxlength="1500" placeholder="e.g. Dark humour animation about the Lindsay Clancy case &mdash; don't take it seriously. Or: mock the OnlyFans 'empowerment' angle."></textarea>
@@ -604,7 +605,15 @@
       </form>
     </div>
   </div>
-
+  <div class="card" id="statusCard">
+    <div class="progressHead">
+      <span class="label" id="stageLabel">Ready</span>
+      <span class="eta" id="etaLabel"></span>
+    </div>
+    <div class="progressTrack"><div class="progressFill" id="progressFill"></div></div>
+    <div class="progressPct" id="pctLabel"></div>
+    <div id="errorBox"></div>
+  </div>
   <div class="card" id="historyCard">
     <div class="historyHead" id="historyToggle">
       <h3>History</h3>
@@ -614,25 +623,40 @@
       <div id="historyList"></div>
     </div>
   </div>
-
-  <div class="card" id="statusCard">
-    <div class="progressHead">
-      <span class="label" id="stageLabel">Queued</span>
-      <span class="eta" id="etaLabel"></span>
-    </div>
-    <div class="progressTrack"><div class="progressFill" id="progressFill"></div></div>
-    <div class="progressPct" id="pctLabel"></div>
-    <div id="errorBox"></div>
-  </div>
-
-  </div><!-- /colA -->
-
-  <div class="col colB">
-    <div class="card resultPart" id="videoCard" style="text-align:center;">
-      <video id="preview" controls playsinline></video>
+  <div class="card captionCard resultPart" id="onScreenCard">
+        <h3>On-screen caption</h3>
+        <textarea id="onScreenBox"></textarea>
+        <div class="actionRow">
+          <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
+          <button class="secondary" id="saveOnScreenCaptionBtn" type="button">Save caption</button>
+          <span class="inlineSpinner" id="onScreenCaptionSpinner">Updating...</span>
+        </div>
+      </div>
+  <div class="card resultPart" id="videoCard" style="text-align:center;"><h3 style="margin:0 0 10px;font-size:14.5px;font-weight:700;text-align:left">Complete edit</h3>
+      <div class="vidEmpty" id="vidEmpty">Your edited video appears here</div>
+      <video id="preview" controls playsinline hidden></video>
       <a class="dl" id="downloadLink" download="wokevision.mp4">Download video</a>
     </div>
-
+  <div class="card captionCard resultPart" id="coreCard">
+        <h3>Core caption</h3>
+        <textarea id="captionBox"></textarea>
+        <div class="charCount" id="captionCharCount"></div>
+        <div class="actionRow">
+          <button class="secondary" id="copyBtn" type="button">Copy caption</button>
+          <button class="secondary" id="changePostingCaptionBtn" type="button">Change caption</button>
+          <span class="inlineSpinner" id="postingCaptionSpinner">Rewriting...</span>
+        </div>
+      </div>
+  <div class="card captionCard resultPart" id="platformPostsCard">
+      <h3>Platform versions</h3>
+      <div class="platTabs" id="platTabs"></div>
+      <div id="platPanels"></div>
+      <div class="actionRow">
+        <button class="secondary" id="rewriteAllBtn" type="button">Rewrite all platforms</button>
+        <span class="inlineSpinner" id="rewriteSpinner">Rewriting...</span>
+        <span class="saveState" id="saveState"></span>
+      </div>
+    </div>
   <div class="card" id="platformsCard">
     <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Post to</h3>
     <div id="platformList"></div>
@@ -658,43 +682,6 @@
     <button class="primary" id="uploadToPlatformsBtn" type="button">Upload</button>
     <div class="publishResults" id="publishResults"></div>
   </div>
-  </div><!-- /colB -->
-
-  <div class="col colC">
-    <div class="captionGrid resultPart" id="captionGrid">
-      <div class="card captionCard">
-        <h3>On-screen caption</h3>
-        <textarea id="onScreenBox"></textarea>
-        <div class="actionRow">
-          <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
-          <button class="secondary" id="saveOnScreenCaptionBtn" type="button">Save caption</button>
-          <span class="inlineSpinner" id="onScreenCaptionSpinner">Updating...</span>
-        </div>
-      </div>
-
-      <div class="card captionCard">
-        <h3>Core caption</h3>
-        <textarea id="captionBox"></textarea>
-        <div class="charCount" id="captionCharCount"></div>
-        <div class="actionRow">
-          <button class="secondary" id="copyBtn" type="button">Copy caption</button>
-          <button class="secondary" id="changePostingCaptionBtn" type="button">Change caption</button>
-          <span class="inlineSpinner" id="postingCaptionSpinner">Rewriting...</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="card captionCard resultPart" id="platformPostsCard">
-      <h3>Platform versions</h3>
-      <div class="platTabs" id="platTabs"></div>
-      <div id="platPanels"></div>
-      <div class="actionRow">
-        <button class="secondary" id="rewriteAllBtn" type="button">Rewrite all platforms</button>
-        <span class="inlineSpinner" id="rewriteSpinner">Rewriting...</span>
-        <span class="saveState" id="saveState"></span>
-      </div>
-    </div>
-  </div><!-- /colC -->
   </div><!-- /studio -->
 
 </div>
@@ -751,6 +738,8 @@
 
   function resetUI() {
     setResult(false);
+    document.body.classList.remove("has-video");
+    const ve = document.getElementById("vidEmpty"); if (ve) ve.textContent = "Your edited video appears here";
     errorBox.style.display = "none";
     statusCard.classList.add("active");
     progressFill.style.width = "0%";
@@ -767,6 +756,8 @@
     if (jobId) currentJobId = jobId;
     currentPublishResults = publishResults || {};
     statusCard.classList.remove("active");
+    stageLabel.textContent = "Ready"; progressFill.style.width = "0%"; pctLabel.textContent = ""; etaLabel.textContent = "";
+    document.body.classList.add("has-video");
     const preview = document.getElementById("preview");
     // Cache-bust so a re-rendered video (same URL) actually reloads
     // instead of showing the browser's cached first render.
@@ -1632,6 +1623,8 @@
     if (!open && !historyLoadedOnce) loadHistory();
   });
 
+  if (window.matchMedia("(min-width: 900px)").matches) historyToggle.click();
+
   function timeAgo(iso) {
     if (!iso) return "";
     const diffMs = Date.now() - new Date(iso).getTime();
@@ -1724,6 +1717,7 @@
       const expiredNote = document.getElementById("historyExpiredNote");
       if (e.video_available) {
         preview.style.display = "";
+        document.body.classList.add("has-video");
         preview.src = e.video_url + (e.video_url.includes("?") ? "&" : "?") + "t=" + Date.now();
         downloadLink.href = e.video_url;
         downloadLink.style.display = "";
@@ -1732,13 +1726,8 @@
         preview.removeAttribute("src");
         preview.style.display = "none";
         downloadLink.style.display = "none";
-        if (!document.getElementById("historyExpiredNote")) {
-          const note = document.createElement("div");
-          note.id = "historyExpiredNote";
-          note.className = "historyExpiredNote";
-          note.textContent = "The original video file for this edit has expired, so there's no preview or re-publish available -- captions and platform history are still shown below.";
-          const vc = document.getElementById("videoCard"); vc.parentNode.insertBefore(note, vc);
-        }
+        document.body.classList.remove("has-video");
+        document.getElementById("vidEmpty").textContent = "The video file for this edit has expired \u2014 captions and platform history are still here.";
       }
 
       document.getElementById("onScreenBox").value = e.on_screen_caption || "";

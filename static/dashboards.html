@@ -123,6 +123,18 @@
   .replyBar button { flex: none; border: none; background: var(--accent); color: #fff; font-weight: 700; padding: 0 20px; border-radius: 999px; cursor: pointer; font-size: 14.5px; }
   .replyBar button:disabled { background: rgba(255,255,255,0.12); color: var(--text-faint); }
 
+  /* Date range bar */
+  .rangeBar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .rangeBar .seg { flex-wrap: wrap; max-width: 100%; }
+  .rangeBar .seg button { padding: 8px 11px; white-space: nowrap; }
+  .rangeLabel { font-size: 12.5px; color: var(--text-faint); margin-left: 4px; }
+  .customRange { display: none; flex-wrap: wrap; gap: 10px; align-items: flex-end; width: 100%; margin-top: 4px; padding: 14px; border-radius: var(--radius-md); background: var(--surface); border: 1px solid var(--border); }
+  .customRange.open { display: flex; }
+  .customRange label { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); font-weight: 700; flex: 1; min-width: 190px; }
+  .customRange input { background: rgba(0,0,0,0.35); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 11px 12px; font-size: 16px; font-family: inherit; color-scheme: dark; min-width: 0; }
+  .customRange input:focus { outline: none; border-color: var(--accent); }
+  .kpi .sub2 { font-size: 11.5px; color: var(--text-faint); margin-top: 3px; }
+  .kpi .sub2.up { color: #30D158; } .kpi .sub2.down { color: #FF453A; }
   .skeleton { height: 90px; border-radius: var(--radius-md); background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.09), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: sh 1.3s linear infinite; }
   @keyframes sh { to { background-position: -200% 0; } }
 </style>
@@ -161,14 +173,17 @@
     history: {},         // platform id -> [{day, followers, views}]
     tab: (location.hash || "#overview").slice(1),
     selected: PLATFORMS.map(function (p) { return p.id; }),
-    mode: "compare"      // "compare" | "combined"
+    mode: "compare",     // "compare" | "combined"
+    range: { preset: "30d", start: null, end: null },   // custom start/end are epoch ms
+    igViews: null        // {key, value, clamped} for the current range (Instagram account views)
   };
   try {
     var saved = JSON.parse(localStorage.getItem("wvDash") || "{}");
     if (saved.selected && saved.selected.length) state.selected = saved.selected.filter(function (i) { return BY_ID[i]; });
     if (saved.mode) state.mode = saved.mode;
+    if (saved.range && saved.range.preset) state.range = saved.range;
   } catch (e) {}
-  function persist() { try { localStorage.setItem("wvDash", JSON.stringify({ selected: state.selected, mode: state.mode })); } catch (e) {} }
+  function persist() { try { localStorage.setItem("wvDash", JSON.stringify({ selected: state.selected, mode: state.mode, range: state.range })); } catch (e) {} }
 
   var $view = document.getElementById("view"), $tabs = document.getElementById("tabs");
 
@@ -220,9 +235,7 @@
     var every = Math.max(1, Math.ceil(xs.length / 6));
     xs.forEach(function (x, i) {
       if (i % every === 0 || i === xs.length - 1) {
-        var dt = new Date(x + "T00:00:00Z");
-        g += '<text x="' + X(i) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="11" fill="rgba(245,245,247,0.38)">' +
-             dt.toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" }) + '</text>';
+        g += '<text x="' + X(i) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="11" fill="rgba(245,245,247,0.38)">' + esc(axisLabel(x, opts && opts.gran)) + '</text>';
       }
     });
     series.forEach(function (s) {
@@ -242,11 +255,10 @@
         var px = (cx - r.left) / r.width * W;
         var i = xs.length === 1 ? 0 : Math.round((px - L) / ((W - L - R) / (xs.length - 1)));
         i = Math.max(0, Math.min(xs.length - 1, i));
-        var dt = new Date(xs[i] + "T00:00:00Z");
         var rows = series.map(function (s) {
           return '<div><span><span class="dot" style="background:' + s.color + ';margin-right:6px"></span>' + esc(s.name) + '</span><b style="display:inline;color:var(--text)">' + fmt(s.points[i].y) + '</b></div>';
         }).join("");
-        tip.innerHTML = '<b>' + dt.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) + '</b>' + rows;
+        tip.innerHTML = '<b>' + esc(tipLabel(xs[i], opts && opts.gran)) + '</b>' + rows;
         tip.style.display = "block";
         var xpx = X(i) / W * r.width;
         tip.style.left = Math.min(Math.max(xpx - 60, 0), r.width - 150) + "px"; tip.style.top = "0px";
@@ -260,25 +272,105 @@
     return html + legend;
   }
 
-  /* ---------- data shaping ---------- */
-  function last30() {
-    var out = [], now = new Date();
-    for (var i = 29; i >= 0; i--) { var d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i)); out.push(dayKey(d)); }
-    return out;
+  /* ---------- date range ---------- */
+  var PRESETS = [["1d", "1D", 1], ["7d", "7D", 7], ["30d", "30D", 30], ["90d", "90D", 90], ["1y", "1Y", 365], ["all", "All time", 0], ["custom", "Custom", 0]];
+  function earliestPost() {
+    var min = Infinity;
+    Object.keys(state.data).forEach(function (id) { (state.data[id].posts || []).forEach(function (p) { var t = Date.parse(p.ts); if (t && t < min) min = t; }); });
+    return isFinite(min) ? min : Date.now() - 365 * 86400000;
   }
-  function engagementSeries(id, days) {
-    var d = state.data[id], by = {}; days.forEach(function (x) { by[x] = 0; });
-    ((d && d.posts) || []).forEach(function (p) {
-      if (!p.ts) return; var k = String(p.ts).slice(0, 10);
-      if (k in by) by[k] += (p.likes || 0) + (p.comments || 0) + (p.shares || 0);
-    });
-    return days.map(function (x) { return { x: x, y: by[x] }; });
+  function getRange() {
+    var now = Date.now(), r = state.range;
+    if (r.preset === "custom" && r.start && r.end) return { start: r.start, end: Math.max(r.end, r.start + 60000) };
+    if (r.preset === "all") return { start: earliestPost(), end: now };
+    var days = (PRESETS.filter(function (p) { return p[0] === r.preset; })[0] || [0, 0, 30])[2];
+    return { start: now - days * 86400000, end: now };
+  }
+  function rangeText() {
+    var r = getRange(), o = { day: "numeric", month: "short", year: "numeric" };
+    if (state.range.preset === "custom") o.hour = o.minute = "2-digit";
+    return new Date(r.start).toLocaleString(undefined, o) + " \u2192 " + new Date(r.end).toLocaleString(undefined, o);
+  }
+  function rangeLabelShort() {
+    var p = PRESETS.filter(function (x) { return x[0] === state.range.preset; })[0];
+    return state.range.preset === "custom" ? "the selected dates" : state.range.preset === "all" ? "all time" : "the last " + (p ? p[1].replace("D", " day(s)").replace("1Y", "year") : "");
+  }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function toLocalInput(ms) { var d = new Date(ms); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+  function rangeBar() {
+    var h = '<div class="rangeBar"><div class="seg" id="rangeSeg">' + PRESETS.map(function (p) {
+      return '<button data-range="' + p[0] + '" class="' + (state.range.preset === p[0] ? "active" : "") + '">' + p[1] + '</button>';
+    }).join("") + '</div><span class="rangeLabel">' + esc(rangeText()) + '</span>';
+    var r = getRange();
+    h += '<div class="customRange' + (state.range.preset === "custom" ? " open" : "") + '" id="customRange">' +
+      '<label>From<input type="datetime-local" id="rangeFrom" value="' + toLocalInput(r.start) + '"></label>' +
+      '<label>To<input type="datetime-local" id="rangeTo" value="' + toLocalInput(r.end) + '"></label>' +
+      '<div class="banner err" id="rangeErr" style="display:none;width:100%;margin:0">Pick a start that is before the end.</div><button class="btn2" id="rangeApply" style="background:var(--accent);border-color:transparent;color:#fff;padding:12px 20px">Apply</button></div></div>';
+    return h;
+  }
+
+  /* ---------- data shaping ---------- */
+  function inRange(p, r) { var t = Date.parse(p.ts); return t && t >= r.start && t <= r.end; }
+  function postsIn(id) { var r = getRange(); return ((state.data[id] && state.data[id].posts) || []).filter(function (p) { return inRange(p, r); }); }
+  function metric(id, key) {
+    var d = state.data[id]; if (!d || d.state === "not_connected" || d.state === "error") return null;
+    if (key === "followers") return d.totals.followers;
+    if (!(d.posts || []).length) return key === "posts" ? (id === "tiktok" ? null : 0) : (key === "views" && id === "instagram" && state.igViews ? state.igViews.value : null);
+    var ps = postsIn(id);
+    if (key === "posts") return ps.length;
+    if (key === "views" && id === "instagram") return state.igViews && state.igViews.key === rangeKey() ? state.igViews.value : null;
+    return sumNullable(ps.map(function (p) { return p[key]; })) == null ? null : sumNullable(ps.map(function (p) { return p[key]; }));
+  }
+  function rangeKey() { var r = getRange(); return Math.round(r.start / 60000) + "-" + Math.round(r.end / 60000); }
+  function followerDelta(id) {
+    var h = (state.history[id] || []).filter(function (x) { return x.followers != null; }), r = getRange();
+    var inr = h.filter(function (x) { var t = Date.parse(x.day + "T12:00:00"); return t >= r.start - 86400000 && t <= r.end; });
+    if (inr.length < 2) return null; return inr[inr.length - 1].followers - inr[0].followers;
+  }
+
+  // Bucket size follows the range so the chart stays readable.
+  function granFor(r) { var span = r.end - r.start; return span <= 2.1 * 86400000 ? "hour" : span <= 46 * 86400000 ? "day" : span <= 400 * 86400000 ? "week" : "month"; }
+  function keyOf(ms, gran) {
+    var d = new Date(ms);
+    if (gran === "hour") return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours());
+    if (gran === "week") { var x = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)); d = x; }
+    if (gran === "month") return d.getFullYear() + "-" + pad(d.getMonth() + 1);
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+  function bucketKeys(r, gran) {
+    var keys = [], seen = {}, step = gran === "hour" ? 3600000 : gran === "month" ? 15 * 86400000 : 86400000;
+    for (var t = r.start; t <= r.end + step; t += step) { var k = keyOf(Math.min(t, r.end), gran); if (!seen[k]) { seen[k] = 1; keys.push(k); } }
+    var last = keyOf(r.end, gran); if (!seen[last]) keys.push(last);
+    return keys;
+  }
+  function parseKey(k) {
+    var m = /^(\d{4})-(\d{2})(?:-(\d{2}))?(?:T(\d{2}))?$/.exec(k);
+    return new Date(+m[1], +m[2] - 1, m[3] ? +m[3] : 1, m[4] ? +m[4] : 0);
+  }
+  function axisLabel(k, gran) {
+    var d = parseKey(k);
+    if (gran === "hour") return pad(d.getHours()) + ":00";
+    if (gran === "month") return d.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+    return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  }
+  function tipLabel(k, gran) {
+    var d = parseKey(k);
+    if (gran === "hour") return d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    if (gran === "week") return "Week of " + d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+    if (gran === "month") return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  }
+  function engagementSeries(id, r, gran, keys) {
+    var by = {}; keys.forEach(function (k) { by[k] = 0; });
+    postsIn(id).forEach(function (p) { var k = keyOf(Date.parse(p.ts), gran); if (k in by) by[k] += (p.likes || 0) + (p.comments || 0) + (p.shares || 0); });
+    return keys.map(function (k) { return { x: k, y: by[k] }; });
   }
   function followerSeries(ids) {
-    var days = {}; ids.forEach(function (id) { (state.history[id] || []).forEach(function (r) { days[r.day] = 1; }); });
+    var r = getRange(), lo = toLocalInput(r.start).slice(0, 10), hi = toLocalInput(r.end).slice(0, 10), days = {};
+    ids.forEach(function (id) { (state.history[id] || []).forEach(function (x) { if (x.day >= lo && x.day <= hi) days[x.day] = 1; }); });
     var all = Object.keys(days).sort(); if (!all.length) return null;
     function one(id) {
-      var map = {}; (state.history[id] || []).forEach(function (r) { map[r.day] = r.followers; });
+      var map = {}; (state.history[id] || []).forEach(function (x) { map[x.day] = x.followers; });
       var cur = null; return all.map(function (dy) { if (map[dy] != null) cur = map[dy]; return { x: dy, y: cur == null ? 0 : cur }; });
     }
     return { days: all, per: ids.map(function (id) { return { name: BY_ID[id].label, color: BY_ID[id].color, points: one(id) }; }) };
@@ -287,6 +379,20 @@
     return [{ name: name, color: color || "#FF2B3C", points: per[0].points.map(function (p, i) {
       return { x: p.x, y: per.reduce(function (a, s) { return a + s.points[i].y; }, 0) };
     }) }];
+  }
+  function kpiTile(label, v, extra) {
+    return '<div class="kpi"><div class="lbl">' + label + '</div><div class="val' + (v == null ? " na" : "") + '">' + fmt(v) + '</div>' + (extra || "") + '</div>';
+  }
+  function engagementCard(ids, combinedMode) {
+    var r = getRange(), gran = granFor(r), keys = bucketKeys(r, gran);
+    var per = ids.map(function (i) { return { name: BY_ID[i].label, color: BY_ID[i].color, points: engagementSeries(i, r, gran, keys) }; });
+    return '<div class="card"><h3>Engagement</h3><p class="hint">Likes + comments + shares on posts published in each ' + gran + ', over ' + rangeLabelShort() + '.</p>' +
+      lineChart(combinedMode ? combine(per, "All selected") : per, { gran: gran }) + '</div>';
+  }
+  function followersCard(ids, combinedMode) {
+    var fs = followerSeries(ids), h = '<div class="card"><h3>Followers over time</h3>';
+    if (!fs || fs.days.length < 2) return h + '<p class="hint">WokeVision records your follower count once a day whenever you open this page, so this line fills in as the days go by.</p><div class="empty">Not enough daily readings in this date range yet.</div></div>';
+    return h + '<p class="hint">Daily follower count within the selected dates.</p>' + lineChart(combinedMode ? combine(fs.per, "All selected") : fs.per, { gran: "day" }) + '</div>';
   }
 
   /* ---------- overview ---------- */
@@ -312,12 +418,14 @@
 
     if (state.mode === "combined") {
       h += '<div class="kpis">' + METRICS.map(function (m) {
-        var v = sumNullable(ids.map(function (i) { return state.data[i].totals[m[0]]; }));
-        return '<div class="kpi"><div class="lbl">' + m[1] + '</div><div class="val' + (v == null ? " na" : "") + '">' + fmt(v) + '</div></div>';
+        var v = sumNullable(ids.map(function (i) { return metric(i, m[0]); }));
+        var extra = "";
+        if (m[0] === "followers") { var dd = sumNullable(ids.map(followerDelta)); if (dd != null) extra = '<div class="sub2 ' + (dd >= 0 ? "up" : "down") + '">' + (dd >= 0 ? "+" : "") + fmt(dd) + ' in range</div>'; }
+        return kpiTile(m[1], v, extra);
       }).join("") + '</div>';
     } else {
       h += '<div class="card">' + METRICS.map(function (m) {
-        var vals = ids.map(function (i) { return state.data[i].totals[m[0]]; });
+        var vals = ids.map(function (i) { return metric(i, m[0]); });
         var mx = Math.max.apply(null, vals.map(function (v) { return v || 0; })) || 1;
         return '<div class="barBlock"><div class="t">' + m[1] + '</div>' + ids.map(function (i, ix) {
           var v = vals[ix], p = BY_ID[i];
@@ -327,20 +435,8 @@
         }).join("") + '</div>';
       }).join("") + '</div>';
     }
-
-    var days = last30(), per = ids.map(function (i) { return { name: BY_ID[i].label, color: BY_ID[i].color, points: engagementSeries(i, days) }; });
-    h += '<div class="card"><h3>Engagement</h3><p class="hint">Likes + comments + shares on posts published each day, last 30 days.</p>' +
-      lineChart(state.mode === "combined" ? combine(per, "All selected") : per) + '</div>';
-
-    var fs = followerSeries(ids);
-    h += '<div class="card"><h3>Followers over time</h3>';
-    if (!fs || fs.days.length < 2) {
-      h += '<p class="hint">WokeVision records your follower count once a day whenever you open this page, so this line fills in as the days go by.</p>' +
-        '<div class="empty">Tracking started today — check back tomorrow.</div>';
-    } else {
-      h += '<p class="hint">Daily follower count (from when tracking began).</p>' + lineChart(state.mode === "combined" ? combine(fs.per, "All selected") : fs.per);
-    }
-    return h + "</div>";
+    h += engagementCard(ids, state.mode === "combined") + followersCard(ids, state.mode === "combined");
+    return h;
   }
 
   /* ---------- single platform ---------- */
@@ -354,22 +450,20 @@
         (d.state === "not_connected" ? ' <a href="/editor" style="color:var(--accent)">Open the Video Editor</a> to connect it.' : "") + '</div>';
     if (d.note) h += '<div class="banner">' + esc(d.note) + '</div>';
     h += '<div class="kpis">' + METRICS.map(function (m) {
-      var v = d.totals[m[0]]; return '<div class="kpi"><div class="lbl">' + m[1] + '</div><div class="val' + (v == null ? " na" : "") + '">' + fmt(v) + '</div></div>';
+      var extra = "";
+      if (m[0] === "followers") { var dd = followerDelta(id); if (dd != null) extra = '<div class="sub2 ' + (dd >= 0 ? "up" : "down") + '">' + (dd >= 0 ? "+" : "") + fmt(dd) + ' in range</div>'; else extra = '<div class="sub2">current</div>'; }
+      if (m[0] === "views" && id === "instagram" && state.igViews && state.igViews.clamped) extra = '<div class="sub2">last ~13 months</div>';
+      return kpiTile(m[1], metric(id, m[0]), extra);
     }).join("") + '</div>';
-    var days = last30();
-    h += '<div class="card"><h3>Engagement</h3><p class="hint">Likes + comments + shares on posts published each day, last 30 days.</p>' +
-      lineChart([{ name: p.label, color: p.color, points: engagementSeries(id, days) }]) + '</div>';
-    var fs = followerSeries([id]);
-    h += '<div class="card"><h3>Followers over time</h3>' + ((!fs || fs.days.length < 2)
-      ? '<div class="empty">Tracking started — the line appears after a second day of data.</div>' : lineChart(fs.per)) + '</div>';
-    var posts = (d.posts || []).slice().sort(function (a, b) {
+    h += engagementCard([id], false) + followersCard([id], false);
+    var posts = postsIn(id).sort(function (a, b) {
       return ((b.views || 0) + (b.likes || 0) + 2 * (b.comments || 0)) - ((a.views || 0) + (a.likes || 0) + 2 * (a.comments || 0));
     }).slice(0, 12);
-    h += '<div class="card"><h3>Top posts</h3><p class="hint">Ranked by engagement.</p>' + (posts.length ? '<div class="posts">' + posts.map(function (q) {
+    h += '<div class="card"><h3>Top posts</h3><p class="hint">Ranked by engagement, ' + rangeLabelShort() + '.</p>' + (posts.length ? '<div class="posts">' + posts.map(function (q) {
       return '<a class="pcard" href="' + esc(q.url || "#") + '" target="_blank" rel="noopener">' +
         '<div class="th" style="' + (q.thumb ? "background-image:url('" + esc(q.thumb) + "')" : "") + '"></div><div class="bd"><div class="tt">' + esc(q.title || "(no caption)") + '</div>' +
-        '<div class="st">' + (q.views != null ? '<span>▶ ' + fmt(q.views) + '</span>' : '') + '<span>♥ ' + fmt(q.likes) + '</span><span>💬 ' + fmt(q.comments) + '</span></div></div></a>';
-    }).join("") + '</div>' : '<div class="empty">No posts found.</div>') + '</div>';
+        '<div class="st">' + (q.views != null ? '<span>\u25B6 ' + fmt(q.views) + '</span>' : '') + '<span>\u2665 ' + fmt(q.likes) + '</span><span>\uD83D\uDCAC ' + fmt(q.comments) + '</span></div></div></a>';
+    }).join("") + '</div>' : '<div class="empty">No posts in this date range.</div>') + '</div>';
     return h;
   }
 
@@ -440,12 +534,36 @@
   /* ---------- render + events ---------- */
   function render() {
     renderTabs();
-    if (state.tab === "overview") $view.innerHTML = overview();
+    if (state.tab === "overview") $view.innerHTML = rangeBar() + overview();
     else if (state.tab === "messages") $view.innerHTML = messagesView();
-    else if (BY_ID[state.tab]) $view.innerHTML = platformView(state.tab);
-    else { state.tab = "overview"; $view.innerHTML = overview(); }
+    else if (BY_ID[state.tab]) $view.innerHTML = rangeBar() + platformView(state.tab);
+    else { state.tab = "overview"; $view.innerHTML = rangeBar() + overview(); }
+  }
+  function loadIgViews() {
+    var r = getRange(), key = rangeKey();
+    if (!state.data.instagram || state.data.instagram.state === "not_connected" || state.data.instagram.state === "error") return;
+    if (state.igViews && state.igViews.key === key) return;
+    state.igViews = { key: key, value: null, clamped: false, loading: true };
+    fetch("/api/insights/instagram/views?start=" + Math.floor(r.start / 1000) + "&end=" + Math.floor(r.end / 1000))
+      .then(function (x) { return x.json(); }).then(function (j) {
+        if (!state.igViews || state.igViews.key !== key) return;
+        state.igViews = { key: key, value: j.views, clamped: !!j.clamped };
+        if (state.tab !== "messages") render();
+      }).catch(function () {});
   }
   $view.addEventListener("click", function (e) {
+    var rg = e.target.closest("[data-range]");
+    if (rg) {
+      var pr = rg.dataset.range;
+      if (pr === "custom") { var cur = getRange(); state.range = { preset: "custom", start: cur.start, end: cur.end }; }
+      else state.range = { preset: pr };
+      persist(); render(); if (pr !== "custom") loadIgViews(); return;
+    }
+    if (e.target.closest("#rangeApply")) {
+      var f = Date.parse(document.getElementById("rangeFrom").value), t = Date.parse(document.getElementById("rangeTo").value);
+      if (!f || !t || t <= f) { var er = document.getElementById("rangeErr"); er.style.display = "block"; return; }
+      state.range = { preset: "custom", start: f, end: t }; persist(); render(); loadIgViews(); return;
+    }
     var c = e.target.closest("[data-chip]"), m = e.target.closest("[data-mode]");
     if (c) {
       var id = c.dataset.chip;
@@ -463,6 +581,7 @@
     }).then(function (j) {
       j.platforms.forEach(function (p) { state.data[p.platform] = p; });
       state.history = j.history || {};
+      loadIgViews();
       document.getElementById("updated").textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       render();
     }).catch(function (e) {

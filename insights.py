@@ -30,7 +30,7 @@ LABELS = {
     "tiktok": "TikTok", "x": "X", "facebook": "Facebook",
 }
 ORDER = ["instagram", "threads", "youtube", "tiktok", "x", "facebook"]
-_TTL = 300
+_TTL = 600
 _CACHE = {}
 _LOCK = threading.Lock()
 
@@ -47,6 +47,23 @@ def _empty(platform, state, note=None, account=None):
 def _get(url, **kw):
     kw.setdefault("timeout", 20)
     return requests.get(url, **kw)
+
+
+def _graph_pages(url, params, max_pages=14):
+    """Follows Graph-style `paging.next` links so the dashboard can see a
+    whole post history (for the date-range picker), not just the latest page.
+    Returns (items, last_response)."""
+    items, r, pages = [], _get(url, params=params), 0
+    while True:
+        if r.status_code != 200:
+            return items, r
+        j = r.json()
+        items += j.get("data", [])
+        pages += 1
+        nxt = (j.get("paging") or {}).get("next")
+        if not nxt or pages >= max_pages:
+            return items, r
+        r = _get(nxt)
 
 
 def _sum(posts, key):
@@ -81,18 +98,17 @@ def _instagram():
     if r.status_code != 200:
         return _empty("instagram", "error", r.text[:300])
     me = r.json()
-    r = _get(f"{m.GRAPH_BASE}/me/media", params={
+    items, r = _graph_pages(f"{m.GRAPH_BASE}/me/media", {
         "fields": "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count",
         "limit": 50, "access_token": tok})
     posts = []
-    if r.status_code == 200:
-        for p in r.json().get("data", []):
-            posts.append({
-                "id": p["id"], "title": (p.get("caption") or "")[:140], "url": p.get("permalink"),
-                "thumb": p.get("thumbnail_url") or p.get("media_url"), "ts": p.get("timestamp"),
-                "views": None, "likes": p.get("like_count"), "comments": p.get("comments_count"),
-                "shares": None, "type": p.get("media_type"),
-            })
+    for p in items:
+        posts.append({
+            "id": p["id"], "title": (p.get("caption") or "")[:140], "url": p.get("permalink"),
+            "thumb": p.get("thumbnail_url") or p.get("media_url"), "ts": p.get("timestamp"),
+            "views": None, "likes": p.get("like_count"), "comments": p.get("comments_count"),
+            "shares": None, "type": p.get("media_type"),
+        })
     views = None
     try:
         views = m.account_insights(30).get("views")
@@ -114,15 +130,15 @@ def _threads():
     if not c:
         return _empty("threads", "not_connected", "Connect Threads in the Video Editor to see stats.")
     tok = c["access_token"]
-    r = _get(f"{m.GRAPH_BASE}/me/threads", params={
+    items, r = _graph_pages(f"{m.GRAPH_BASE}/me/threads", {
         "fields": "id,text,permalink,timestamp,media_type,media_url,thumbnail_url", "limit": 50, "access_token": tok})
-    if r.status_code != 200:
+    if r.status_code != 200 and not items:
         return _empty("threads", "error", r.text[:300])
     posts = [{
         "id": p["id"], "title": (p.get("text") or "")[:140], "url": p.get("permalink"),
         "thumb": p.get("thumbnail_url") or p.get("media_url"), "ts": p.get("timestamp"),
         "views": None, "likes": None, "comments": None, "shares": None,
-    } for p in r.json().get("data", [])]
+    } for p in items]
     out = _empty("threads", "limited", "Views, likes and followers need the Threads insights permission (reconnect later to grant it).",
                  "@" + (c.get("extra", {}).get("username") or ""))
     out["totals"]["posts"] = len(posts)
@@ -150,22 +166,32 @@ def _youtube():
     uploads = ch.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads")
     posts = []
     if uploads:
-        pl = _get("https://www.googleapis.com/youtube/v3/playlistItems",
-                  params={"part": "contentDetails", "playlistId": uploads, "maxResults": 50}, headers=h)
-        ids = [i["contentDetails"]["videoId"] for i in pl.json().get("items", [])] if pl.status_code == 200 else []
-        if ids:
+        ids, token = [], None
+        for _ in range(14):
+            params = {"part": "contentDetails", "playlistId": uploads, "maxResults": 50}
+            if token:
+                params["pageToken"] = token
+            pl = _get("https://www.googleapis.com/youtube/v3/playlistItems", params=params, headers=h)
+            if pl.status_code != 200:
+                break
+            j = pl.json()
+            ids += [i["contentDetails"]["videoId"] for i in j.get("items", [])]
+            token = j.get("nextPageToken")
+            if not token:
+                break
+        for i in range(0, len(ids), 50):
             vr = _get("https://www.googleapis.com/youtube/v3/videos",
-                      params={"part": "snippet,statistics", "id": ",".join(ids)}, headers=h)
+                      params={"part": "snippet,statistics", "id": ",".join(ids[i:i + 50])}, headers=h)
             for v in (vr.json().get("items", []) if vr.status_code == 200 else []):
-                s = v.get("statistics", {})
+                s_ = v.get("statistics", {})
                 th = v["snippet"].get("thumbnails", {})
                 posts.append({
                     "id": v["id"], "title": v["snippet"].get("title", ""),
                     "url": f"https://www.youtube.com/watch?v={v['id']}",
                     "thumb": (th.get("medium") or th.get("default") or {}).get("url"),
                     "ts": v["snippet"].get("publishedAt"),
-                    "views": int(s.get("viewCount", 0)), "likes": int(s.get("likeCount", 0)),
-                    "comments": int(s.get("commentCount", 0)), "shares": None,
+                    "views": int(s_.get("viewCount", 0)), "likes": int(s_.get("likeCount", 0)),
+                    "comments": int(s_.get("commentCount", 0)), "shares": None,
                 })
     out = _empty("youtube", "ok", None, ch["snippet"].get("title"))
     out["totals"].update(
@@ -204,11 +230,18 @@ def _x():
     me = r.json().get("data", {})
     pm = me.get("public_metrics", {})
     posts = []
-    tr = _get(f"https://api.x.com/2/users/{uid or me.get('id')}/tweets",
-              params={"max_results": 50, "tweet.fields": "public_metrics,created_at"}, headers=h)
-    note = None
-    if tr.status_code == 200:
-        for t in tr.json().get("data", []):
+    note, token = None, None
+    for _ in range(5):
+        params = {"max_results": 100, "tweet.fields": "public_metrics,created_at"}
+        if token:
+            params["pagination_token"] = token
+        tr = _get(f"https://api.x.com/2/users/{uid or me.get('id')}/tweets", params=params, headers=h)
+        if tr.status_code != 200:
+            if not posts:
+                note = "Post-level stats weren't available from X with the current plan."
+            break
+        j = tr.json()
+        for t in j.get("data", []):
             p = t.get("public_metrics", {})
             posts.append({
                 "id": t["id"], "title": t.get("text", "")[:140],
@@ -217,8 +250,9 @@ def _x():
                 "likes": p.get("like_count"), "comments": p.get("reply_count"),
                 "shares": (p.get("retweet_count") or 0) + (p.get("quote_count") or 0),
             })
-    else:
-        note = "Post-level stats weren't available from X with the current plan."
+        token = (j.get("meta") or {}).get("next_token")
+        if not token:
+            break
     out = _empty("x", "ok" if not note else "limited", note, "@" + (me.get("username") or ""))
     out["totals"].update(followers=pm.get("followers_count"), posts=pm.get("tweet_count"),
                          views=_sum(posts, "views"), likes=_sum(posts, "likes"),
@@ -240,19 +274,18 @@ def _facebook():
         return _empty("facebook", "error", r.text[:300])
     pg = r.json()
     posts = []
-    pr = _get(f"{m.GRAPH_BASE}/{pid}/posts", params={
+    items, pr = _graph_pages(f"{m.GRAPH_BASE}/{pid}/posts", {
         "fields": "id,message,permalink_url,created_time,full_picture,shares,"
                   "reactions.summary(true).limit(0),comments.summary(true).limit(0)",
         "limit": 50, "access_token": tok})
-    if pr.status_code == 200:
-        for p in pr.json().get("data", []):
-            posts.append({
-                "id": p["id"], "title": (p.get("message") or "")[:140], "url": p.get("permalink_url"),
-                "thumb": p.get("full_picture"), "ts": p.get("created_time"), "views": None,
-                "likes": p.get("reactions", {}).get("summary", {}).get("total_count"),
-                "comments": p.get("comments", {}).get("summary", {}).get("total_count"),
-                "shares": (p.get("shares") or {}).get("count", 0),
-            })
+    for p in items:
+        posts.append({
+            "id": p["id"], "title": (p.get("message") or "")[:140], "url": p.get("permalink_url"),
+            "thumb": p.get("full_picture"), "ts": p.get("created_time"), "views": None,
+            "likes": p.get("reactions", {}).get("summary", {}).get("total_count"),
+            "comments": p.get("comments", {}).get("summary", {}).get("total_count"),
+            "shares": (p.get("shares") or {}).get("count", 0),
+        })
     out = _empty("facebook", "limited", "Reel views and reach need the Page insights permission (reconnect later to grant it).",
                  pg.get("name"))
     out["totals"].update(followers=pg.get("followers_count", pg.get("fan_count")), posts=len(posts),
@@ -335,3 +368,23 @@ def history(days: int = 90) -> dict:
                 out.setdefault(r["platform"], []).append(
                     {"day": r["day"].isoformat(), "followers": r["followers"], "views": r["views"]})
     return out
+
+
+def range_views(platform: str, start: int, end: int) -> dict:
+    """Account-level views for an arbitrary window, for platforms that report
+    them (Instagram). Others return views=None and the page falls back to
+    summing per-post views. Windows are fetched in <=29-day chunks and capped
+    at the most recent ~13 months."""
+    if platform != "instagram":
+        return {"views": None}
+    from platforms import instagram as m
+    cap = 13 * 29 * 86400
+    clamped = end - start > cap
+    start = max(start, end - cap)
+    total, cur = 0, start
+    while cur < end:
+        nxt = min(cur + 29 * 86400, end)
+        v = m.views_between(cur, nxt)
+        total += v or 0
+        cur = nxt
+    return {"views": total, "clamped": clamped}

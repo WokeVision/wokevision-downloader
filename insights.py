@@ -139,9 +139,31 @@ def _threads():
         "thumb": p.get("thumbnail_url") or p.get("media_url"), "ts": p.get("timestamp"),
         "views": None, "likes": None, "comments": None, "shares": None,
     } for p in items]
-    out = _empty("threads", "limited", "Views, likes and followers need the Threads insights permission (reconnect later to grant it).",
-                 "@" + (c.get("extra", {}).get("username") or ""))
-    out["totals"]["posts"] = len(posts)
+    out = _empty("threads", "ok", None, "@" + (c.get("extra", {}).get("username") or ""))
+    # Per-post numbers (needs threads_manage_insights); newest 40 only to keep it quick.
+    got_any = False
+    for p in posts[:40]:
+        ir = _get(f"{m.GRAPH_BASE}/{p['id']}/insights", params={"metric": "views,likes,replies,reposts,quotes", "access_token": tok})
+        if ir.status_code != 200:
+            continue
+        vals = {d["name"]: (d.get("values") or [{}])[0].get("value") for d in ir.json().get("data", [])}
+        p.update(views=vals.get("views"), likes=vals.get("likes"), comments=vals.get("replies"),
+                 shares=(vals.get("reposts") or 0) + (vals.get("quotes") or 0))
+        got_any = True
+    followers = None
+    ur = _get(f"{m.GRAPH_BASE}/me/threads_insights", params={"metric": "followers_count", "access_token": tok})
+    if ur.status_code == 200:
+        for d in ur.json().get("data", []):
+            if d.get("name") == "followers_count":
+                followers = (d.get("total_value") or {}).get("value")
+                got_any = True
+    if not got_any:
+        out["state"] = "limited"
+        out["note"] = "Views, likes and followers need the Threads insights permission (reconnect Threads to grant it)."
+    elif len(posts) > 40:
+        out["note"] = "Per-post numbers cover your newest 40 posts."
+    out["totals"].update(posts=len(posts), followers=followers, views=_sum(posts, "views"),
+                         likes=_sum(posts, "likes"), comments=_sum(posts, "comments"), shares=_sum(posts, "shares"))
     out["posts"] = posts
     return out
 
@@ -286,9 +308,20 @@ def _facebook():
             "comments": p.get("comments", {}).get("summary", {}).get("total_count"),
             "shares": (p.get("shares") or {}).get("count", 0),
         })
-    out = _empty("facebook", "limited", "Reel views and reach need the Page insights permission (reconnect later to grant it).",
-                 pg.get("name"))
-    out["totals"].update(followers=pg.get("followers_count", pg.get("fan_count")), posts=len(posts),
+    out = _empty("facebook", "ok", None, pg.get("name"))
+    # Page views over the last 28 days (needs read_insights).
+    views, now = None, int(time.time())
+    vr = _get(f"{m.GRAPH_BASE}/{pid}/insights", params={
+        "metric": "page_media_view", "period": "day", "since": now - 28 * 86400, "until": now, "access_token": tok})
+    if vr.status_code == 200:
+        vals = [v.get("value") or 0 for d in vr.json().get("data", []) for v in d.get("values", [])]
+        views = sum(vals) if vals else None
+    if views is None:
+        out["state"] = "limited"
+        out["note"] = "Views need the Page insights permission (reconnect Facebook to grant it)."
+    else:
+        out["note"] = "Views cover the last 28 days."
+    out["totals"].update(followers=pg.get("followers_count", pg.get("fan_count")), posts=len(posts), views=views,
                          likes=_sum(posts, "likes"), comments=_sum(posts, "comments"), shares=_sum(posts, "shares"))
     out["posts"] = posts
     return out

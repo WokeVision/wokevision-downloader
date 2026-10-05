@@ -35,7 +35,7 @@ LONG_LIVED_EXCHANGE_URL = "https://graph.threads.net/access_token"
 REFRESH_URL = "https://graph.threads.net/refresh_access_token"
 GRAPH_BASE = "https://graph.threads.net/v1.0"
 
-SCOPES = "threads_basic,threads_content_publish"
+SCOPES = "threads_basic,threads_content_publish,threads_manage_insights"
 
 PLATFORM = "threads"
 

@@ -286,11 +286,15 @@ def _assemble_posting_caption(body: str, hashtags: list) -> str:
     hashtags -- regardless of what the model actually returned -- so the
     same caption is always safe to post unedited on every platform."""
     body = (body or "").strip()
-    tags = [h.strip() for h in (hashtags or []) if h and h.strip()][:POSTING_HASHTAG_COUNT]
+    tags = [h.strip() for h in (hashtags or []) if h and h.strip()]
+    if tags:
+        mixed = enforce_tag_mix(" ".join(tags), body, POSTING_HASHTAG_COUNT)
+        tags = _HASHTAG_RE.findall(mixed)
+    tags = tags[:POSTING_HASHTAG_COUNT]
     # Pad with generic fallback tags (never a duplicate) until there are
     # exactly POSTING_HASHTAG_COUNT, regardless of how many the model
     # returned -- a single fallback tag used to only ever fill one slot.
-    fallback_pool = ["#WokeVision", "#Politics", "#News", "#Viral", "#Trending", "#FYP"]
+    fallback_pool = ["#WokeVision", "#Politics", "#News", "#Viral", "#Trending"]
     fallback_iter = iter(t for t in fallback_pool if t not in tags)
     while len(tags) < POSTING_HASHTAG_COUNT:
         try:
@@ -308,6 +312,51 @@ def _assemble_posting_caption(body: str, hashtags: list) -> str:
         return tag_str[:POSTING_CAPTION_MAX_CHARS]
     body = _trim_to_chars(body, budget)
     return f"{body}{separator}{tag_str}".strip()
+
+
+# Popular reach tags, grouped by theme, used both in the prompt and to
+# enforce the mix in code (the model likes to invent #RoastBattle-style tags).
+POOL_HUMOUR = ["#funny", "#funnymeme", "#lol", "#lolmeme", "#memesdaily", "#memepage", "#comedy", "#viral", "#viralvideo"]
+POOL_POLITICS = ["#politics", "#USA", "#drama", "#beef", "#crazy", "#viral"]
+POOL_CULTURE = ["#woke", "#antiwoke", "#wokememes", "#satire", "#darkhumour", "#clownworld", "#memepage"]
+_POOL_ALL = {t.lower() for t in POOL_HUMOUR + POOL_POLITICS + POOL_CULTURE + ["#lgbtmemes", "#transmemes", "#wokeculture", "#news"]}
+_POLITICS_WORDS = re.compile(r"politic|trump|biden|harris|election|vote|congress|senate|government|police|cop\b|ice\b|immigra|border|president|democrat|republican|court|law\b|military|war\b|tax", re.I)
+_CULTURE_WORDS = re.compile(r"woke|trans\b|lgbt|dei\b|feminis|activist|liberal|gender|onlyfans|degenera|pronoun|leftist|protest|brainwash", re.I)
+
+
+def enforce_tag_mix(text: str, theme_text: str = "", total: int = 5) -> str:
+    """Rewrites the trailing hashtag set of `text` so it has #WokeVision plus at
+    least two popular pool tags (themed to the clip), keeping the model's own
+    clip-specific tags, at most `total` tags. Hashtags are moved to the end."""
+    if not text:
+        return text
+    found, seen = [], set()
+    for t in _HASHTAG_RE.findall(text):
+        if t.lower() not in seen:
+            seen.add(t.lower()); found.append(t)
+    body = re.sub(r"[ \t]{2,}", " ", _HASHTAG_RE.sub("", text)).strip()
+    brand = "#WokeVision"
+    tags = [t for t in found if t.lower() != brand.lower()]
+    probe = f"{theme_text} {body}"
+    theme = []
+    if _CULTURE_WORDS.search(probe):
+        theme += POOL_CULTURE
+    if _POLITICS_WORDS.search(probe):
+        theme += POOL_POLITICS
+    theme += POOL_HUMOUR
+    pool_have = [t for t in tags if t.lower() in _POOL_ALL]
+    specific = [t for t in tags if t.lower() not in _POOL_ALL]
+    need = max(0, 2 - len(pool_have))
+    adds = []
+    for t in theme:
+        if len(adds) >= need:
+            break
+        if t.lower() not in seen and t.lower() not in {a.lower() for a in adds}:
+            adds.append(t)
+    keep_specific = max(0, total - 1 - len(pool_have) - len(adds))
+    final = [brand] + specific[:keep_specific] + pool_have + adds
+    final = final[:total]
+    return f"{body}\n\n{' '.join(final)}" if body else " ".join(final)
 
 
 def credit_handle(meta: dict) -> str:
@@ -702,6 +751,9 @@ def generate_platform_posts(transcript: str, meta: dict, on_screen_caption: str 
         except Exception as e:
             print(f"PLATFORM POSTS GEN FAILED: {e}", flush=True)
             generated = fallback
+    for pid, key in (("instagram", "caption"), ("tiktok", "caption")):
+        if isinstance(generated.get(pid), dict) and generated[pid].get(key):
+            generated[pid][key] = enforce_tag_mix(generated[pid][key], f"{(meta or {}).get('title','')} {master_caption}")
     handle = credit_handle(meta)
     if handle:
         for pid, key in (("instagram", "caption"), ("tiktok", "caption"), ("facebook", "description"), ("youtube", "description")):

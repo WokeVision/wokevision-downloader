@@ -198,7 +198,7 @@ def build_ass(cues, play_w, play_h, margin_v, font_size=52, font_name="Poppins")
         txt = (c.get("text") or "").strip()
         if not txt or c["end"] <= c["start"]:
             continue
-        lines.append(f"Dialogue: 0,{_ass_time(c['start'])},{_ass_time(c['end'])},Default,,0,0,0,,{_ass_escape(txt)}")
+        lines.append(f"Dialogue: 0,{_ass_time(c['start'])},{_ass_time(c['end'])},Default,,0,0,0,,{_ass_escape(txt.upper())}")
     return head + "\n".join(lines) + "\n"
 
 

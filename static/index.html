@@ -198,6 +198,10 @@
   input[type="text"]:focus { border-color: var(--accent); }
   input[type="text"]::placeholder { color: var(--text-faint); }
 
+  .fileBtn { display: block; width: 100%; box-sizing: border-box; text-align: center; padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border); background: rgba(255,255,255,0.06); color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; margin-bottom: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fileBtn:active { background: rgba(255,255,255,0.1); }
+  .fileBtn.hasFile { border-color: var(--accent); }
+  .fileBtn input[type="file"] { display: none; }
   .fileDrop {
     width: 100%;
     border: 1.5px dashed var(--border);
@@ -577,10 +581,9 @@
   <div class="card" id="sourceCard">
     <label class="fieldLabel" for="angleBox">What's this clip about? <span style="opacity:.6;font-weight:400">(optional)</span></label>
     <textarea id="angleBox" rows="2" maxlength="1500" placeholder="e.g. Dark humour animation about the Lindsay Clancy case &mdash; don't take it seriously. Or: mock the OnlyFans 'empowerment' angle."></textarea>
-    <p class="note" style="margin-top:6px">Tells the caption writer the context and tone it can't hear from the audio. Used for every caption it writes for this video &mdash; edit it any time, then hit Change caption / Rewrite.</p>
     <div class="segmented">
       <button type="button" class="segBtn active" data-panel="linkPanel">Paste a link</button>
-      <button type="button" class="segBtn" data-panel="uploadPanel">Upload a file</button>
+      <button type="button" class="segBtn" data-panel="uploadPanel">Video file</button>
     </div>
 
     <div id="linkPanel" class="panel active">
@@ -589,23 +592,16 @@
         <input type="text" id="url" placeholder="https://..." required />
         <button type="submit" id="submitBtn" class="primary">Process video</button>
       </form>
-      <p class="note">YouTube, TikTok, Instagram, X or Threads.</p>
     </div>
 
     <div id="uploadPanel" class="panel">
       <form id="uploadForm">
-        <label class="fieldLabel" for="fileInput">Video file</label>
-        <label class="fileDrop" id="fileDropLabel">
-          <span class="icon">⬆️</span>
-          <span id="fileDropText">Tap to choose a video</span>
-          <input type="file" id="fileInput" accept="video/*" required />
+        <label class="fileBtn" id="fileDropLabel">
+          <span id="fileDropText">Upload a file</span>
+          <input type="file" id="fileInput" accept="video/*" />
         </label>
-        <button type="submit" id="uploadBtn" class="primary">Upload video file</button>
+        <button type="submit" id="uploadBtn" class="primary" disabled>Submit</button>
       </form>
-      <p class="note">
-        Use this if a link fails to download (most common with YouTube, when
-        it's blocking this server rather than anything wrong with the link).
-      </p>
     </div>
   </div>
 
@@ -615,7 +611,6 @@
       <span class="historyChevron" id="historyChevron">&#9656;</span>
     </div>
     <div id="historyBody" style="display:none;">
-      <p class="hint">Past edits -- tap one to bring back its video, captions, and which platforms it already went out to.</p>
       <div id="historyList"></div>
     </div>
   </div>
@@ -640,9 +635,6 @@
 
   <div class="card" id="platformsCard">
     <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Post to</h3>
-    <p class="hint" style="font-size:12px; color:var(--text-faint); margin:0 0 6px;">
-      Switch on the platforms this video should go out to, then Upload. Tap Connect/Reconnect to fix a dropped connection.
-    </p>
     <div id="platformList"></div>
 
     <div class="whenBox">
@@ -672,7 +664,6 @@
     <div class="captionGrid resultPart" id="captionGrid">
       <div class="card captionCard">
         <h3>On-screen caption</h3>
-        <p class="hint">The hook overlaid on the video itself, in the white space above it. Edit the text directly, then tap Save caption.</p>
         <textarea id="onScreenBox"></textarea>
         <div class="actionRow">
           <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
@@ -683,7 +674,6 @@
 
       <div class="card captionCard">
         <h3>Core caption</h3>
-        <p class="hint">The base message (short enough to work anywhere). Each platform's own version below is written from it &mdash; edit those to change what actually gets posted.</p>
         <textarea id="captionBox"></textarea>
         <div class="charCount" id="captionCharCount"></div>
         <div class="actionRow">
@@ -696,7 +686,6 @@
 
     <div class="card captionCard resultPart" id="platformPostsCard">
       <h3>Platform versions</h3>
-      <p class="hint">Written natively for each platform's limits and what tends to get reach there. Everything is editable and saves automatically &mdash; this is exactly what gets posted. A green dot means that platform is switched on.</p>
       <div class="platTabs" id="platTabs"></div>
       <div id="platPanels"></div>
       <div class="actionRow">
@@ -745,8 +734,9 @@
       fileDropText.textContent = fileInput.files[0].name;
     } else {
       fileDropLabel.classList.remove("hasFile");
-      fileDropText.textContent = "Tap to choose a video";
+      fileDropText.textContent = "Upload a file";
     }
+    document.getElementById("uploadBtn").disabled = !fileInput.files[0];
   });
 
   function formatEta(seconds) {
@@ -1006,7 +996,7 @@
     } catch (err) {
       showError(err.message);
     } finally {
-      uploadBtn.disabled = false;
+      uploadBtn.disabled = !fileInput.files[0];
     }
   });
 
@@ -1027,7 +1017,7 @@
     ],
     threads: [
       { k: "text", type: "area", label: "Post text", max: 500, tags: 0,
-        hint: "Conversational, ending on a question to start replies. No hashtags here — Threads uses a single topic tag instead (below)." },
+        hint: "Conversational, ending on a question to start replies. End with 5 hashtags; the single topic tag below is what Threads actually indexes." },
       { k: "topic_tag", type: "line", label: "Topic tag", max: 50,
         hint: "One tag only. No #, “.” or “&”. People browsing that topic can find the post." },
     ],
@@ -1098,7 +1088,7 @@
         el.addEventListener("change", () => { updateCounts(p.id); scheduleSave(); });
         panel.appendChild(el);
         if (f.fold) { const fd = document.createElement("div"); fd.className = "fold"; fd.id = id + "_fold"; panel.appendChild(fd); }
-        if (f.hint) { const h = document.createElement("div"); h.className = "fieldHint"; h.textContent = f.hint; panel.appendChild(h); }
+        
       });
       const row = document.createElement("div");
       row.className = "actionRow";

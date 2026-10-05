@@ -605,7 +605,7 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     th = base["threads"]["text"] if th is None else str(th)
     tt = g("threads", "topic_tag")
     tt = base["threads"]["topic_tag"] if tt is None else str(tt)
-    out["threads"] = {"text": _trim_to_chars(_strip_hashtags(th), LIM["threads_text"]), "topic_tag": _clean_topic_tag(tt)}
+    out["threads"] = {"text": _trim_to_chars(_limit_hashtags(th, 5).strip(), LIM["threads_text"]), "topic_tag": _clean_topic_tag(tt)}
 
     yt_title = g("youtube", "title")
     yt_title = base["youtube"]["title"] if yt_title is None else str(yt_title)
@@ -650,7 +650,7 @@ def default_platform_posts(master: str) -> dict:
     tags5 = " ".join(tags[:5])
     return {
         "instagram": {"caption": (body + ("\n\n" + tags5 if tags5 else "")).strip()},
-        "threads": {"text": body, "topic_tag": tag_words[0] if tag_words else "WokeVision"},
+        "threads": {"text": (body + ("\n\n" + tags5 if tags5 else "")).strip(), "topic_tag": tag_words[0] if tag_words else "WokeVision"},
         "youtube": {
             "title": first_line[:100],
             "description": (body + "\n\n" + " ".join((tags[:4] + ["#Shorts"])[:5])).strip(),
@@ -685,8 +685,9 @@ tags and 2-3 popular pool tags (#WokeVision is optional, not required).
 
 threads -- "text" [max 500 chars] and "topic_tag" [1-50 chars, no "." or "&", \
 no leading #]. Conversational, like talking to followers, ends with a \
-genuine question to start replies (Threads rewards replies). NO #hashtags in \
-the text. "topic_tag" is the single most specific topic people browse \
+genuine question to start replies (Threads rewards replies), then EXACTLY 5 \
+hashtags on their own line at the very end (same mix as Instagram: clip-specific \
+plus popular pool tags; keep the whole text under 500 chars). "topic_tag" is the single most specific topic people browse \
 (e.g. "Politics", "Free Speech", "Policing") -- one tag only.
 
 youtube -- "title" [max 100 chars, no hashtags]: front-load the keyword and \
@@ -755,7 +756,7 @@ def generate_platform_posts(transcript: str, meta: dict, on_screen_caption: str 
         except Exception as e:
             print(f"PLATFORM POSTS GEN FAILED: {e}", flush=True)
             generated = fallback
-    for pid, key in (("instagram", "caption"), ("tiktok", "caption")):
+    for pid, key in (("instagram", "caption"), ("tiktok", "caption"), ("threads", "text")):
         if isinstance(generated.get(pid), dict) and generated[pid].get(key):
             generated[pid][key] = enforce_tag_mix(generated[pid][key], f"{(meta or {}).get('title','')} {master_caption}")
     handle = credit_handle(meta)

@@ -88,6 +88,13 @@ def init_db():
             # here -- it is read from the history row when the post fires, so
             # edits made after scheduling are what actually goes out.
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS account_profiles (
+                    platform TEXT PRIMARY KEY,
+                    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS scheduled_posts (
                     id UUID PRIMARY KEY,
                     history_id UUID NOT NULL,
@@ -478,3 +485,20 @@ def sched_finish(sid: str, status: str, result: dict, retry_in_minutes: int = No
             else:
                 cur.execute("UPDATE scheduled_posts SET status = %s, result = %s WHERE id = %s",
                             (status, json.dumps(result or {}), sid))
+
+
+# --- Account profile drafts (bio, display name, link -- per platform) -------
+
+def profiles_get() -> dict:
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT platform, data, updated_at FROM account_profiles")
+            return {r["platform"]: {**(r["data"] or {}), "updated_at": r["updated_at"].isoformat()} for r in cur.fetchall()}
+
+
+def profile_save(platform: str, data: dict):
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO account_profiles (platform, data, updated_at) VALUES (%s, %s, now())
+                           ON CONFLICT (platform) DO UPDATE SET data = EXCLUDED.data, updated_at = now()""",
+                        (platform, psycopg2.extras.Json(data)))

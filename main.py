@@ -20,6 +20,7 @@ import auth
 import storage
 import insights
 import scheduler
+import accounts
 from platforms import instagram, threads, youtube, x, tiktok, facebook
 
 app = FastAPI()
@@ -1431,3 +1432,47 @@ def cron_tick(request: Request, key: str = ""):
 @app.get("/schedule")
 def schedule_page():
     return FileResponse("static/schedule.html")
+
+
+# --- Accounts tab: live bios + saved drafts ---------------------------------
+
+class ProfileDraft(BaseModel):
+    name: str = ""
+    bio: str = ""
+    link: str = ""
+    notes: str = ""
+
+
+@app.get("/accounts")
+def accounts_page():
+    return FileResponse("static/accounts.html")
+
+
+@app.get("/api/accounts")
+def api_accounts():
+    from concurrent.futures import ThreadPoolExecutor
+    drafts = db.profiles_get()
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        lives = list(ex.map(accounts.live, accounts.ORDER))
+    out = []
+    for pid, lv in zip(accounts.ORDER, lives):
+        out.append({"platform": pid, "label": accounts.LABELS[pid], "live": lv, "draft": drafts.get(pid) or {},
+                    "limit": accounts.BIO_LIMITS[pid], "edit_url": accounts.EDIT_LINKS[pid],
+                    "can_push": pid == "facebook"})
+    return {"accounts": out}
+
+
+@app.put("/api/accounts/{platform}")
+def api_account_save(platform: str, body: ProfileDraft):
+    if platform not in accounts.ORDER:
+        raise HTTPException(status_code=404, detail="Unknown platform.")
+    db.profile_save(platform, {"name": body.name[:200], "bio": body.bio[:2000], "link": body.link[:500], "notes": body.notes[:2000]})
+    return {"ok": True}
+
+
+@app.post("/api/accounts/facebook/push")
+def api_account_push_facebook(body: ProfileDraft):
+    try:
+        return accounts.push_facebook(about=body.bio[:255], website=body.link or None)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

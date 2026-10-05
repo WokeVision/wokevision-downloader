@@ -57,7 +57,7 @@
   .badge.err { background: rgba(255,43,60,0.16); color: #FF7A85; }
   .rowActions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
   .rowActions .btn2 { padding: 7px 12px; font-size: 12.5px; }
-  .errtxt { color: #FFB4B4; font-size: 12.5px; flex-basis: 100%; line-height: 1.4; }
+  .errtxt { color: #FFB4B4; font-size: 12.5px; flex-basis: 100%; line-height: 1.4; min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
   .empty { text-align: center; padding: 56px 16px; color: var(--text-faint); font-size: 14.5px; line-height: 1.6; }
   .allBar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 0 2px; }
   .allBar input { background: rgba(0,0,0,0.35); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 9px 10px; font-size: 14px; color-scheme: dark; }
@@ -104,6 +104,12 @@
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || "Something went wrong."); return j; }); });
   }
 
+  function tidyErr(e) {
+    e = String(e || "");
+    var m = e.match(/"message"\s*:\s*"([^"]+)"/);
+    if (m) { var head = e.split("{")[0].trim().replace(/:$/, ""); return (head ? head + " — " : "") + m[1]; }
+    return e.length > 260 ? e.slice(0, 260) + "…" : e;
+  }
   function statusBadge(s) {
     if (s.status === "scheduled") return '<span class="badge sched">Scheduled</span>';
     if (s.status === "publishing") return '<span class="badge pub">Posting now…</span>';
@@ -122,7 +128,7 @@
     if (s.status === "done" && s.post_url) h += '<a class="btn2" href="' + esc(s.post_url) + '" target="_blank" rel="noopener">View post</a>';
     if (editable) h += '<button class="btn2" data-now="' + s.id + '">' + (s.status === "scheduled" ? "Post now" : "Retry now") + '</button><button class="btn2 danger" data-del="' + s.id + '">Remove</button>';
     h += '</span>';
-    if (s.error) h += '<div class="errtxt">' + esc(s.error) + '</div>';
+    if (s.error) h += '<div class="errtxt">' + esc(tidyErr(s.error)) + '</div>';
     return h + '</div>';
   }
 

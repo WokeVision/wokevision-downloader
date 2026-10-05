@@ -58,27 +58,17 @@ MIN_CHUNK_SIZE = 5 * 1024 * 1024
 
 
 def _plan_chunks(total_bytes: int) -> list:
-    """Returns the byte size of each chunk to upload. TikTok requires every
-    chunk -- including the last -- to be at least 5MB, UNLESS the whole
-    video is a single chunk (video_size == chunk_size, total_chunk_count ==
-    1), which is also the only valid shape when the video itself is under
-    5MB. A flat `total_bytes // CHUNK_SIZE` split can leave a trailing
-    remainder under 5MB (e.g. a 20MB video split into 8+8+4), which TikTok
-    rejects as an invalid chunk size -- so instead of starting a new tiny
-    final chunk, fold any under-sized remainder into the previous chunk."""
-    if total_bytes <= CHUNK_SIZE:
+    """Returns the byte size of each chunk to upload. TikTok's rule:
+    total_chunk_count == floor(video_size / chunk_size), the final chunk
+    absorbing the remainder (up to 128MB). Any video up to 64MB therefore goes
+    up as ONE chunk (the only shape that's always valid); bigger ones use
+    fixed 32MB chunks with the remainder folded into the last."""
+    if total_bytes <= 64 * 1024 * 1024:
         return [total_bytes]
-    sizes = []
-    remaining = total_bytes
-    while remaining > CHUNK_SIZE:
-        if remaining - CHUNK_SIZE < MIN_CHUNK_SIZE:
-            sizes.append(remaining)
-            remaining = 0
-            break
-        sizes.append(CHUNK_SIZE)
-        remaining -= CHUNK_SIZE
-    if remaining > 0:
-        sizes.append(remaining)
+    big = 32 * 1024 * 1024
+    count = total_bytes // big
+    sizes = [big] * count
+    sizes[-1] += total_bytes - big * count
     return sizes
 
 

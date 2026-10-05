@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0A0A0C" />
 <link rel="icon" href="/static/assets/logo-mark.png" />
 <link rel="apple-touch-icon" href="/static/assets/logo-mark.png" />
-<title>Dashboard · WokeVision</title>
+<title>Analytics Hub · WokeVision</title>
 <link rel="stylesheet" href="/static/nav.css" />
 <style>
   :root {
@@ -159,6 +159,19 @@
   .kpi .sub2.up { color: #30D158; } .kpi .sub2.down { color: #FF453A; }
   .skeleton { height: 90px; border-radius: var(--radius-md); background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.09), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: sh 1.3s linear infinite; }
   @keyframes sh { to { background-position: -200% 0; } }
+  .secSeg { display: flex; width: 100%; max-width: 440px; margin: 4px 0 14px; }
+  .secSeg button { flex: 1; padding: 11px 12px; font-size: 14.5px; }
+  .cList { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 900px) { .cList { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 1400px) { .cList { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .cRow { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 12px; border-radius: var(--radius-md); background: var(--surface); border: 1px solid var(--border); text-decoration: none; color: inherit; }
+  .cRow .th { width: 64px; height: 88px; border-radius: 10px; background: rgba(255,255,255,0.06) center/cover; }
+  .cRow .tt { font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .cRow .meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-faint); margin-bottom: 4px; }
+  .cRow .st { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 7px; font-size: 12.5px; color: var(--text-dim); }
+  .cRow .st b { color: var(--text); font-weight: 650; }
+  .cSort { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .cSort select { background: rgba(0,0,0,0.35); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 9px 10px; font-size: 14px; font-family: inherit; color-scheme: dark; }
 </style>
 </head>
 <body>
@@ -167,12 +180,13 @@
 <div class="wrap">
   <div class="titleRow">
     <div>
-      <h1>Dashboard</h1>
+      <h1>Analytics Hub</h1>
       <div class="sub" id="updated">Loading…</div>
     </div>
     <button class="btn2" id="refreshBtn">Refresh</button>
   </div>
 
+  <div class="seg secSeg" id="secSeg"><button data-sec="account">Account metrics</button><button data-sec="content">Content metrics</button></div>
   <div class="tabs" id="tabs"></div>
   <div id="view"><div class="skeleton"></div></div>
 </div>
@@ -193,6 +207,7 @@
   var state = {
     data: {},            // platform id -> normalised stats
     history: {},         // platform id -> [{day, followers, views}]
+    sec: "account", sort: "engagement",
     tab: (location.hash || "#overview").slice(1),
     selected: PLATFORMS.map(function (p) { return p.id; }),
     mode: "compare",     // "compare" | "combined"
@@ -564,7 +579,40 @@
   }
 
   /* ---------- render + events ---------- */
+  function contentView() {
+    var ids = state.selected.filter(function (i) { return state.data[i] && connected(i); });
+    var h = '<div class="card"><div class="controls">' + chips() + '<div class="cSort"><label style="font-size:12px;color:var(--text-faint)">Sort by</label><select id="sortSel">' +
+      [["engagement", "Engagement"], ["views", "Views"], ["likes", "Likes"], ["comments", "Comments"], ["shares", "Shares"], ["date", "Newest"]].map(function (o) {
+        return '<option value="' + o[0] + '"' + (state.sort === o[0] ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") + '</select></div></div></div>';
+    if (!ids.length) return h + '<div class="card"><div class="empty">Select a connected platform above.</div></div>';
+    var all = [];
+    ids.forEach(function (id) { postsIn(id).forEach(function (q) { all.push({ id: id, q: q }); }); });
+    function eng(x) { return (x.q.likes || 0) + (x.q.comments || 0) + (x.q.shares || 0); }
+    var sorters = {
+      engagement: function (a, b) { return eng(b) - eng(a); },
+      views: function (a, b) { return (b.q.views || 0) - (a.q.views || 0); },
+      likes: function (a, b) { return (b.q.likes || 0) - (a.q.likes || 0); },
+      comments: function (a, b) { return (b.q.comments || 0) - (a.q.comments || 0); },
+      shares: function (a, b) { return (b.q.shares || 0) - (a.q.shares || 0); },
+      date: function (a, b) { return Date.parse(b.q.ts) - Date.parse(a.q.ts); }
+    };
+    all.sort(sorters[state.sort] || sorters.engagement);
+    var tot = function (k) { return sumNullable(all.map(function (x) { return x.q[k]; })); };
+    h += '<div class="kpis">' + kpiTile("Posts", all.length) + kpiTile("Views", tot("views")) + kpiTile("Likes", tot("likes")) + kpiTile("Comments", tot("comments")) + kpiTile("Shares", tot("shares")) +
+      kpiTile("Avg engagement / post", all.length ? Math.round(all.reduce(function (a, x) { return a + eng(x); }, 0) / all.length) : null) + '</div>';
+    if (!all.length) return h + '<div class="card"><div class="empty">No posts in this date range.</div></div>';
+    h += '<div class="card"><h3>Every post</h3><div class="cList">' + all.slice(0, 120).map(function (x) {
+      var q = x.q, p = BY_ID[x.id], d = q.ts ? new Date(q.ts).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+      return '<a class="cRow" href="' + esc(q.url || "#") + '" target="_blank" rel="noopener"><div class="th" style="' + (q.thumb ? "background-image:url('" + esc(q.thumb) + "')" : "") + '"></div><div style="min-width:0">' +
+        '<div class="meta"><i class="dot" style="background:' + p.color + '"></i>' + p.label + ' · ' + esc(d) + '</div><div class="tt">' + esc(q.title || "(no caption)") + '</div>' +
+        '<div class="st"><span>\u25B6 <b>' + fmt(q.views) + '</b></span><span>\u2665 <b>' + fmt(q.likes) + '</b></span><span>\uD83D\uDCAC <b>' + fmt(q.comments) + '</b></span><span>\u21AA <b>' + fmt(q.shares) + '</b></span></div></div></a>';
+    }).join("") + '</div></div>';
+    return h;
+  }
   function render() {
+    document.querySelectorAll("#secSeg button").forEach(function (b) { b.classList.toggle("active", b.dataset.sec === state.sec); });
+    if (state.sec === "content") { $tabs.style.display = "none"; $view.innerHTML = rangeBar() + contentView(); return; }
+    $tabs.style.display = "";
     renderTabs();
     if (state.tab === "overview") $view.innerHTML = rangeBar() + overview();
     else if (state.tab === "messages") $view.innerHTML = messagesView();
@@ -583,6 +631,12 @@
         if (state.tab !== "messages") render();
       }).catch(function () {});
   }
+  document.getElementById("secSeg").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-sec]"); if (!b) return;
+    state.sec = b.dataset.sec; try { localStorage.setItem("wvSec", state.sec); } catch (x) {} render();
+  });
+  $view.addEventListener("change", function (e) { if (e.target.id === "sortSel") { state.sort = e.target.value; render(); } });
+  try { state.sec = localStorage.getItem("wvSec") === "content" ? "content" : "account"; } catch (x) {}
   $view.addEventListener("click", function (e) {
     var rg = e.target.closest("[data-range]");
     if (rg) {

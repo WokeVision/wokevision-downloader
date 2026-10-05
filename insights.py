@@ -109,6 +109,29 @@ def _instagram():
             "views": None, "likes": p.get("like_count"), "comments": p.get("comments_count"),
             "shares": None, "type": p.get("media_type"),
         })
+    # Per-post views (and shares) for the newest posts -- one small call each,
+    # run in parallel; any post that refuses just keeps n/a.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _media_stats(p):
+        try:
+            rr = _get(f"{m.GRAPH_BASE}/{p['id']}/insights", params={"metric": "views,shares", "access_token": tok}, timeout=15)
+            if rr.status_code != 200:
+                rr = _get(f"{m.GRAPH_BASE}/{p['id']}/insights", params={"metric": "views", "access_token": tok}, timeout=15)
+            if rr.status_code == 200:
+                for it in rr.json().get("data", []):
+                    v = (it.get("values") or [{}])[0].get("value")
+                    if it.get("name") == "views":
+                        p["views"] = v
+                    elif it.get("name") == "shares":
+                        p["shares"] = v
+        except Exception:
+            pass
+    try:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(_media_stats, posts[:40]))
+    except Exception:
+        pass
     views = None
     try:
         views = m.account_insights(30).get("views")
@@ -216,6 +239,7 @@ def _youtube():
                     "comments": int(s_.get("commentCount", 0)), "shares": None,
                 })
     out = _empty("youtube", "ok", None, ch["snippet"].get("title"))
+    out["profile_url"] = f"https://www.youtube.com/channel/{ch.get('id')}"
     out["totals"].update(
         followers=None if st.get("hiddenSubscriberCount") else int(st.get("subscriberCount", 0)),
         posts=int(st.get("videoCount", 0)), views=int(st.get("viewCount", 0)),
@@ -336,6 +360,7 @@ def _facebook():
                 "shares": None,
             })
     out = _empty("facebook", "ok", None, pg.get("name"))
+    out["profile_url"] = f"https://www.facebook.com/{pid}"
     # Page views over the last 28 days (needs read_insights).
     views, now = None, int(time.time())
     vr = _get(f"{m.GRAPH_BASE}/{pid}/insights", params={

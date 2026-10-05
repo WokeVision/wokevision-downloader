@@ -30,8 +30,15 @@
   padding: 7px 13px; cursor: pointer; text-decoration: none; font-family: inherit;
 }
 .wvNavAuth:hover { color: #F5F5F7; }
-@media (max-width: 420px) {
-  .wvNavLink { padding: 8px 10px; font-size: 13.5px; }
+@media (max-width: 560px) {
+  .wvNav { padding-left: 10px; padding-right: 10px; }
+  .wvNavInner { gap: 0; overflow-x: auto; scrollbar-width: none; }
+  .wvNavInner::-webkit-scrollbar { display: none; }
+  .wvNavLogo { margin-right: 4px; flex: none; }
+  .wvNavLogo img { width: 30px; height: 30px; }
+  .wvNavLink { padding: 7px 8px; font-size: 12.5px; flex: none; }
+  .wvNavSpacer { flex: 1 0 4px; }
+  .wvNavAuth { font-size: 12px; padding: 6px 9px; white-space: nowrap; flex: none; }
 }
 
 @media (min-width: 900px) {

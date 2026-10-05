@@ -274,21 +274,29 @@ def _auth():
 
 def list_conversations(limit: int = 25) -> list:
     token, uid = _auth()
-    r = requests.get(f"{GRAPH_BASE}/me/conversations", params={
+    url, params, out = f"{GRAPH_BASE}/me/conversations", {
         "platform": "instagram", "limit": limit, "access_token": token,
-        "fields": "id,updated_time,participants,messages.limit(1){message,created_time,from}"}, timeout=25)
-    if r.status_code != 200:
-        raise InstagramError(r.text[:400])
-    out = []
-    for c in r.json().get("data", []):
-        others = [p for p in c.get("participants", {}).get("data", []) if p.get("id") != uid]
-        other = others[0] if others else {}
-        last = (c.get("messages", {}).get("data") or [{}])[0]
-        out.append({
-            "id": c["id"], "platform": PLATFORM,
-            "with_id": other.get("id"), "with_name": other.get("username") or other.get("id") or "Unknown",
-            "last_text": last.get("message") or "", "updated": c.get("updated_time"),
-        })
+        "fields": "id,updated_time,participants,messages.limit(1){message,created_time,from}"}, []
+    # Instagram can return an empty page that still has a `next` cursor, so
+    # follow a few pages rather than stopping at the first empty one.
+    for _ in range(6):
+        r = requests.get(url, params=params, timeout=25)
+        if r.status_code != 200:
+            raise InstagramError(r.text[:400])
+        j = r.json()
+        for c in j.get("data", []):
+            others = [p for p in c.get("participants", {}).get("data", []) if p.get("id") != uid]
+            other = others[0] if others else {}
+            last = (c.get("messages", {}).get("data") or [{}])[0]
+            out.append({
+                "id": c["id"], "platform": PLATFORM,
+                "with_id": other.get("id"), "with_name": other.get("username") or other.get("id") or "Unknown",
+                "last_text": last.get("message") or "", "updated": c.get("updated_time"),
+            })
+        nxt = (j.get("paging") or {}).get("next")
+        if not nxt or len(out) >= limit:
+            break
+        url, params = nxt, None
     return out
 
 
@@ -350,5 +358,6 @@ def debug_conversations() -> dict:
         ("conversations", "/me/conversations", {"platform": "instagram", "fields": "id,updated_time,participants"}),
     ):
         r = requests.get(f"{GRAPH_BASE}{path}", params={**params, "access_token": token}, timeout=25)
-        out[name] = {"status": r.status_code, "body": r.text[:1500]}
+        body = r.text
+        out[name] = {"status": r.status_code, "body": body.replace(token, "[token]")[:1500]}
     return out

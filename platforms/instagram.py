@@ -346,18 +346,3 @@ def views_between(since: int, until: int):
         raise InstagramError(r.text[:400])
     data = r.json().get("data") or []
     return (data[0].get("total_value") or {}).get("value") if data else None
-
-
-def debug_conversations() -> dict:
-    """Raw Instagram answer for the conversations list, for diagnosing an
-    empty inbox. Only reachable by the signed-in owner."""
-    token, uid = _auth()
-    out = {}
-    for name, path, params in (
-        ("me", "/me", {"fields": "user_id,username,account_type"}),
-        ("conversations", "/me/conversations", {"platform": "instagram", "fields": "id,updated_time,participants"}),
-    ):
-        r = requests.get(f"{GRAPH_BASE}{path}", params={**params, "access_token": token}, timeout=25)
-        body = r.text
-        out[name] = {"status": r.status_code, "body": body.replace(token, "[token]")[:1500]}
-    return out

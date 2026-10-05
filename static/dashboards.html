@@ -481,9 +481,7 @@
         return '<a class="msgRow" style="text-decoration:none;color:inherit" href="' + l[2] + '" target="_blank" rel="noopener"><i class="dot" style="background:' + l[3] + ';margin-top:6px"></i>' +
           '<div><div class="pn">' + esc(l[0]) + '</div><div class="pt">' + esc(l[1]) + '</div></div><span class="badge">Open ↗</span></a>';
       }).join("") + '</div></div>' +
-      '<div class="card"><h3>Messages</h3><p class="hint">One inbox for every platform, each message tagged with where it came from, with replies sent straight from here.</p>' +
-      '<div class="empty" id="inboxEmpty">Loading…</div></div><div id="msgStatus"></div>';
-    setTimeout(loadMessages, 0);
+      '<div class="card"><p class="hint" style="margin:0">Instagram and Facebook DMs share one inbox in Meta Business Suite. Threads, TikTok and X DMs stay in their own apps for now.</p></div>';
     return h;
   }
   function loadMessages() {

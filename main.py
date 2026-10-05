@@ -652,14 +652,6 @@ def api_message_reply(platform: str, req: ReplyRequest):
     return {"ok": True}
 
 
-@app.get("/api/messages-debug")
-def api_messages_debug():
-    try:
-        return instagram.debug_conversations()
-    except Exception as e:
-        return {"error": str(e)[:400]}
-
-
 @app.get("/api/insights/{platform}/views")
 def api_insights_views(platform: str, start: int, end: int):
     if platform not in PLATFORM_MODULES:

@@ -701,6 +701,11 @@ def api_insights(platform: str, refresh: bool = False):
     return insights.get(platform, force=refresh)
 
 
+@app.get("/api/insights-history")
+def api_insights_history():
+    return {"history": insights.history()}
+
+
 @app.get("/api/insights")
 def api_insights_all(refresh: bool = False):
     results = {}
@@ -1476,3 +1481,23 @@ def api_account_push_facebook(body: ProfileDraft):
         return accounts.push_facebook(about=body.bio[:255], website=body.link or None)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/content-groups")
+def api_content_groups():
+    """Which platform posts came from the same upload, from the editor's own
+    publish records (so the Analytics Hub can show one video across platforms)."""
+    groups = []
+    for e in db.list_history(300):
+        res = e.get("publish_results") or {}
+        ids = {}
+        for pid, r in res.items():
+            if not isinstance(r, dict) or not r.get("ok"):
+                continue
+            v = r.get("media_id") or r.get("tweet_id") or r.get("video_id")
+            if v:
+                ids[pid] = str(v)
+        if ids:
+            groups.append({"id": str(e.get("id")), "title": e.get("on_screen_caption") or e.get("title") or "",
+                           "created_at": e["created_at"].isoformat() if e.get("created_at") else None, "ids": ids})
+    return {"groups": groups}

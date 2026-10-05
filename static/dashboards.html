@@ -161,17 +161,41 @@
   @keyframes sh { to { background-position: -200% 0; } }
   .secSeg { display: flex; width: 100%; max-width: 440px; margin: 4px 0 14px; }
   .secSeg button { flex: 1; padding: 11px 12px; font-size: 14.5px; }
-  .cList { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
-  @media (min-width: 900px) { .cList { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  @media (min-width: 1400px) { .cList { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-  .cRow { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 12px; border-radius: var(--radius-md); background: var(--surface); border: 1px solid var(--border); text-decoration: none; color: inherit; }
-  .cRow .th { width: 64px; height: 88px; border-radius: 10px; background: rgba(255,255,255,0.06) center/cover; }
-  .cRow .tt { font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-  .cRow .meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-faint); margin-bottom: 4px; }
-  .cRow .st { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 7px; font-size: 12.5px; color: var(--text-dim); }
-  .cRow .st b { color: var(--text); font-weight: 650; }
-  .cSort { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  .cSort select { background: rgba(0,0,0,0.35); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 9px 10px; font-size: 14px; font-family: inherit; color-scheme: dark; }
+  .cList { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+  .cList.grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 760px) { .cList.grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
+  .cItem { text-align: left; font: inherit; color: inherit; cursor: pointer; border-radius: var(--radius-md); background: var(--surface); border: 1px solid var(--border); padding: 12px; min-width: 0; display: grid; gap: 10px; grid-template-columns: 64px minmax(0, 1fr); }
+  .cItem:active { background: var(--surface-strong); }
+  .cList.grid .cItem { grid-template-columns: minmax(0, 1fr); padding: 10px; }
+  .cItem .th { width: 64px; height: 88px; border-radius: 10px; background: rgba(255,255,255,0.06) center/cover; }
+  .cList.grid .cItem .th { width: 100%; height: auto; aspect-ratio: 4/5; max-height: 230px; background-position: center top; }
+  .cItem .tt { font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .cItem .meta { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-faint); margin-bottom: 4px; flex-wrap: wrap; }
+  .cItem .st { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 7px; font-size: 12.5px; color: var(--text-dim); }
+  .cItem .st b { color: var(--text); font-weight: 650; }
+  .cBar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  .cBar select, .cBar .mini { background: rgba(0,0,0,0.35); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 9px 12px; font-size: 14px; font-family: inherit; color-scheme: dark; cursor: pointer; }
+  .cBar .grp { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .cBar .seg2 { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+  .cBar .seg2 button { background: transparent; color: var(--text-dim); border: 0; padding: 9px 14px; font-size: 14px; font-family: inherit; cursor: pointer; }
+  .cBar .seg2 button.on { background: var(--surface-strong); color: var(--text); font-weight: 650; }
+  .ovl { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,0.66); backdrop-filter: blur(6px); display: flex; align-items: flex-end; justify-content: center; }
+  @media (min-width: 760px) { .ovl { align-items: center; } }
+  .sheet { background: #131316; border: 1px solid var(--border); width: 100%; max-width: 880px; max-height: 92vh; overflow-y: auto; border-radius: 22px 22px 0 0; padding: 18px 18px calc(24px + env(safe-area-inset-bottom, 0px)); }
+  @media (min-width: 760px) { .sheet { border-radius: 22px; } }
+  .sheet .top { display: flex; gap: 14px; align-items: flex-start; }
+  .sheet .th { width: 84px; height: 116px; border-radius: 12px; background: rgba(255,255,255,0.06) center/cover; flex: none; }
+  .sheet h2 { margin: 0 0 4px; font-size: 17px; line-height: 1.35; overflow-wrap: anywhere; }
+  .sheet .x { margin-left: auto; flex: none; background: var(--surface-strong); border: 0; color: var(--text); width: 36px; height: 36px; border-radius: 50%; font-size: 18px; cursor: pointer; }
+  .sheet .views { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 2px; }
+  .sheet .views a { text-decoration: none; color: var(--text); border: 1px solid var(--border); background: rgba(255,255,255,0.05); border-radius: 999px; padding: 8px 14px; font-size: 13.5px; font-weight: 600; display: inline-flex; gap: 7px; align-items: center; }
+  .pBlock { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-md); padding: 12px 14px; margin-top: 10px; }
+  .pBlock h4 { margin: 0 0 8px; font-size: 14.5px; display: flex; gap: 8px; align-items: center; }
+  .pBlock .grid6 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 560px) { .pBlock .grid6 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .pBlock .grid6 div { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+  .pBlock .grid6 b { display: block; font-size: 19px; letter-spacing: 0; text-transform: none; color: var(--text); margin-top: 2px; }
+  .pBlock .grid6 b.na { color: var(--text-faint); font-size: 15px; }
 </style>
 </head>
 <body>
@@ -207,7 +231,7 @@
   var state = {
     data: {},            // platform id -> normalised stats
     history: {},         // platform id -> [{day, followers, views}]
-    sec: "account", sort: "engagement",
+    sec: "account", sort: "engagement", dir: "desc", cview: "grid", groups: [],
     tab: (location.hash || "#overview").slice(1),
     selected: PLATFORMS.map(function (p) { return p.id; }),
     mode: "compare",     // "compare" | "combined"
@@ -579,37 +603,116 @@
   }
 
   /* ---------- render + events ---------- */
+  /* ---------- content: one row per UPLOAD (grouped across platforms) ---------- */
+  function sameId(a, b) {
+    a = String(a), b = String(b);
+    return a === b || a.slice(-b.length - 1) === "_" + b || b.slice(-a.length - 1) === "_" + a;
+  }
+  function buildUploads() {
+    var r = getRange(), claimed = {}, ups = [];
+    function find(pl, pid) {
+      var d = state.data[pl]; if (!d) return null;
+      var ps = d.posts || [];
+      for (var i = 0; i < ps.length; i++) if (sameId(ps[i].id, pid)) return ps[i];
+      return null;
+    }
+    state.groups.forEach(function (g) {
+      var members = [];
+      Object.keys(g.ids).forEach(function (pl) {
+        var q = find(pl, g.ids[pl]);
+        if (q) { members.push({ id: pl, q: q }); claimed[pl + ":" + q.id] = 1; }
+      });
+      if (members.length) ups.push({ key: "g" + g.id, title: g.title || members[0].q.title, members: members });
+    });
+    PLATFORMS.forEach(function (p) {
+      ((state.data[p.id] && state.data[p.id].posts) || []).forEach(function (q) {
+        if (!claimed[p.id + ":" + q.id]) ups.push({ key: p.id + q.id, title: q.title, members: [{ id: p.id, q: q }] });
+      });
+    });
+    var sel = {}; state.selected.forEach(function (i) { sel[i] = 1; });
+    var out = [];
+    ups.forEach(function (u) {
+      u.members = u.members.filter(function (m) { return sel[m.id] && connected(m.id); });
+      if (!u.members.length) return;
+      var ts = Math.min.apply(null, u.members.map(function (m) { return Date.parse(m.q.ts) || Infinity; }));
+      if (!isFinite(ts) || ts < r.start || ts > r.end) return;
+      u.ts = ts;
+      var th = u.members.filter(function (m) { return m.q.thumb; })[0];
+      u.thumb = th ? th.q.thumb : null;
+      ["views", "likes", "comments", "shares"].forEach(function (k) { u[k] = sumNullable(u.members.map(function (m) { return m.q[k]; })); });
+      u.engagement = (u.likes || 0) + (u.comments || 0) + (u.shares || 0);
+      out.push(u);
+    });
+    return out;
+  }
+  var SORTS = [["engagement", "Engagement"], ["views", "Views"], ["likes", "Likes"], ["comments", "Comments"], ["shares", "Shares"], ["date", "Date"]];
+  function dirLabel() { return state.sort === "date" ? (state.dir === "desc" ? "Newest first" : "Oldest first") : (state.dir === "desc" ? "High to low" : "Low to high"); }
   function contentView() {
-    var ids = state.selected.filter(function (i) { return state.data[i] && connected(i); });
-    var h = '<div class="card"><div class="controls">' + chips() + '<div class="cSort"><label style="font-size:12px;color:var(--text-faint)">Sort by</label><select id="sortSel">' +
-      [["engagement", "Engagement"], ["views", "Views"], ["likes", "Likes"], ["comments", "Comments"], ["shares", "Shares"], ["date", "Newest"]].map(function (o) {
-        return '<option value="' + o[0] + '"' + (state.sort === o[0] ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") + '</select></div></div></div>';
-    if (!ids.length) return h + '<div class="card"><div class="empty">Select a connected platform above.</div></div>';
-    var all = [];
-    ids.forEach(function (id) { postsIn(id).forEach(function (q) { all.push({ id: id, q: q }); }); });
-    function eng(x) { return (x.q.likes || 0) + (x.q.comments || 0) + (x.q.shares || 0); }
-    var sorters = {
-      engagement: function (a, b) { return eng(b) - eng(a); },
-      views: function (a, b) { return (b.q.views || 0) - (a.q.views || 0); },
-      likes: function (a, b) { return (b.q.likes || 0) - (a.q.likes || 0); },
-      comments: function (a, b) { return (b.q.comments || 0) - (a.q.comments || 0); },
-      shares: function (a, b) { return (b.q.shares || 0) - (a.q.shares || 0); },
-      date: function (a, b) { return Date.parse(b.q.ts) - Date.parse(a.q.ts); }
-    };
-    all.sort(sorters[state.sort] || sorters.engagement);
-    var tot = function (k) { return sumNullable(all.map(function (x) { return x.q[k]; })); };
-    h += '<div class="kpis">' + kpiTile("Posts", all.length) + kpiTile("Views", tot("views")) + kpiTile("Likes", tot("likes")) + kpiTile("Comments", tot("comments")) + kpiTile("Shares", tot("shares")) +
-      kpiTile("Avg engagement / post", all.length ? Math.round(all.reduce(function (a, x) { return a + eng(x); }, 0) / all.length) : null) + '</div>';
-    if (!all.length) return h + '<div class="card"><div class="empty">No posts in this date range.</div></div>';
-    h += '<div class="card"><h3>Every post</h3><div class="cList">' + all.slice(0, 120).map(function (x) {
-      var q = x.q, p = BY_ID[x.id], d = q.ts ? new Date(q.ts).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
-      return '<a class="cRow" href="' + esc(q.url || "#") + '" target="_blank" rel="noopener"><div class="th" style="' + (q.thumb ? "background-image:url('" + esc(q.thumb) + "')" : "") + '"></div><div style="min-width:0">' +
-        '<div class="meta"><i class="dot" style="background:' + p.color + '"></i>' + p.label + ' · ' + esc(d) + '</div><div class="tt">' + esc(q.title || "(no caption)") + '</div>' +
-        '<div class="st"><span>\u25B6 <b>' + fmt(q.views) + '</b></span><span>\u2665 <b>' + fmt(q.likes) + '</b></span><span>\uD83D\uDCAC <b>' + fmt(q.comments) + '</b></span><span>\u21AA <b>' + fmt(q.shares) + '</b></span></div></div></a>';
-    }).join("") + '</div></div>';
+    var h = '<div class="card"><div class="controls">' + chips() + '</div><div class="cBar" style="margin-top:12px"><div class="grp"><label style="font-size:12px;color:var(--text-faint)">Sort by</label><select id="sortSel">' +
+      SORTS.map(function (o) { return '<option value="' + o[0] + '"' + (state.sort === o[0] ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") +
+      '</select><button class="mini" id="dirBtn" type="button">' + dirLabel() + ' \u21C5</button></div>' +
+      '<div class="seg2" id="viewSeg"><button data-cv="grid" class="' + (state.cview === "grid" ? "on" : "") + '">Grid</button><button data-cv="list" class="' + (state.cview === "list" ? "on" : "") + '">List</button></div></div></div>';
+    var ups = buildUploads();
+    if (!state.selected.length) return h + '<div class="card"><div class="empty">Select a platform above.</div></div>';
+    var key = state.sort, mult = state.dir === "desc" ? 1 : -1;
+    ups.sort(function (a, b) {
+      var x = key === "date" ? a.ts : (a[key] || 0), y = key === "date" ? b.ts : (b[key] || 0);
+      return (y - x) * mult;
+    });
+    state.ups = ups;
+    var tot = function (k) { return sumNullable(ups.map(function (x) { return x[k]; })); };
+    h += '<div class="kpis">' + kpiTile("Uploads", ups.length) + kpiTile("Views", tot("views")) + kpiTile("Likes", tot("likes")) + kpiTile("Comments", tot("comments")) + kpiTile("Shares", tot("shares")) +
+      kpiTile("Avg engagement / upload", ups.length ? Math.round(ups.reduce(function (a, x) { return a + x.engagement; }, 0) / ups.length) : null) + '</div>';
+    if (!ups.length) return h + '<div class="card"><div class="empty">No posts in this date range.</div></div>';
+    h += '<div class="cList ' + state.cview + '">' + ups.slice(0, 150).map(function (u, i) {
+      var d = new Date(u.ts).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+      var dots = u.members.map(function (m) { return '<i class="dot" title="' + BY_ID[m.id].label + '" style="background:' + BY_ID[m.id].color + '"></i>'; }).join("");
+      return '<button type="button" class="cItem" data-up="' + i + '"><div class="th" style="' + (u.thumb ? "background-image:url('" + esc(u.thumb) + "')" : "") + '"></div><div style="min-width:0">' +
+        '<div class="meta">' + dots + '<span>' + esc(d) + '</span></div><div class="tt">' + esc(u.title || "(no caption)") + '</div>' +
+        '<div class="st"><span>\u25B6 <b>' + fmt(u.views) + '</b></span><span>\u2665 <b>' + fmt(u.likes) + '</b></span><span>\uD83D\uDCAC <b>' + fmt(u.comments) + '</b></span><span>\u21AA <b>' + fmt(u.shares) + '</b></span></div></div></button>';
+    }).join("") + '</div>';
     return h;
   }
+  function openDetail(u) {
+    var ov = document.createElement("div"); ov.className = "ovl";
+    var d = new Date(u.ts).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    var h = '<div class="sheet" role="dialog" aria-modal="true"><div class="top"><div class="th" style="' + (u.thumb ? "background-image:url('" + esc(u.thumb) + "')" : "") + '"></div><div style="min-width:0"><h2>' + esc(u.title || "(no caption)") + '</h2>' +
+      '<div style="color:var(--text-faint);font-size:12.5px">Posted ' + esc(d) + ' \u00B7 ' + u.members.length + ' platform' + (u.members.length === 1 ? "" : "s") + '</div></div><button class="x" type="button" aria-label="Close">\u2715</button></div>' +
+      '<div class="views">' + u.members.map(function (m) {
+        return m.q.url ? '<a href="' + esc(m.q.url) + '" target="_blank" rel="noopener"><i class="dot" style="background:' + BY_ID[m.id].color + '"></i>View on ' + BY_ID[m.id].label + ' \u2197</a>' : "";
+      }).join("") + '</div>' +
+      '<div class="kpis" style="margin-top:12px">' + kpiTile("Views", u.views) + kpiTile("Likes", u.likes) + kpiTile("Comments", u.comments) + kpiTile("Shares", u.shares) + kpiTile("Engagement", u.engagement) + '</div>';
+    if (u.members.length > 1) {
+      h += '<div class="card" style="margin-top:10px">' + [["views", "Views"], ["engagement", "Engagement"]].map(function (k) {
+        var vals = u.members.map(function (m) { return k[0] === "engagement" ? (m.q.likes || 0) + (m.q.comments || 0) + (m.q.shares || 0) : m.q[k[0]]; });
+        var mx = Math.max.apply(null, vals.map(function (v) { return v || 0; })) || 1;
+        return '<div class="barBlock"><div class="t">' + k[1] + ' by platform</div>' + u.members.map(function (m, i) {
+          var p = BY_ID[m.id], v = vals[i];
+          return '<div class="barRow"><span class="nm"><i class="dot" style="background:' + p.color + '"></i>' + p.label + '</span><span class="bar"><i style="width:' + (v == null ? 0 : Math.max(2, v / mx * 100)) + '%;background:' + p.color + '"></i></span><span class="num' + (v == null ? " na" : "") + '">' + fmt(v) + '</span></div>';
+        }).join("") + '</div>';
+      }).join("") + '</div>';
+    }
+    h += u.members.map(function (m) {
+      var q = m.q, p = BY_ID[m.id], eng = (q.likes || 0) + (q.comments || 0) + (q.shares || 0);
+      function c(l, v) { return '<div>' + l + '<b class="' + (v == null ? "na" : "") + '">' + fmt(v) + '</b></div>'; }
+      return '<div class="pBlock"><h4><i class="dot" style="background:' + p.color + ';width:10px;height:10px"></i>' + p.label + '</h4><div class="grid6">' +
+        c("Views", q.views) + c("Likes", q.likes) + c("Comments", q.comments) + c("Shares", q.shares) + c("Engagement", eng) + '</div></div>';
+    }).join("");
+    h += '<div style="color:var(--text-faint);font-size:12px;margin-top:12px">n/a means that platform doesn\u2019t share that number with the permissions currently granted.</div></div>';
+    ov.innerHTML = h;
+    function close() { ov.remove(); document.removeEventListener("keydown", onKey); document.body.style.overflow = ""; }
+    function onKey(e) { if (e.key === "Escape") close(); }
+    ov.addEventListener("click", function (e) { if (e.target === ov || e.target.closest(".x")) close(); });
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    document.body.appendChild(ov);
+  }
   function render() {
+    if (!state.loaded) {
+      document.querySelectorAll("#secSeg button").forEach(function (b) { b.classList.toggle("active", b.dataset.sec === state.sec); });
+      $tabs.style.display = state.sec === "content" ? "none" : ""; if (state.sec !== "content") renderTabs();
+      $view.innerHTML = '<div class="skeleton"></div><div class="skeleton" style="margin-top:12px"></div>'; return;
+    }
     document.querySelectorAll("#secSeg button").forEach(function (b) { b.classList.toggle("active", b.dataset.sec === state.sec); });
     if (state.sec === "content") { $tabs.style.display = "none"; $view.innerHTML = rangeBar() + contentView(); return; }
     $tabs.style.display = "";
@@ -635,7 +738,14 @@
     var b = e.target.closest("[data-sec]"); if (!b) return;
     state.sec = b.dataset.sec; try { localStorage.setItem("wvSec", state.sec); } catch (x) {} render();
   });
-  $view.addEventListener("change", function (e) { if (e.target.id === "sortSel") { state.sort = e.target.value; render(); } });
+  function persistC() { try { localStorage.setItem("wvC", JSON.stringify({ sort: state.sort, dir: state.dir, cview: state.cview })); } catch (x) {} }
+  try { var sc = JSON.parse(localStorage.getItem("wvC") || "{}"); if (sc.sort) state.sort = sc.sort; if (sc.dir) state.dir = sc.dir; if (sc.cview) state.cview = sc.cview; } catch (x) {}
+  $view.addEventListener("change", function (e) { if (e.target.id === "sortSel") { state.sort = e.target.value; state.dir = "desc"; persistC(); render(); } });
+  $view.addEventListener("click", function (e) {
+    var cv = e.target.closest("[data-cv]"); if (cv) { state.cview = cv.dataset.cv; persistC(); render(); return; }
+    if (e.target.closest("#dirBtn")) { state.dir = state.dir === "desc" ? "asc" : "desc"; persistC(); render(); return; }
+    var it = e.target.closest("[data-up]"); if (it && state.ups && state.ups[+it.dataset.up]) openDetail(state.ups[+it.dataset.up]);
+  });
   try { state.sec = localStorage.getItem("wvSec") === "content" ? "content" : "account"; } catch (x) {}
   $view.addEventListener("click", function (e) {
     var rg = e.target.closest("[data-range]");
@@ -660,23 +770,36 @@
   });
 
   function load(refresh) {
-    var btn = document.getElementById("refreshBtn"); btn.disabled = true;
-    fetch("/api/insights" + (refresh ? "?refresh=true" : "")).then(function (r) {
-      if (r.status === 401) { location.href = "/login?next=/dashboards"; throw new Error("auth"); }
-      return r.json();
-    }).then(function (j) {
-      j.platforms.forEach(function (p) { state.data[p.platform] = p; });
-      state.history = j.history || {};
-      loadIgViews();
-      document.getElementById("updated").textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      render();
-    }).catch(function (e) {
-      if (e.message !== "auth") $view.innerHTML = '<div class="banner err">Couldn\'t load your stats. Try Refresh.</div>';
-    }).finally(function () { btn.disabled = false; });
+    var btn = document.getElementById("refreshBtn"), upd = document.getElementById("updated");
+    btn.disabled = true; var pending = PLATFORMS.length + 2, authed = true;
+    upd.textContent = "Loading your stats\u2026";
+    function done() {
+      pending--;
+      if (pending <= 0) { btn.disabled = false; upd.textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+      else upd.textContent = "Loading your stats\u2026 (" + (PLATFORMS.length + 2 - pending) + "/" + (PLATFORMS.length + 2) + ")";
+    }
+    function get(url) {
+      return fetch(url).then(function (r) {
+        if (r.status === 401) { authed = false; location.href = "/login?next=/dashboards"; throw new Error("auth"); }
+        return r.json();
+      });
+    }
+    PLATFORMS.forEach(function (p) {
+      get("/api/insights/" + p.id + (refresh ? "?refresh=true" : "")).then(function (d) {
+        state.data[p.id] = d; state.loaded = true;
+        if (p.id === "instagram") loadIgViews();
+        render();
+      }).catch(function () {
+        if (!state.data[p.id]) state.data[p.id] = { platform: p.id, label: p.label, state: "error", note: "Couldn\u2019t load this platform \u2014 try Refresh.", account: null, totals: {}, posts: [] };
+        render();
+      }).finally(done);
+    });
+    get("/api/insights-history").then(function (j) { state.history = j.history || {}; render(); }).catch(function () {}).finally(done);
+    get("/api/content-groups").then(function (j) { state.groups = j.groups || []; render(); }).catch(function () {}).finally(done);
   }
   document.getElementById("refreshBtn").addEventListener("click", function () { load(true); });
   window.addEventListener("hashchange", function () { state.tab = (location.hash || "#overview").slice(1); render(); });
-  renderTabs(); load(false);
+  render(); load(false);
 })();
 </script>
 </body>

@@ -105,3 +105,107 @@ def list_keys() -> set:
     except Exception as e:
         print(f"STORAGE LIST FAILED: {e}", flush=True)
     return keys
+
+
+# --- Direct browser -> bucket multipart uploads -------------------------------
+# Big videos go from the browser straight to R2 in resumable 16MB parts, so
+# the app server never carries the upload and a refresh/drop doesn't lose it.
+
+PART_SIZE = 16 * 1024 * 1024
+_cors_done = False
+
+
+def _s3():
+    """Client configured for SigV4 presigning against R2."""
+    import boto3
+    from botocore.config import Config
+    return boto3.client(
+        "s3", endpoint_url=ENDPOINT, aws_access_key_id=ACCESS_KEY,
+        aws_secret_access_key=SECRET_KEY, region_name="auto",
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+    )
+
+
+def ensure_cors(origins) -> bool:
+    """Lets the site's pages PUT parts to the bucket. Best-effort; if the
+    API token isn't allowed to set CORS this returns False and the app falls
+    back to uploading through the server."""
+    global _cors_done
+    if _cors_done:
+        return True
+    try:
+        _s3().put_bucket_cors(Bucket=BUCKET, CORSConfiguration={"CORSRules": [{
+            "AllowedOrigins": list(origins), "AllowedMethods": ["PUT", "GET", "HEAD"],
+            "AllowedHeaders": ["*"], "ExposeHeaders": ["ETag"], "MaxAgeSeconds": 3600}]})
+        _cors_done = True
+    except Exception as e:
+        print(f"R2 CORS SETUP FAILED: {e}", flush=True)
+        return False
+    return True
+
+
+def multipart_start(key: str, size: int, resume_upload_id: str = None):
+    """Returns {upload_id, part_size, urls:[...], done:[part numbers]}."""
+    import math
+    c = _s3()
+    part_size = max(PART_SIZE, math.ceil(size / 9000))
+    done = []
+    if resume_upload_id:
+        try:
+            done = [p["PartNumber"] for p in list_parts(key, resume_upload_id)]
+            upload_id = resume_upload_id
+        except Exception:
+            resume_upload_id = None
+    if not resume_upload_id:
+        upload_id = c.create_multipart_upload(Bucket=BUCKET, Key=key, ContentType="video/mp4")["UploadId"]
+    n = max(1, math.ceil(size / part_size))
+    urls = [c.generate_presigned_url("upload_part", Params={"Bucket": BUCKET, "Key": key, "UploadId": upload_id, "PartNumber": i},
+                                     ExpiresIn=86400) for i in range(1, n + 1)]
+    return {"upload_id": upload_id, "part_size": part_size, "urls": urls, "done": done}
+
+
+def list_parts(key: str, upload_id: str):
+    c = _s3()
+    parts, marker = [], 0
+    while True:
+        r = c.list_parts(Bucket=BUCKET, Key=key, UploadId=upload_id, PartNumberMarker=marker, MaxParts=1000)
+        parts += r.get("Parts", [])
+        if not r.get("IsTruncated"):
+            return parts
+        marker = r.get("NextPartNumberMarker")
+
+
+def multipart_complete(key: str, upload_id: str, expected_size: int = None) -> int:
+    """Stitches whatever parts arrived; returns the object size."""
+    c = _s3()
+    parts = sorted(list_parts(key, upload_id), key=lambda p: p["PartNumber"])
+    if not parts:
+        raise RuntimeError("No parts were uploaded.")
+    got = sum(p["Size"] for p in parts)
+    if expected_size and got != expected_size:
+        raise RuntimeError(f"Upload incomplete ({got} of {expected_size} bytes).")
+    c.complete_multipart_upload(Bucket=BUCKET, Key=key, UploadId=upload_id,
+                                MultipartUpload={"Parts": [{"ETag": p["ETag"], "PartNumber": p["PartNumber"]} for p in parts]})
+    return got
+
+
+def download_with_progress(key: str, local_path: str, progress_cb=None):
+    size = None
+    try:
+        size = _get_client().head_object(Bucket=BUCKET, Key=key)["ContentLength"]
+    except Exception:
+        pass
+    done = [0]
+    def cb(n):
+        done[0] += n
+        if progress_cb and size:
+            progress_cb(min(done[0] / size, 1.0))
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    _get_client().download_file(BUCKET, key, local_path, Callback=cb)
+
+
+def delete_key(key: str):
+    try:
+        _get_client().delete_object(Bucket=BUCKET, Key=key)
+    except Exception as e:
+        print(f"STORAGE DELETE FAILED ({key}): {e}", flush=True)

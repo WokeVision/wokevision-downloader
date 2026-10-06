@@ -1618,6 +1618,23 @@ def _clip_ingest_and_analyze(cid: str, url: str, focus_text: str):
     _clip_analyze(cid, focus_text)
 
 
+def _clip_pull_and_analyze(cid: str, key: str, focus_text: str):
+    c = CLIPS[cid]
+    try:
+        last = [-1]
+        def _prog(f):
+            p = int(f * 100) // 5 * 5
+            if p != last[0]:
+                last[0] = p
+                _clip_set(cid, stage_label=f"Fetching your upload ({p}%)")
+        _pull_upload(key, c["source"], _prog)
+    except Exception as e:
+        _clip_set(cid, status="error", error=f"Couldn't fetch the uploaded file: {e}")
+        return
+    _cleanup_later(c["source"], delay=CLIP_SOURCE_KEEP)
+    _clip_analyze(cid, focus_text)
+
+
 @app.get("/api/attention")
 def attention():
     try:
@@ -1627,16 +1644,110 @@ def attention():
         return {"items": []}
 
 
+# --- Direct (browser -> R2) resumable uploads ---------------------------------
+
+class UploadStart(BaseModel):
+    filename: str
+    size: int
+    resume_key: str = ""
+    resume_upload_id: str = ""
+
+
+@app.post("/api/uploads/start")
+def upload_start(req: UploadStart, request: Request):
+    if not storage.configured():
+        return {"direct": False}
+    origins = {"https://wokevision.com", "https://www.wokevision.com"}
+    base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    if base:
+        origins.add(base)
+    origins.add(f"{request.url.scheme}://{request.headers.get('host', '')}")
+    if not storage.ensure_cors(origins):
+        return {"direct": False}
+    if req.size <= 0 or req.size > 6 * 1024 ** 3:
+        raise HTTPException(status_code=400, detail="That file is empty or over 6GB.")
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", os.path.basename(req.filename))[:80] or "video.mp4"
+    key = req.resume_key if (req.resume_key.startswith("uploads/") and ".." not in req.resume_key) else f"uploads/{uuid.uuid4().hex}/{safe}"
+    try:
+        info = storage.multipart_start(key, req.size, req.resume_upload_id or None)
+    except Exception as e:
+        print(f"UPLOAD START FAILED: {e}", flush=True)
+        return {"direct": False}
+    return {"direct": True, "key": key, **info}
+
+
+class UploadComplete(BaseModel):
+    key: str
+    upload_id: str
+    size: int = 0
+
+
+@app.post("/api/uploads/complete")
+def upload_complete(req: UploadComplete):
+    if not req.key.startswith("uploads/") or ".." in req.key:
+        raise HTTPException(status_code=400, detail="Bad key.")
+    try:
+        storage.multipart_complete(req.key, req.upload_id, req.size or None)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+def _pull_upload(key: str, dest: str, progress_cb=None):
+    storage.download_with_progress(key, dest, progress_cb)
+    storage.delete_key(key)
+
+
+class ProcessUpload(BaseModel):
+    key: str
+    filename: str = ""
+    angle: str = ""
+    wm_token: str = ""
+    wm_pos: str = "right"
+
+
+def _run_pulled_pipeline(job_id: str, key: str, final_source_path: str, filename: str):
+    try:
+        _set_stage(job_id, "downloading", 0.0)
+        _pull_upload(key, final_source_path, lambda f: _set_stage(job_id, "downloading", f))
+    except Exception as e:
+        _set_job(job_id, stage="error", stage_label="Error", status="error", error=f"Couldn't fetch the uploaded file: {e}")
+        return
+    meta = {"title": os.path.splitext(filename or "")[0], "description": "", "method": "direct upload"}
+    _run_pipeline(job_id, final_source_path, meta)
+
+
+@app.post("/process-upload")
+def process_upload(req: ProcessUpload):
+    if not req.key.startswith("uploads/") or ".." in req.key:
+        raise HTTPException(status_code=400, detail="Bad key.")
+    job_id = str(uuid.uuid4())
+    final_source_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
+    with JOBS_LOCK:
+        JOBS[job_id] = {"stage": "downloading", "stage_label": "Fetching your upload", "progress": 0.0, "status": "running",
+                        "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos}
+    threading.Thread(target=_run_pulled_pipeline, args=(job_id, req.key, final_source_path, req.filename), daemon=True).start()
+    return {"job_id": job_id}
+
+
 @app.get("/clipping")
 def clipping_page():
     return FileResponse("static/clipping.html")
 
 
 @app.post("/api/clip")
-async def clip_start(file: UploadFile = File(None), url: str = Form(""), focus: str = Form("")):
+async def clip_start(file: UploadFile = File(None), url: str = Form(""), focus: str = Form(""),
+                     upload_key: str = Form(""), filename: str = Form("")):
     cid = uuid.uuid4().hex
     source = os.path.join(DOWNLOAD_DIR, f"clip_{cid}_source.mp4")
     title = ""
+    if upload_key:
+        if not upload_key.startswith("uploads/") or ".." in upload_key:
+            raise HTTPException(status_code=400, detail="Bad key.")
+        title = os.path.splitext(filename or "")[0][:200] or "Uploaded video"
+        _clip_set(cid, status="running", stage_label="Fetching your upload", source=source, clips=[], title=title)
+        threading.Thread(target=_clip_pull_and_analyze, args=(cid, upload_key, focus), daemon=True).start()
+        return {"clip_id": cid}
     if file is not None and file.filename:
         try:
             with open(source, "wb") as f:

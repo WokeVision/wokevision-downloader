@@ -82,6 +82,7 @@
   </div>
 </div>
 <script src="/static/nav.js"></script>
+<script src="/static/uploader.js"></script>
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -183,7 +184,19 @@
     $("go").disabled = true; $("results").classList.add("hidden"); busy(panel === "file" ? "Uploading" : "Starting"); setBar(panel === "file" ? 0 : null);
     uploading = panel === "file";
     try {
-      const d = await upload(fd);
+      let d;
+      const f = panel === "file" ? $("fileIn").files[0] : null;
+      let direct = null;
+      if (f) {
+        direct = await window.wvDirectUpload(f, (p) => { setBar(p); $("busyLabel").textContent = "Uploading " + p + "% — you can resume this if it drops"; }, (t) => { $("busyLabel").textContent = t; });
+      }
+      if (direct) {
+        const f2 = new FormData(); f2.append("upload_key", direct.key); f2.append("filename", f.name); f2.append("focus", $("focus").value);
+        const r = await fetch("/api/clip", { method: "POST", body: f2 });
+        d = await r.json(); if (!r.ok) throw new Error(d.detail || "Failed.");
+      } else {
+        d = await upload(fd);
+      }
       uploading = false; setBar(null);
       cid = d.clip_id; try { localStorage.setItem("wvClip", cid); } catch (_) {}
       poll();

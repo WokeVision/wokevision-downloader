@@ -598,6 +598,7 @@
 </head>
 <body style="padding-top:0">
 <script src="/static/nav.js"></script>
+<script src="/static/uploader.js"></script>
 <div class="page" style="margin-top:24px">
 
   <header class="brand">
@@ -1044,11 +1045,22 @@
     stageLabel.textContent = "Uploading";
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("angle", document.getElementById("angleBox").value);
-      formData.append("wm_token", await wmToken()); formData.append("wm_pos", wmPos);
-      const resp = await fetch("/process-file", { method: "POST", body: formData });
+      const angle = document.getElementById("angleBox").value;
+      const tok = await wmToken();
+      let direct = null;
+      try {
+        direct = await window.wvDirectUpload(file, (p) => { stageLabel.textContent = "Uploading " + p + "%"; progressFill.style.width = p + "%"; }, (t) => { stageLabel.textContent = t; });
+      } catch (e) { throw e; }
+      let resp;
+      if (direct) {
+        resp = await fetch("/process-upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: direct.key, filename: file.name, angle, wm_token: tok, wm_pos: wmPos }) });
+      } else {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("angle", angle);
+        formData.append("wm_token", tok); formData.append("wm_pos", wmPos);
+        resp = await fetch("/process-file", { method: "POST", body: formData });
+      }
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
       await pollJob(data.job_id);

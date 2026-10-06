@@ -1536,6 +1536,28 @@ def _clip_analyze(cid: str, focus_text: str):
             storage.upload_many_async([(path, fn)])
             k["file"] = fn
         clips = [k for k in clips if k.get("file")]
+        _clip_set(cid, clips=clips)
+        # Run every clip through the normal WokeVision edit (template, hook
+        # caption, burned-in captions, platform captions) so the results are
+        # already finished; each lands in the editor's history too.
+        for i, k in enumerate(clips):
+            _clip_set(cid, stage_label=f"Editing clip {i + 1} of {len(clips)} in the WokeVision template")
+            jid = str(uuid.uuid4())
+            try:
+                with JOBS_LOCK:
+                    JOBS[jid] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": ""}
+                src = os.path.join(DOWNLOAD_DIR, f"{jid}_source.mp4")
+                shutil.copyfile(os.path.join(DOWNLOAD_DIR, k["file"]), src)
+                words = speech.clip_words(sp["words"], k["start"], k["end"])
+                pre = {"text": " ".join(w["w"] for w in words), "words": words}
+                _run_pipeline(jid, src, {"title": k.get("title") or "Clip", "description": "", "method": f"clipped {int(k['start'])}s-{int(k['end'])}s"}, pre_speech=pre)
+                with JOBS_LOCK:
+                    ok = (JOBS.get(jid) or {}).get("status") == "done"
+                if ok:
+                    k["job_id"] = jid
+            except Exception as ee:
+                print(f"CLIP EDIT FAILED ({cid} #{i}): {ee}", flush=True)
+            _clip_set(cid, clips=clips)
         if not clips:
             raise RuntimeError("The clips were found but none could be cut. Try again, or use a smaller file.")
         _clip_set(cid, status="done", stage_label="Done", clips=clips)
@@ -1595,7 +1617,8 @@ async def clip_start(file: UploadFile = File(None), url: str = Form(""), focus: 
 def _clip_public(cid, c):
     base = {k: v for k, v in c.items() if k not in ("speech", "source")}
     base["id"] = cid
-    base["clips"] = [{**k, "video_url": f"/files/{k['file']}"} for k in (c.get("clips") or []) if k.get("file")]
+    base["clips"] = [{**k, "video_url": (f"/files/{k['job_id']}_final.mp4" if k.get("job_id") else f"/files/{k['file']}")}
+                     for k in (c.get("clips") or []) if k.get("file")]
     return base
 
 

@@ -247,52 +247,69 @@ def parse_focus(text):
 
 
 def pick_clips(transcript, duration, focus_ranges=None, notes="", max_clips=6,
-               min_len=15, max_len=75):
-    """Asks the LLM for the best self-contained, shareable moments. Returns
-    [{start,end,title,reason,score}] snapped to segment boundaries."""
+               min_len=30, max_len=120):
+    """Asks the LLM for the strongest self-contained, shareable moments.
+    Returns [{start,end,title,reason,score}] snapped to segment boundaries;
+    anything shorter than min_len is extended forward through the following
+    sentences rather than kept thin."""
     segs = transcript["segments"] or []
     if not segs:
         return []
     lines = [f"[{s['start']:.1f}-{s['end']:.1f}] {s['text']}" for s in segs]
-    body = "\n".join(lines)
-    if len(body) > 90000:
-        body = body[:90000]
+    body = "\n".join(lines)[:300000]
     focus = ""
     if focus_ranges:
         focus = ("ONLY choose clips that lie inside these ranges (seconds): "
                  + ", ".join(f"{a:.0f}-{b:.0f}" for a, b in focus_ranges) + ". ")
     system = (
-        "You are the clip editor for a political/news meme page. From a timestamped transcript, pick the "
-        f"{max_clips} best moments most likely to go viral as short vertical clips: a strong hook in the first "
-        "seconds, a complete thought that makes sense without context, punchy, shocking, funny or emotionally "
-        f"charged. Each clip must be between {min_len} and {max_len} seconds, must start at the beginning of a "
-        "sentence and end at the end of one, and must not overlap another clip. "
-        f"{focus}Return JSON: {{\"clips\":[{{\"start\":sec,\"end\":sec,\"title\":\"<=8 words\","
-        "\"reason\":\"one short sentence\",\"score\":1-100}]}. Best first."
+        "You are the senior clip editor for a political/news/culture meme page with a big social audience. "
+        f"From a timestamped transcript, find up to {max_clips + 2} moments that would perform best as vertical "
+        "clips. A great clip is a COMPLETE exchange with substance: it opens on a hook (a bold claim, a "
+        "confrontation, a surprising fact, a laugh line), builds through the back-and-forth or argument, and "
+        "lands on a payoff (a rebuttal, a punchline, a gotcha, a strong closing statement) -- the viewer must "
+        "understand it with no other context. Prefer heated disagreements, clear-cut contradictions, "
+        "emotionally charged or controversial statements, and quotable lines. Skip intros, pleasantries, "
+        "housekeeping, ads and rambling set-up. "
+        f"Each clip MUST be {min_len}-{max_len} seconds long (aim for 45-90s); never return a clip shorter than "
+        f"{min_len}s -- extend it to include the lead-in or the payoff instead. Start on the first word of a "
+        "sentence and end on the last word of one. No overlaps. Rate honestly: score 90+ only for genuinely "
+        "viral material. "
+        f"{focus}Return JSON: {{\"clips\":[{{\"start\":sec,\"end\":sec,\"title\":\"<=8 word headline\","
+        "\"reason\":\"one sentence on why it will travel\",\"score\":1-100}]}. Best first."
     )
     user = f"Video length: {duration:.0f}s.\n{('Editor notes: ' + notes) if notes else ''}\nTranscript:\n{body}"
     data = _chat_json(system, user)
     out = []
     for c in data.get("clips") or []:
         try:
-            s, e = float(c["start"]), float(c["end"])
+            s0, e0 = float(c["start"]), float(c["end"])
         except Exception:
             continue
-        # snap to nearest segment boundaries
-        s = min(segs, key=lambda x: abs(x["start"] - s))["start"]
-        e = min(segs, key=lambda x: abs(x["end"] - e))["end"]
+        si = min(range(len(segs)), key=lambda i: abs(segs[i]["start"] - s0))
+        ei = min(range(len(segs)), key=lambda i: abs(segs[i]["end"] - e0))
+        if ei < si:
+            continue
+        s, e = segs[si]["start"], segs[ei]["end"]
+        hi = max((b for a, b in focus_ranges), default=None) if focus_ranges else None
+        # extend short clips forward through following sentences
+        while e - s < min_len and ei + 1 < len(segs) and (hi is None or segs[ei + 1]["end"] <= hi + 2):
+            ei += 1
+            e = segs[ei]["end"]
+        # trim over-long clips back to a sentence boundary
+        while e - s > max_len and ei > si:
+            ei -= 1
+            e = segs[ei]["end"]
         if focus_ranges and not any(s >= a - 2 and e <= b + 2 for a, b in focus_ranges):
             continue
-        if e - s < min_len * 0.6 or e <= s:
+        if e - s < min_len * 0.8 or e <= s:
             continue
-        if e - s > max_len * 1.3:
-            e = s + max_len
         if any(not (e <= o["start"] or s >= o["end"]) for o in out):
             continue
         out.append({"start": round(s, 2), "end": round(e, 2),
                     "title": str(c.get("title", ""))[:80],
                     "reason": str(c.get("reason", ""))[:200],
                     "score": int(c.get("score") or 0)})
+    out.sort(key=lambda o: -o["score"])
     return out[:max_clips]
 
 

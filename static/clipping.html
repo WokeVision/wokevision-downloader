@@ -97,7 +97,7 @@
   function busy(label) { $("busy").classList.remove("hidden"); $("busyLabel").textContent = label; $("errCard").classList.add("hidden"); }
   function fail(msg) { $("busy").classList.add("hidden"); $("errCard").textContent = msg; $("errCard").classList.remove("hidden"); $("go").disabled = false; }
   async function poll() {
-    let misses = 0;
+    let misses = 0, lastEdited = -1;
     for (;;) {
       let d;
       try {
@@ -117,6 +117,8 @@
       if (d.status === "error") { $("busy").classList.add("hidden"); $("go").disabled = false; loadHistory(); if (d.clips && d.clips.length) show(d); return fail(d.error); }
       if (d.status === "done") { $("busy").classList.add("hidden"); $("go").disabled = false; loadHistory(); return show(d); }
       $("busyLabel").textContent = d.stage_label || "Working";
+      const edited = (d.clips || []).filter((c) => c.job_id).length;
+      if (edited !== lastEdited) { lastEdited = edited; show(d); }
       await new Promise((r) => setTimeout(r, 3000));
     }
   }
@@ -132,7 +134,8 @@
       el.querySelector(".meta").innerHTML = '<span class="score">' + c.score + '</span>' + fmt(c.start) + " – " + fmt(c.end) + " · " + Math.round(c.end - c.start) + "s<br>";
       el.querySelector(".meta").appendChild(document.createTextNode(c.reason || ""));
       el.querySelector(".txt").textContent = c.text || "";
-      el.querySelector("button").onclick = () => edit({ index: c.id, title: c.title });
+      el.querySelector("button").onclick = c.job_id ? () => { location.href = "/editor#entry=" + c.job_id; } : () => edit({ index: c.id, title: c.title });
+      if (c.job_id) el.querySelector("button").textContent = "Open in editor";
       g.appendChild(el);
     });
   }

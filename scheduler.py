@@ -14,7 +14,7 @@ import datetime
 import db
 import notify
 import storage
-from caption import normalize_platform_posts
+from caption import normalize_platform_posts, apply_disclosure
 
 
 def _publish_one(modules: dict, item: dict) -> dict:
@@ -39,8 +39,11 @@ def _publish_one(modules: dict, item: dict) -> dict:
     video_url = f"{base}/files/{filename}"
     caption = e.get("posting_caption") or ""
     posts = normalize_platform_posts(e.get("platform_posts") or {}, caption)
+    post = posts.get(platform)
+    if (e.get("meta") or {}).get("paid_promo"):
+        post = apply_disclosure(platform, post)
     try:
-        outcome = module.publish_video(video_url, caption, post=posts.get(platform))
+        outcome = module.publish_video(video_url, caption, post=post)
         return {"ok": True, **(outcome or {})}
     except Exception as ex:
         print(f"SCHEDULED PUBLISH FAILED ({platform}): {ex}", flush=True)

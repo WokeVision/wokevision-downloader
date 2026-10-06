@@ -135,6 +135,15 @@ def init_db():
             # Per-platform versions of the posting caption (and the user's
             # edits to them), so nothing typed in the editor is lost.
             cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS platform_posts JSONB")
+            # Saved campaign watermarks (the image lives in storage as wm_<token>.png).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS watermark_library (
+                    token TEXT PRIMARY KEY,
+                    name TEXT,
+                    pos TEXT DEFAULT 'right',
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )
+            """)
             # Editor jobs: just enough to tell the page what happened to a job
             # after a server restart (the live progress itself stays in memory).
             cur.execute("""
@@ -413,6 +422,34 @@ def get_history_entry(entry_id: str):
             cur.execute("SELECT * FROM history WHERE id = %s", (entry_id,))
             row = cur.fetchone()
     return _titled(row) if row else None
+
+
+# --- Watermark library -----------------------------------------------------------
+
+def wm_lib_save(token: str, name: str, pos: str = "right"):
+    if not configured():
+        return
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO watermark_library (token, name, pos) VALUES (%s, %s, %s)
+                           ON CONFLICT (token) DO UPDATE SET name = EXCLUDED.name, pos = EXCLUDED.pos""", (token, name, pos))
+
+
+def wm_lib_list():
+    if not configured():
+        return []
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT token, name, pos FROM watermark_library ORDER BY created_at DESC LIMIT 100")
+            return [dict(r) for r in cur.fetchall()]
+
+
+def wm_lib_delete(token: str):
+    if not configured():
+        return
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM watermark_library WHERE token = %s", (token,))
 
 
 # --- Editor jobs (restart safety) ----------------------------------------------

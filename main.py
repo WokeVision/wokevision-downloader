@@ -18,7 +18,7 @@ from transcribe import transcribe_audio
 import speech
 import notify
 from caption import (generate_captions, generate_on_screen_caption, generate_posting_caption,
-                     generate_platform_posts, normalize_platform_posts, PLATFORM_IDS, decide_credit)
+                     generate_platform_posts, normalize_platform_posts, PLATFORM_IDS, decide_credit, apply_disclosure)
 from render import render_staged, apply_caption
 import db
 import auth
@@ -318,6 +318,7 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
         "angle": meta.get("angle", ""),
         "cues": meta.get("cues") or [],
         "captions_on": bool(meta.get("captions_on", False)),
+        "paid_promo": bool(meta.get("paid_promo", False)),
         "watermark": ({"pos": (meta.get("wm") or {}).get("pos", "right"),
                        "url": f"{base_url}/files/{(meta.get('wm') or {}).get('file')}"}
                       if (meta.get("wm") or {}).get("file") else None),
@@ -1273,6 +1274,8 @@ def publish(req: PublishRequest):
         video_url = base_url + video_url
     caption = job.get("posting_caption") or job["result"].get("caption") or ""
     platform_posts = normalize_platform_posts(job.get("platform_posts") or {}, caption)
+    if (job.get("meta") or {}).get("paid_promo"):
+        platform_posts = {p: apply_disclosure(p, v) for p, v in platform_posts.items()}
 
     publish_job_id = str(uuid.uuid4())
     with JOBS_LOCK:
@@ -1340,7 +1343,7 @@ def get_history(entry_id: str):
         "publish_results": e.get("publish_results") or {},
         "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
         **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
-           if k in ("cues", "captions_on", "watermark")},
+           if k in ("cues", "captions_on", "watermark", "paid_promo")},
     }
 
 
@@ -1368,6 +1371,37 @@ async def upload_watermark(file: UploadFile = File(...)):
     return {"token": token, "url": f"{base_url}/files/wm_{token}.png"}
 
 
+class WmSave(BaseModel):
+    token: str
+    name: str
+    pos: str = "right"
+
+
+@app.get("/api/watermarks")
+def wm_list():
+    base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    return {"items": [{**r, "url": f"{base_url}/files/wm_{r['token']}.png"} for r in db.wm_lib_list()]}
+
+
+@app.post("/api/watermarks")
+def wm_save(req: WmSave):
+    if not _HEX.match(req.token.lower()):
+        raise HTTPException(status_code=400, detail="Bad token.")
+    name = (req.name or "").strip()[:60]
+    if not name:
+        raise HTTPException(status_code=400, detail="Give it a name.")
+    db.wm_lib_save(req.token.lower(), name, req.pos if req.pos in render.WM_POSITIONS else "right")
+    return {"ok": True}
+
+
+@app.delete("/api/watermarks/{token}")
+def wm_delete(token: str):
+    if not _HEX.match(token.lower()):
+        raise HTTPException(status_code=400, detail="Bad token.")
+    db.wm_lib_delete(token.lower())
+    return {"ok": True}
+
+
 def _begin_rerender(job_id: str, label: str):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
@@ -1382,6 +1416,25 @@ def _begin_rerender(job_id: str, label: str):
         job["_stage_started_at"] = time.time()
         job["eta_seconds"] = _estimate_eta_seconds(job)
         return job
+
+
+class PaidPromoRequest(BaseModel):
+    on: bool
+
+
+@app.put("/jobs/{job_id}/paid-promo")
+def set_paid_promo(job_id: str, req: PaidPromoRequest):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job id")
+        job["meta"] = {**(job.get("meta") or {}), "paid_promo": bool(req.on)}
+        meta = job["meta"]
+    try:
+        db.update_history_meta(job_id, meta)
+    except Exception as e:
+        print(f"PAID PROMO SAVE FAILED: {e}", flush=True)
+    return {"ok": True}
 
 
 class CueModel(BaseModel):
@@ -1409,7 +1462,7 @@ def set_closed_captions(job_id: str, req: ClosedCaptionsRequest):
 
 
 @app.post("/jobs/{job_id}/watermark")
-async def set_job_watermark(job_id: str, file: UploadFile = File(None), pos: str = Form("right"), remove: str = Form("")):
+async def set_job_watermark(job_id: str, file: UploadFile = File(None), pos: str = Form("right"), remove: str = Form(""), token: str = Form("")):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
     if not job:
@@ -1434,6 +1487,15 @@ async def set_job_watermark(job_id: str, file: UploadFile = File(None), pos: str
                 wm["file"] = fn
             except Exception:
                 raise HTTPException(status_code=400, detail="That file isn't a readable image.")
+        if token and _HEX.match(token.lower()):
+            src = os.path.join(DOWNLOAD_DIR, f"wm_{token.lower()}.png")
+            if not os.path.exists(src):
+                storage.fetch_to(src, os.path.basename(src))
+            if os.path.exists(src):
+                fn = f"{job_id}_wm.png"
+                shutil.copyfile(src, os.path.join(DOWNLOAD_DIR, fn))
+                storage.upload_many_async([(os.path.join(DOWNLOAD_DIR, fn), fn)])
+                wm["file"] = fn
         if not wm.get("file"):
             raise HTTPException(status_code=400, detail="Choose a watermark image first.")
         wm["pos"] = pos

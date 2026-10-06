@@ -117,6 +117,7 @@
   .wmPick { display: inline-flex; align-items: center; gap: 8px; }
   .wmPick label.wmFile { cursor: pointer; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.06); font-size: 13px; font-weight: 600; }
   .wmPick label.wmFile input { display: none; }
+  .wmSel { background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 7px 8px; font-size: 13px; max-width: 130px; }
   .wmThumb { height: 30px; max-width: 80px; object-fit: contain; border-radius: 6px; background: #fff; display: none; }
   .wmPos { display: flex; gap: 6px; margin-top: 8px; }
   .wmPos button { flex: 1; padding: 7px 4px; border-radius: 9px; border: 1px solid var(--border); background: transparent; color: var(--text); font-size: 12.5px; cursor: pointer; }
@@ -620,7 +621,9 @@
         <span class="wmTitle">Watermark <span>(optional &mdash; campaign logo)</span></span>
         <span class="wmPick">
           <img class="wmThumb" id="wmThumb" alt="" />
+          <select id="wmSaved" class="wmSel" title="Saved watermarks"><option value="">Saved…</option></select>
           <label class="wmFile"><span id="wmFileText">Add watermark</span><input type="file" id="wmInput" accept="image/*" /></label>
+          <button type="button" class="secondary" id="wmSave" style="display:none">Save</button>
           <button type="button" class="secondary" id="wmClear" style="display:none">Clear</button>
         </span>
       </div>
@@ -722,6 +725,11 @@
   <div class="card" id="platformsCard">
     <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Post to</h3>
     <div id="platformList"></div>
+
+    <label class="optRow" style="padding-top:12px">
+      <span>Paid partnership / ad<br><small style="opacity:.6;font-weight:400">Adds &ldquo;Paid partnership&rdquo; to the start of each caption and turns on TikTok&rsquo;s branded-content and YouTube&rsquo;s paid-promotion labels.</small></span>
+      <span class="switch"><input type="checkbox" id="paidPromo" /><span class="track"></span></span>
+    </label>
 
     <div class="whenBox">
       <div class="segmented" id="whenSeg">
@@ -829,7 +837,7 @@
     document.getElementById("captionBox").value = data.caption || "";
     document.getElementById("angleBox").value = data.angle || document.getElementById("angleBox").value || "";
     updateCaptionCharCount();
-    fillCues(data.cues, data.captions_on); setJobWm(data.watermark);
+    fillCues(data.cues, data.captions_on); setJobWm(data.watermark); paidPromo.checked = !!data.paid_promo;
     fillPosts(data.platform_posts);
     setSaveState("");
     setResult(true); autoGrowAll();
@@ -1098,7 +1106,8 @@
   })();
 
   // --- Campaign watermark + closed captions ------------------------------
-  let wmFile = null, wmPos = "right", wmTokenCache = null, jobWm = null;
+  let wmFile = null, wmPos = "right", wmTokenCache = null, jobWm = null, wmSavedToken = null;
+  const wmSave = document.getElementById("wmSave");
   const wmInput = document.getElementById("wmInput");
   const wmThumb = document.getElementById("wmThumb");
   const wmClear = document.getElementById("wmClear");
@@ -1106,15 +1115,21 @@
   const wmMsg = document.getElementById("wmMsg");
   function wmRefresh() {
     document.querySelectorAll("#wmPos button").forEach((b) => b.classList.toggle("active", b.dataset.pos === wmPos));
+    if (wmSavedToken && !wmFile) {
+      wmClear.style.display = ""; wmSave.style.display = "none";
+      wmApplyBtn.textContent = "Apply to this edit";
+      return;
+    }
     const src = wmFile ? URL.createObjectURL(wmFile) : (jobWm && jobWm.url ? jobWm.url + "?t=" + Date.now() : "");
     wmThumb.style.display = src ? "inline-block" : "none";
     if (src) wmThumb.src = src;
     document.getElementById("wmFileText").textContent = (wmFile || jobWm) ? "Change" : "Add watermark";
     wmClear.style.display = wmFile ? "" : "none";
+    wmSave.style.display = wmFile ? "" : "none";
     wmApplyBtn.textContent = (!wmFile && jobWm) ? ((jobWm.pos === wmPos) ? "Remove from this edit" : "Move watermark") : "Apply to this edit";
   }
   async function wmToken() {
-    if (!wmFile) return "";
+    if (!wmFile) return wmSavedToken || "";
     if (wmTokenCache) return wmTokenCache;
     const fd = new FormData(); fd.append("file", wmFile);
     const r = await fetch("/api/watermark", { method: "POST", body: fd });
@@ -1122,15 +1137,15 @@
     if (!r.ok) throw new Error(d.detail || "Watermark upload failed.");
     wmTokenCache = d.token; return wmTokenCache;
   }
-  wmInput.addEventListener("change", () => { wmFile = wmInput.files[0] || null; wmTokenCache = null; wmRefresh(); });
-  wmClear.addEventListener("click", () => { wmFile = null; wmTokenCache = null; wmInput.value = ""; wmRefresh(); });
+  wmInput.addEventListener("change", () => { wmFile = wmInput.files[0] || null; wmTokenCache = null; wmSavedToken = null; wmRefresh(); });
+  wmClear.addEventListener("click", () => { wmFile = null; wmTokenCache = null; wmSavedToken = null; wmInput.value = ""; wmThumb.style.display = "none"; wmRefresh(); });
   document.getElementById("wmPos").addEventListener("click", (e) => { const b = e.target.closest("button[data-pos]"); if (b) { wmPos = b.dataset.pos; wmRefresh(); } });
-  function setJobWm(w) { jobWm = w || null; if (jobWm) wmPos = jobWm.pos || wmPos; wmFile = null; wmTokenCache = null; wmInput.value = ""; wmRefresh(); }
+  function setJobWm(w) { jobWm = w || null; if (jobWm) wmPos = jobWm.pos || wmPos; wmFile = null; wmTokenCache = null; wmSavedToken = null; wmInput.value = ""; wmRefresh(); }
   wmApplyBtn.addEventListener("click", async () => {
     if (!currentJobId) return;
     const fd = new FormData();
     if (!wmFile && jobWm && jobWm.pos === wmPos) fd.append("remove", "1");
-    else { fd.append("pos", wmPos); if (wmFile) fd.append("file", wmFile); }
+    else { fd.append("pos", wmPos); if (wmFile) fd.append("file", wmFile); else if (wmSavedToken) fd.append("token", wmSavedToken); }
     wmApplyBtn.disabled = true; wmMsg.textContent = "Re-rendering...";
     try {
       const r = await fetch(`/jobs/${currentJobId}/watermark`, { method: "POST", body: fd });
@@ -1141,6 +1156,37 @@
     } catch (err) { wmMsg.textContent = err.message; }
     finally { wmApplyBtn.disabled = false; }
   });
+
+  // Saved watermark library
+  const wmSaved = document.getElementById("wmSaved");
+  let wmLib = [];
+  async function loadWmLib() {
+    try {
+      const r = await fetch("/api/watermarks"); const d = await r.json(); wmLib = d.items || [];
+      wmSaved.innerHTML = '<option value="">Saved…</option>' + wmLib.map((w) => '<option value="' + w.token + '">' + w.name.replace(/</g, "&lt;") + '</option>').join("") + (wmLib.length ? '<option value="__del">Delete a saved one…</option>' : "");
+    } catch (_) {}
+  }
+  wmSaved.addEventListener("change", async () => {
+    const v = wmSaved.value; wmSaved.value = "";
+    if (!v) return;
+    if (v === "__del") {
+      const name = prompt("Type the exact name of the saved watermark to delete:");
+      const w = wmLib.find((x) => x.name === name);
+      if (w) { await fetch("/api/watermarks/" + w.token, { method: "DELETE" }); loadWmLib(); }
+      return;
+    }
+    const w = wmLib.find((x) => x.token === v); if (!w) return;
+    wmFile = null; wmInput.value = ""; wmTokenCache = w.token; wmSavedToken = w.token; wmPos = w.pos || wmPos;
+    wmThumb.src = w.url; wmThumb.style.display = "inline-block";
+    document.getElementById("wmFileText").textContent = w.name; wmClear.style.display = ""; wmSave.style.display = "none";
+    document.querySelectorAll("#wmPos button").forEach((b) => b.classList.toggle("active", b.dataset.pos === wmPos));
+    wmApplyBtn.textContent = "Apply to this edit";
+  });
+  wmSave.addEventListener("click", async () => {
+    const name = prompt("Name this watermark (e.g. the campaign):"); if (!name) return;
+    try { const tok = await wmToken(); await fetch("/api/watermarks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: tok, name, pos: wmPos }) }); wmSave.style.display = "none"; loadWmLib(); } catch (e) { alert(e.message); }
+  });
+  loadWmLib();
 
   const ccList = document.getElementById("ccList");
   function fmtT(t) { t = Math.max(0, t || 0); return Math.floor(t / 60) + ":" + String(Math.floor(t % 60)).padStart(2, "0"); }
@@ -1175,6 +1221,11 @@
     finally { btn.disabled = false; sp.style.display = "none"; }
   });
   wmRefresh();
+  const paidPromo = document.getElementById("paidPromo");
+  paidPromo.addEventListener("change", () => {
+    if (!currentJobId) return;
+    fetch(`/jobs/${currentJobId}/paid-promo`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: paidPromo.checked }) }).catch(() => {});
+  });
 
   // --- Per-platform post versions: editable, autosaved ------------------
   // Each platform gets its own native version of the caption (see
@@ -1919,7 +1970,7 @@
       document.getElementById("captionBox").value = e.posting_caption || "";
       document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";
       updateCaptionCharCount();
-      fillCues(e.cues, e.captions_on); setJobWm(e.watermark);
+      fillCues(e.cues, e.captions_on); setJobWm(e.watermark); paidPromo.checked = !!e.paid_promo;
       fillPosts(e.platform_posts);
       setSaveState("");
       setResult(true); autoGrowAll();

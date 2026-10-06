@@ -258,7 +258,8 @@ def _upload_video(access_token: str, video_url: str, caption: str, options: dict
                 "disable_stitch": not options.get("allow_stitch", True),
                 "disable_comment": not options.get("allow_comments", True),
                 "video_cover_timestamp_ms": 1000,
-                "brand_content_toggle": False,
+                # Third-party paid partnership -> "branded content" disclosure.
+                "brand_content_toggle": bool(options.get("paid_promo")),
                 "brand_organic_toggle": False,
                 "is_aigc": False,
             },

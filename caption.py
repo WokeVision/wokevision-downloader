@@ -812,3 +812,26 @@ def generate_platform_posts(transcript: str, meta: dict, on_screen_caption: str 
             merged[only] = generated[only]
         return merged
     return generated
+
+
+# --- Paid-partnership / ad disclosure ----------------------------------------
+_DISCLOSE_FIELDS = {"instagram": "caption", "facebook": "description", "threads": "text",
+                    "x": "text", "tiktok": "caption", "youtube": "description"}
+
+
+def apply_disclosure(platform: str, post: dict) -> dict:
+    """Marks a post as a paid partnership: sets the platform's native flag
+    where one exists (TikTok branded content, YouTube paid promotion -- read
+    by those platform modules from post["paid_promo"]) and puts a clear
+    on-text disclosure at the very start of the caption everywhere (the FTC
+    wants it before the 'more' fold). Idempotent."""
+    post = dict(post or {})
+    post["paid_promo"] = True
+    key = _DISCLOSE_FIELDS.get(platform)
+    if key:
+        text = (post.get(key) or "").lstrip()
+        low = text[:80].lower()
+        if "paid partnership" not in low and not low.startswith("#ad") and not low.startswith("ad:"):
+            prefix = "#ad " if platform in ("x", "threads") else "Paid partnership\n\n"
+            post[key] = prefix + text
+    return post

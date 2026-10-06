@@ -241,7 +241,8 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
         json={
             "snippet": {"title": title, "description": description, "categoryId": category_id,
                         **({"tags": tags} if tags else {})},
-            "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
+            "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False,
+                       **({"paidProductPlacementDetails": {"hasPaidProductPlacement": True}} if post.get("paid_promo") else {})},
         },
         timeout=30,
     )

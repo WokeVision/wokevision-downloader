@@ -151,7 +151,7 @@
     return new Promise((resolve, reject) => {
       const x = new XMLHttpRequest();
       x.open("POST", "/api/clip");
-      x.upload.onprogress = (e) => { if (e.lengthComputable) { const p = Math.round(e.loaded / e.total * 100); setBar(p); $("busyLabel").textContent = "Uploading " + p + "% — keep this tab open"; } };
+      x.upload.onprogress = (e) => { if (e.lengthComputable) { const p = Math.round(e.loaded / e.total * 100); setBar(p); $("busyLabel").textContent = p >= 100 ? "Upload sent — saving on the server, keep this tab open until it says it's working" : "Uploading " + p + "% — keep this tab open"; } };
       x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch (_) {} x.status < 300 ? resolve(d) : reject(new Error(d.detail || "Upload failed (" + x.status + ").")); };
       x.onerror = () => reject(new Error("Upload interrupted. Stay on this page while uploading and try again."));
       x.send(fd);

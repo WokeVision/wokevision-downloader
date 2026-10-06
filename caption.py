@@ -376,6 +376,8 @@ def credit_handle(meta: dict) -> str:
     repost/aggregator rather than the creator (meta["credit_ok"] is False,
     see decide_credit)."""
     meta = meta or {}
+    if "credit_override" in meta:           # set by hand in the editor ("" = no credit)
+        return _clean_handle(meta.get("credit_override"))
     if meta.get("credit_ok") is False:
         return ""
     for key in ("uploader_id", "channel", "uploader"):
@@ -454,7 +456,12 @@ def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
     return context[:5000]
 
 
+BRAND_NOTES = ""   # set from the Settings page (main.py refreshes it)
+
+
 def _call_openai(system_prompt: str, user_content: str) -> dict:
+    if BRAND_NOTES:
+        system_prompt = system_prompt + "\n\nADDITIONAL OWNER INSTRUCTIONS (follow these; they override the defaults above):\n" + BRAND_NOTES
     try:
         ex = style_examples()
         if ex:
@@ -835,3 +842,17 @@ def apply_disclosure(platform: str, post: dict) -> dict:
             prefix = "#ad " if platform in ("x", "threads") else "Paid partnership\n\n"
             post[key] = prefix + text
     return post
+
+
+def set_credit_in_posts(posts: dict, handle: str) -> dict:
+    """Rewrites the 'Credit: @x' line in every credited platform's text:
+    removes any existing one and adds the new handle (or none if blank)."""
+    out = {}
+    for pid, post in (posts or {}).items():
+        post = dict(post) if isinstance(post, dict) else post
+        key = _DISCLOSE_FIELDS.get(pid)
+        if isinstance(post, dict) and key and pid in ("instagram", "tiktok", "facebook", "youtube") and post.get(key):
+            text = re.sub(r"(?im)^\s*credit\s*:\s*@\S+\s*$\n?", "", post[key]).rstrip()
+            post[key] = _ensure_credit(text, handle) if handle else text
+        out[pid] = post
+    return out

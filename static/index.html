@@ -138,6 +138,8 @@
   .ccRow .t { font-size: 11.5px; opacity: .6; padding-top: 9px; font-variant-numeric: tabular-nums; }
   .ccRow textarea { min-height: 0 !important; height: 52px; padding: 7px 9px; font-size: 14px; resize: vertical; margin: 0; }
   .ccRow .x { background: none; border: 0; color: var(--text-faint); font-size: 18px; cursor: pointer; padding: 6px 0 0; }
+  .ccSel { background: rgba(0,0,0,.35); color: inherit; border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 12.5px; }
+  .ccRow { grid-template-columns: 62px 1fr 28px; } .ccRow .t input { width: 56px; background: rgba(0,0,0,.35); color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 3px 4px; font-size: 11.5px; margin-bottom: 3px; }
   .ccEmpty { font-size: 13px; opacity: .65; padding: 6px 0 10px; }
 
   /* Touch devices: bigger, easier targets */
@@ -704,7 +706,10 @@
   <div class="card captionCard resultPart" id="ccCard">
         <div class="ccHead">
           <h3>Closed captions</h3>
-          <label class="ccToggle"><input type="checkbox" id="ccOn" checked /> On video</label>
+          <span style="display:flex;gap:10px;align-items:center">
+            <select id="ccStyle" class="ccSel" title="Caption style"><option value="classic">Classic</option><option value="highlight">Word highlight</option></select>
+            <label class="ccToggle"><input type="checkbox" id="ccOn" checked /> On video</label>
+          </span>
         </div>
         <div id="ccList"></div>
         <div class="actionRow">
@@ -725,6 +730,11 @@
   <div class="card" id="platformsCard">
     <h3 style="margin:0 0 2px; font-size:14.5px; font-weight:700;">Post to</h3>
     <div id="platformList"></div>
+
+    <div class="optRow" style="padding-top:12px;display:block">
+      <span>Credit original creator <small style="opacity:.6;font-weight:400">(@handle, blank = auto)</small></span>
+      <div style="display:flex;gap:8px;margin-top:6px"><input type="text" id="creditHandle" placeholder="@handle" style="flex:1;margin:0" /><button type="button" class="secondary" id="creditBtn">Update</button></div>
+    </div>
 
     <label class="optRow" style="padding-top:12px">
       <span>Paid partnership / ad<br><small style="opacity:.6;font-weight:400">Adds &ldquo;Paid partnership&rdquo; to the start of each caption and turns on TikTok&rsquo;s branded-content and YouTube&rsquo;s paid-promotion labels.</small></span>
@@ -837,7 +847,7 @@
     document.getElementById("captionBox").value = data.caption || "";
     document.getElementById("angleBox").value = data.angle || document.getElementById("angleBox").value || "";
     updateCaptionCharCount();
-    fillCues(data.cues, data.captions_on); setJobWm(data.watermark); paidPromo.checked = !!data.paid_promo;
+    fillCues(data.cues, data.captions_on); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; setJobWm(data.watermark); paidPromo.checked = !!data.paid_promo;
     fillPosts(data.platform_posts);
     setSaveState("");
     setResult(true); autoGrowAll();
@@ -1199,9 +1209,9 @@
     }
     cues.forEach((c) => {
       const row = document.createElement("div"); row.className = "ccRow";
-      row.dataset.start = c.start; row.dataset.end = c.end;
-      row.innerHTML = '<span class="t"></span><textarea></textarea><button type="button" class="x" title="Remove line">&times;</button>';
-      row.querySelector(".t").textContent = fmtT(c.start);
+      row.dataset.words = JSON.stringify(c.words || []); row.dataset.orig = c.text;
+      row.innerHTML = '<span class="t"><input type="number" step="0.1" min="0" class="cs" title="Start (s)"><input type="number" step="0.1" min="0" class="ce" title="End (s)"></span><textarea></textarea><button type="button" class="x" title="Remove line">&times;</button>';
+      row.querySelector(".cs").value = (+c.start).toFixed(1); row.querySelector(".ce").value = (+c.end).toFixed(1);
       row.querySelector("textarea").value = c.text;
       row.querySelector(".x").addEventListener("click", () => row.remove());
       ccList.appendChild(row);
@@ -1209,11 +1219,11 @@
   }
   document.getElementById("ccApplyBtn").addEventListener("click", async () => {
     if (!currentJobId) return;
-    const cues = [...ccList.querySelectorAll(".ccRow")].map((r) => ({ start: +r.dataset.start, end: +r.dataset.end, text: r.querySelector("textarea").value }));
+    const cues = [...ccList.querySelectorAll(".ccRow")].map((r) => { const text = r.querySelector("textarea").value; let words = []; try { words = JSON.parse(r.dataset.words || "[]"); } catch (e) {} return { start: +r.querySelector(".cs").value, end: +r.querySelector(".ce").value, text, words: text === r.dataset.orig ? words : [] }; });
     const btn = document.getElementById("ccApplyBtn"), sp = document.getElementById("ccSpinner");
     btn.disabled = true; sp.style.display = "inline";
     try {
-      const r = await fetch(`/jobs/${currentJobId}/closed-captions`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cues, enabled: document.getElementById("ccOn").checked }) });
+      const r = await fetch(`/jobs/${currentJobId}/closed-captions`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cues, enabled: document.getElementById("ccOn").checked, style: document.getElementById("ccStyle").value }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.detail || "Couldn't update captions.");
       await pollJob(currentJobId);
@@ -1222,6 +1232,15 @@
   });
   wmRefresh();
   const paidPromo = document.getElementById("paidPromo");
+  document.getElementById("creditBtn").addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const b = document.getElementById("creditBtn"); b.disabled = true;
+    try {
+      const r = await fetch(`/jobs/${currentJobId}/credit`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ handle: document.getElementById("creditHandle").value }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.detail || "failed");
+      fillPosts(d.platform_posts); document.getElementById("creditHandle").value = d.credit ? "@" + d.credit : "";
+    } catch (e) { alert("Couldn't update credit: " + e.message); } finally { b.disabled = false; }
+  });
   paidPromo.addEventListener("change", () => {
     if (!currentJobId) return;
     fetch(`/jobs/${currentJobId}/paid-promo`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: paidPromo.checked }) }).catch(() => {});
@@ -1970,7 +1989,7 @@
       document.getElementById("captionBox").value = e.posting_caption || "";
       document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";
       updateCaptionCharCount();
-      fillCues(e.cues, e.captions_on); setJobWm(e.watermark); paidPromo.checked = !!e.paid_promo;
+      fillCues(e.cues, e.captions_on); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; setJobWm(e.watermark); paidPromo.checked = !!e.paid_promo;
       fillPosts(e.platform_posts);
       setSaveState("");
       setResult(true); autoGrowAll();

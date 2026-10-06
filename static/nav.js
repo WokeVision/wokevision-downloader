@@ -15,6 +15,7 @@
       '<a class="wvNavLink' + (active("/schedule") ? " active" : "") + '" href="/schedule">Schedule</a>' +
       '<a class="wvNavLink' + (active("/accounts") ? " active" : "") + '" href="/accounts">Accounts</a>' +
       '<a class="wvNavLink' + (active("/dashboards") ? " active" : "") + '" href="/dashboards">Analytics Hub</a>' +
+      '<a class="wvNavLink' + (active("/settings") ? " active" : "") + '" href="/settings">Settings</a>' +
       '<span class="wvNavSpacer"></span>' +
       '<a class="wvNavAuth" id="wvNavAuth" href="/login?next=' + encodeURIComponent(path) + '" style="visibility:hidden">Sign in</a>' +
     '</div>';

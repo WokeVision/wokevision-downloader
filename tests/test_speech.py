@@ -56,3 +56,16 @@ def test_credit_handle():
     assert caption.credit_handle({"uploader_id": "123", "channel": "real_user"}) == "real_user"
     assert caption.credit_handle({"source_url": "https://www.tiktok.com/@tt/video/1"}) == "tt"
     assert caption.credit_handle({"uploader_id": "x", "credit_ok": False}) == ""
+
+
+def test_mask_cues():
+    out = speech.mask_cues([{"start": 0, "end": 1, "text": "this is shit ok", "words": []}], ["ok"])
+    assert "shit" not in out[0]["text"] and "*" in out[0]["text"]
+
+
+def test_build_ass_highlight():
+    cues = [{"start": 0, "end": 2, "text": "hello big world",
+             "words": [{"w": "hello", "start": 0, "end": .6}, {"w": "big", "start": .6, "end": 1.2}, {"w": "world", "start": 1.2, "end": 2}]}]
+    ass = speech.build_ass(cues, 1080, 1920, 300, style="highlight")
+    assert ass.count("Dialogue:") >= 3
+    assert "&H0000E4FF" in ass

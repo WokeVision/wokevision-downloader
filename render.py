@@ -379,7 +379,7 @@ def _watermark_geometry(wm_path, pos):
 
 
 def apply_caption(staged_path: str, caption_text: str, output_path: str, progress_cb=None,
-                  cues=None, watermark=None):
+                  cues=None, watermark=None, cue_style="classic"):
     """The fast path: overlays the on-screen caption, the optional campaign
     watermark ({"path","pos"}) and the optional burned-in speech captions
     (cues: [{start,end,text}]) onto an already-staged video and re-encodes.
@@ -408,7 +408,7 @@ def apply_caption(staged_path: str, caption_text: str, output_path: str, progres
         ass_path = f"{output_path}.cues.ass"
         margin_v = (CANVAS_H - (VIDEO_Y + VIDEO_H)) + lift
         with open(ass_path, "w", encoding="utf-8") as f:
-            f.write(build_ass(cues, CANVAS_W, CANVAS_H, margin_v))
+            f.write(build_ass(cues, CANVAS_W, CANVAS_H, margin_v, style=cue_style))
         esc_ass = ass_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
         esc_fonts = FONT_DIR.replace(":", "\\:")
         chain.append(f"[{last}]subtitles='{esc_ass}':fontsdir='{esc_fonts}'[v3]")

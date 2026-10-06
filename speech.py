@@ -38,7 +38,7 @@ def _probe_duration(path):
         return None
 
 
-def _whisper_verbose(audio_path):
+def _whisper_verbose(audio_path, prompt=""):
     with open(audio_path, "rb") as f:
         resp = requests.post(
             WHISPER_URL,
@@ -46,14 +46,14 @@ def _whisper_verbose(audio_path):
             files={"file": (os.path.basename(audio_path), f, "audio/mpeg")},
             data=[("model", "whisper-1"), ("response_format", "verbose_json"),
                   ("timestamp_granularities[]", "word"),
-                  ("timestamp_granularities[]", "segment")],
+                  ("timestamp_granularities[]", "segment")] + ([("prompt", prompt[:800])] if prompt else []),
             timeout=300,
         )
     resp.raise_for_status()
     return resp.json()
 
 
-def transcribe_words(video_path, progress_cb=None):
+def transcribe_words(video_path, progress_cb=None, vocab=""):
     """Returns {"text", "words":[{w,start,end}], "segments":[{start,end,text}],
     "duration"}; chunks long videos and offsets timestamps. Empty result if
     there is no key or Whisper fails (callers treat that as "no captions")."""
@@ -70,7 +70,7 @@ def transcribe_words(video_path, progress_cb=None):
         try:
             if not _extract_chunk(video_path, offset, CHUNK_SECONDS, audio):
                 continue
-            data = _whisper_verbose(audio)
+            data = _whisper_verbose(audio, vocab)
             texts.append((data.get("text") or "").strip())
             for w in data.get("words") or []:
                 words.append({"w": str(w.get("word", "")).strip(),
@@ -126,7 +126,8 @@ def build_cues(words):
         text = " ".join(w["w"] for w in cur)
         cues.append({"start": round(cur[0]["start"], 2),
                      "end": round(cur[-1]["end"], 2),
-                     "text": _wrap_two_lines(text)})
+                     "text": _wrap_two_lines(text),
+                     "words": [{"w": x["w"], "start": round(x["start"], 2), "end": round(x["end"], 2)} for x in cur]})
         cur = []
 
     for i, w in enumerate(words):
@@ -167,6 +168,39 @@ def clip_words(words, start, end):
             for w in words if w["end"] > start and w["start"] < end]
 
 
+_PROFANITY = ["fuck", "fucking", "fucked", "shit", "bullshit", "bitch", "asshole", "cunt", "dick", "pussy", "motherfucker", "nigger", "nigga", "faggot", "retard"]
+
+
+def _mask_word(w: str) -> str:
+    core = re.sub(r"[^A-Za-z]", "", w)
+    if len(core) < 3:
+        return w
+    out, first = [], True
+    for ch in w:
+        if ch.isalpha():
+            out.append(ch if first else "*")
+            first = False
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def mask_cues(cues, extra_words=None):
+    """Masks profanity (and any user-supplied words) as f*** in the cue text."""
+    bad = {w.lower() for w in _PROFANITY} | {w.strip().lower() for w in (extra_words or []) if w.strip()}
+    def fix(tok):
+        base = re.sub(r"[^A-Za-z']", "", tok).lower()
+        return _mask_word(tok) if base in bad or base.rstrip("s") in bad else tok
+    out = []
+    for c in cues:
+        c = dict(c)
+        c["text"] = "\n".join(" ".join(fix(t) for t in line.split(" ")) for line in c["text"].split("\n"))
+        if c.get("words"):
+            c["words"] = [{**w, "w": fix(w["w"])} for w in c["words"]]
+        out.append(c)
+    return out
+
+
 # ---------------------------------------------------------------------- ASS
 def _ass_time(t):
     t = max(0.0, float(t))
@@ -181,7 +215,10 @@ def _ass_escape(text):
     return text.replace("\r", "").replace("\n", "\\N")
 
 
-def build_ass(cues, play_w, play_h, margin_v, font_size=52, font_name="Poppins"):
+HIGHLIGHT_ASS = "&H0000E4FF"   # warm yellow (BGR) for the word being spoken
+
+
+def build_ass(cues, play_w, play_h, margin_v, font_size=52, font_name="Poppins", style="classic"):
     head = (
         "[Script Info]\nScriptType: v4.00+\n"
         f"PlayResX: {play_w}\nPlayResY: {play_h}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n\n"
@@ -198,7 +235,34 @@ def build_ass(cues, play_w, play_h, margin_v, font_size=52, font_name="Poppins")
         txt = (c.get("text") or "").strip()
         if not txt or c["end"] <= c["start"]:
             continue
-        lines.append(f"Dialogue: 0,{_ass_time(c['start'])},{_ass_time(c['end'])},Default,,0,0,0,,{_ass_escape(txt.upper())}")
+        if style == "highlight":
+            toks = txt.upper().replace("\n", " \n ").split(" ")
+            toks = [t for t in toks if t != ""]
+            words = [t for t in toks if t != "\n"]
+            cw = c.get("words") or []
+            if len(cw) == len(words):
+                starts = [w["start"] for w in cw]
+            else:   # edited text: spread evenly across the cue
+                dur = c["end"] - c["start"]
+                starts = [c["start"] + dur * i / max(1, len(words)) for i in range(len(words))]
+            starts = starts + [c["end"]]
+            starts[0] = c["start"]
+            for i in range(len(words)):
+                end = starts[i + 1] if i + 1 < len(words) else c["end"]
+                if end <= starts[i]:
+                    continue
+                parts, wi = [], 0
+                for t in toks:
+                    if t == "\n":
+                        parts.append("\\N")
+                        continue
+                    esc = _ass_escape(t)
+                    parts.append(("{\\c" + HIGHLIGHT_ASS + "}" + esc + "{\\c" + CAPTION_RED_ASS + "}") if wi == i else esc)
+                    wi += 1
+                text = " ".join(parts).replace(" \\N ", "\\N")
+                lines.append(f"Dialogue: 0,{_ass_time(starts[i])},{_ass_time(end)},Default,,0,0,0,,{text}")
+        else:
+            lines.append(f"Dialogue: 0,{_ass_time(c['start'])},{_ass_time(c['end'])},Default,,0,0,0,,{_ass_escape(txt.upper())}")
     return head + "\n".join(lines) + "\n"
 
 

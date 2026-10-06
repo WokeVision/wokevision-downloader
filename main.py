@@ -18,7 +18,8 @@ from transcribe import transcribe_audio
 import speech
 import notify
 from caption import (generate_captions, generate_on_screen_caption, generate_posting_caption,
-                     generate_platform_posts, normalize_platform_posts, PLATFORM_IDS, decide_credit, apply_disclosure)
+                     generate_platform_posts, normalize_platform_posts, PLATFORM_IDS, decide_credit, apply_disclosure,
+                     credit_handle as caption_credit_handle, set_credit_in_posts)
 from render import render_staged, apply_caption
 import db
 import auth
@@ -319,6 +320,8 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
         "cues": meta.get("cues") or [],
         "captions_on": bool(meta.get("captions_on", False)),
         "paid_promo": bool(meta.get("paid_promo", False)),
+        "captions_style": meta.get("captions_style", "classic"),
+        "credit": caption_credit_handle(meta),
         "watermark": ({"pos": (meta.get("wm") or {}).get("pos", "right"),
                        "url": f"{base_url}/files/{(meta.get('wm') or {}).get('file')}"}
                       if (meta.get("wm") or {}).get("file") else None),
@@ -353,6 +356,64 @@ def _save_platform_posts(job_id: str, posts: dict):
         db.update_history_platform_posts(job_id, posts)
     except Exception as e:
         print(f"HISTORY PLATFORM-POSTS SAVE FAILED ({job_id}): {e}", flush=True)
+
+
+_SETTINGS_CACHE = {"t": 0.0, "v": {}}
+
+
+def app_settings() -> dict:
+    now = time.time()
+    if now - _SETTINGS_CACHE["t"] > 30:
+        try:
+            _SETTINGS_CACHE["v"] = db.settings_get() or {}
+        except Exception as e:
+            print(f"SETTINGS LOAD FAILED: {e}", flush=True)
+        _SETTINGS_CACHE["t"] = now
+        _apply_brand_notes(_SETTINGS_CACHE["v"])
+    return _SETTINGS_CACHE["v"]
+
+
+def _apply_brand_notes(s: dict):
+    import caption as _cap
+    parts = []
+    if (s.get("voice_notes") or "").strip():
+        parts.append(s["voice_notes"].strip())
+    if (s.get("banned") or "").strip():
+        parts.append("NEVER use these words or phrases: " + s["banned"].strip().replace("\n", ", "))
+    _cap.BRAND_NOTES = "\n".join(parts)[:3000]
+
+
+class SettingsModel(BaseModel):
+    vocab: str = ""
+    banned: str = ""
+    voice_notes: str = ""
+    mask_profanity: bool = False
+    mask_words: str = ""
+    caption_style: str = "classic"
+
+
+@app.get("/settings")
+def settings_page():
+    return FileResponse("static/settings.html")
+
+
+@app.get("/api/settings")
+def settings_get():
+    _SETTINGS_CACHE["t"] = 0.0
+    return {**SettingsModel().model_dump(), **app_settings()}
+
+
+@app.put("/api/settings")
+def settings_put(req: SettingsModel):
+    data = req.model_dump()
+    data["caption_style"] = data["caption_style"] if data["caption_style"] in ("classic", "highlight") else "classic"
+    try:
+        db.settings_save(data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    _SETTINGS_CACHE["v"], _SETTINGS_CACHE["t"] = data, time.time()
+    _apply_brand_notes(data)
+    return {"ok": True}
 
 
 _HEX = re.compile(r"^[0-9a-f\-]{8,40}$")
@@ -416,10 +477,13 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
             _wm_token, _wm_pos = _j.get("wm_token", ""), _j.get("wm_pos", "right")
         meta = _claim_watermark(job_id, _wm_token, _wm_pos, meta)
         _set_stage(job_id, "transcribing")
-        sp = pre_speech or speech.transcribe_words(final_source_path)
+        _st = app_settings()
+        sp = pre_speech or speech.transcribe_words(final_source_path, vocab=_st.get("vocab", ""))
         transcript = sp.get("text", "")
         cues = speech.build_cues(sp.get("words") or [])
-        meta = {**meta, "cues": cues, "captions_on": bool(cues)}
+        if _st.get("mask_profanity"):
+            cues = speech.mask_cues(cues, (_st.get("mask_words") or "").replace("\n", ",").split(","))
+        meta = {**meta, "cues": cues, "captions_on": bool(cues), "captions_style": _st.get("caption_style", "classic")}
         _set_job(job_id, transcript=transcript, meta=meta, source_path=final_source_path)
 
         _set_stage(job_id, "captioning")
@@ -447,7 +511,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
             caption_text=on_screen_caption,
             output_path=output_path,
             progress_cb=lambda frac: _set_stage(job_id, "rendering", 0.5 + frac * 0.5),
-            cues=_cues_args(meta), watermark=_wm_args(meta),
+            cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
         )
         with JOBS_LOCK:
             _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
@@ -538,7 +602,7 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
     apply_caption(
         staged_path=staged_path, caption_text=on_screen_caption, output_path=output_path,
         progress_cb=lambda frac: _set_stage(job_id, "rendering", progress_base + frac * (1 - progress_base)),
-        cues=_cues_args(meta), watermark=_wm_args(meta),
+        cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
     )
     with JOBS_LOCK:
         _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
@@ -1343,7 +1407,7 @@ def get_history(entry_id: str):
         "publish_results": e.get("publish_results") or {},
         "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
         **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
-           if k in ("cues", "captions_on", "watermark", "paid_promo")},
+           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit")},
     }
 
 
@@ -1418,6 +1482,31 @@ def _begin_rerender(job_id: str, label: str):
         return job
 
 
+class CreditRequest(BaseModel):
+    handle: str = ""
+
+
+@app.put("/jobs/{job_id}/credit")
+def set_credit(job_id: str, req: CreditRequest):
+    handle = req.handle.strip().lstrip("@")
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job id")
+        job["meta"] = {**(job.get("meta") or {}), "credit_override": handle}
+        meta = job["meta"]
+        caption = job.get("posting_caption") or ""
+        posts = normalize_platform_posts(job.get("platform_posts") or {}, caption)
+        posts = set_credit_in_posts(posts, caption_credit_handle(meta))
+        job["platform_posts"] = posts
+    try:
+        db.update_history_meta(job_id, meta)
+        _save_platform_posts(job_id, posts)
+    except Exception as e:
+        print(f"CREDIT SAVE FAILED: {e}", flush=True)
+    return {"platform_posts": posts, "credit": caption_credit_handle(meta)}
+
+
 class PaidPromoRequest(BaseModel):
     on: bool
 
@@ -1437,25 +1526,40 @@ def set_paid_promo(job_id: str, req: PaidPromoRequest):
     return {"ok": True}
 
 
+class WordModel(BaseModel):
+    w: str
+    start: float
+    end: float
+
+
 class CueModel(BaseModel):
     start: float
     end: float
     text: str
+    words: list[WordModel] | None = None
 
 
 class ClosedCaptionsRequest(BaseModel):
     cues: list[CueModel]
     enabled: bool = True
+    style: str = "classic"
 
 
 @app.put("/jobs/{job_id}/closed-captions")
 def set_closed_captions(job_id: str, req: ClosedCaptionsRequest):
-    cues = [{"start": round(c.start, 2), "end": round(c.end, 2), "text": c.text.strip()[:200]}
-            for c in req.cues if c.text.strip() and c.end > c.start]
+    cues = []
+    for c in req.cues:
+        if not c.text.strip() or c.end <= c.start:
+            continue
+        item = {"start": round(c.start, 2), "end": round(c.end, 2), "text": c.text.strip()[:200]}
+        if c.words and len(c.words) == len(c.text.split()):
+            item["words"] = [{"w": w.w, "start": w.start, "end": w.end} for w in c.words]
+        cues.append(item)
     cues.sort(key=lambda c: c["start"])
     job = _begin_rerender(job_id, "Updating captions")
     with JOBS_LOCK:
-        job["meta"] = {**(job.get("meta") or {}), "cues": cues, "captions_on": bool(req.enabled and cues)}
+        job["meta"] = {**(job.get("meta") or {}), "cues": cues, "captions_on": bool(req.enabled and cues),
+                                                   "captions_style": req.style if req.style in ("classic", "highlight") else "classic"}
     threading.Thread(target=_run_set_on_screen_caption,
                      args=(job_id, job.get("on_screen_caption", "")), daemon=True).start()
     return {"ok": True}

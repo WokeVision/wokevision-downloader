@@ -135,6 +135,12 @@ def init_db():
             # Per-platform versions of the posting caption (and the user's
             # edits to them), so nothing typed in the editor is lost.
             cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS platform_posts JSONB")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    id INT PRIMARY KEY DEFAULT 1,
+                    data JSONB NOT NULL DEFAULT '{}'::jsonb
+                )
+            """)
             # Saved campaign watermarks (the image lives in storage as wm_<token>.png).
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS watermark_library (
@@ -422,6 +428,27 @@ def get_history_entry(entry_id: str):
             cur.execute("SELECT * FROM history WHERE id = %s", (entry_id,))
             row = cur.fetchone()
     return _titled(row) if row else None
+
+
+# --- App settings (brand voice, vocabulary, caption defaults) -------------------
+
+def settings_get() -> dict:
+    if not configured():
+        return {}
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT data FROM app_settings WHERE id = 1")
+            row = cur.fetchone()
+    return (row or {}).get("data") or {}
+
+
+def settings_save(data: dict):
+    if not configured():
+        raise RuntimeError("Database isn't configured.")
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO app_settings (id, data) VALUES (1, %s)
+                           ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data""", (json.dumps(data),))
 
 
 # --- Watermark library -----------------------------------------------------------

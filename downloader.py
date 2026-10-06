@@ -136,6 +136,8 @@ def download_video(url: str, final_path: str, progress_cb=None) -> dict:
                     "description": info.get("description", "") or "",
                     "uploader": info.get("uploader") or info.get("channel") or info.get("uploader_id") or "",
                     "uploader_id": info.get("uploader_id") or "",
+                    "channel": info.get("channel") or "",
+                    "source_url": url,
                     "method": name,
                 }
         except Exception as e:

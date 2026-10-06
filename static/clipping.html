@@ -42,6 +42,11 @@
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .row input[type=text] { width: 76px; margin: 0; padding: 7px 9px; font-size: 13px; }
   .hidden { display: none; }
+  .hRow { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 10px 4px; border-top: 1px solid var(--border); cursor: pointer; }
+  .hRow:first-child { border-top: 0; }
+  .hRow:hover { background: rgba(255,255,255,.04); }
+  .hRow .n { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hRow .m { font-size: 12px; color: var(--faint); white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -59,8 +64,10 @@
     <button class="primary" id="go">Find the best clips</button>
   </div>
 
-  <div class="card hidden" id="busy"><b id="busyLabel">Working</b><div class="bar" id="bar"><i id="barI"></i></div><div class="hint" style="margin:10px 0 0">Long videos take a few minutes. You can leave this page open.</div></div>
+  <div class="card hidden" id="busy"><b id="busyLabel">Working</b><div class="bar" id="bar"><i id="barI"></i></div><div class="hint" style="margin:10px 0 0" id="busyHint">Once a link is submitted or an upload has finished, this runs on the server &mdash; you can close this page and find it under History later.</div></div>
   <div class="card err hidden" id="errCard"></div>
+
+  <div class="card" id="histCard"><b style="font-size:14px">History</b><div id="histList" style="margin-top:8px"></div></div>
 
   <div id="results" class="hidden">
     <div class="card">
@@ -94,7 +101,7 @@
       let d;
       try { const r = await fetch("/api/clip/" + cid); d = await r.json(); if (!r.ok) throw new Error(d.detail); } catch (e) { try { localStorage.removeItem("wvClip"); } catch (_) {} return fail(e.message || "Lost connection."); }
       if (d.status === "error") { $("busy").classList.add("hidden"); $("go").disabled = false; if (d.clips && d.clips.length) show(d); return fail(d.error); }
-      if (d.status === "done") { $("busy").classList.add("hidden"); $("go").disabled = false; return show(d); }
+      if (d.status === "done") { $("busy").classList.add("hidden"); $("go").disabled = false; loadHistory(); return show(d); }
       $("busyLabel").textContent = d.stage_label || "Working";
       await new Promise((r) => setTimeout(r, 2500));
     }
@@ -106,19 +113,19 @@
     (d.clips || []).forEach((c) => {
       const el = document.createElement("div"); el.className = "card clip";
       el.innerHTML = '<video controls preload="metadata" playsinline></video><h3></h3><div class="meta"></div><div class="txt"></div><div class="row"><button class="primary" style="width:auto;padding:10px 16px">Edit this clip</button></div>';
-      el.querySelector("video").src = d.video_url + "#t=" + c.start + "," + c.end;
+      el.querySelector("video").src = c.video_url;
       el.querySelector("h3").textContent = c.title || "Clip";
       el.querySelector(".meta").innerHTML = '<span class="score">' + c.score + '</span>' + fmt(c.start) + " – " + fmt(c.end) + " · " + Math.round(c.end - c.start) + "s<br>";
       el.querySelector(".meta").appendChild(document.createTextNode(c.reason || ""));
       el.querySelector(".txt").textContent = c.text || "";
-      el.querySelector("button").onclick = () => edit(c.start, c.end, c.title);
+      el.querySelector("button").onclick = () => edit({ index: c.id, title: c.title });
       g.appendChild(el);
     });
   }
-  async function edit(start, end, title) {
+  async function edit(body) {
     busy("Sending to the editor");
     try {
-      const r = await fetch("/api/clip/" + cid + "/edit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ start, end, title }) });
+      const r = await fetch("/api/clip/" + cid + "/edit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d = await r.json(); if (!r.ok) throw new Error(d.detail || "Failed.");
       location.href = "/editor#job=" + d.job_id;
     } catch (e) { fail(e.message); }
@@ -165,6 +172,23 @@
       poll();
     } catch (e) { uploading = false; setBar(null); fail(e.message); }
   };
+
+  async function loadHistory() {
+    try {
+      const r = await fetch("/api/clips"); const d = await r.json(); const el = $("histList"); el.innerHTML = "";
+      if (!d.history.length) { el.innerHTML = '<div class="hint" style="margin:0">Nothing yet.</div>'; return; }
+      d.history.forEach((h) => {
+        const row = document.createElement("div"); row.className = "hRow";
+        const when = h.created_at ? new Date(h.created_at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+        row.innerHTML = '<span class="n"></span><span class="m"></span>';
+        row.querySelector(".n").textContent = h.title;
+        row.querySelector(".m").textContent = (h.status === "done" ? h.clip_count + " clips" : h.status === "running" ? "working…" : h.status) + " · " + when;
+        row.onclick = () => { cid = h.id; try { localStorage.setItem("wvClip", cid); } catch (_) {} $("results").classList.add("hidden"); busy("Loading"); poll(); window.scrollTo({ top: 0, behavior: "smooth" }); };
+        el.appendChild(row);
+      });
+    } catch (_) {}
+  }
+  loadHistory();
   // coming back to the page: resume the last finished/running session
   try { const last = localStorage.getItem("wvClip"); if (last) { fetch("/api/clip/" + last).then((r) => { if (!r.ok) { localStorage.removeItem("wvClip"); return; } cid = last; busy("Reconnecting"); poll(); }).catch(() => {}); } } catch (_) {}
   $("redo").onclick = async () => {
@@ -175,7 +199,7 @@
       poll();
     } catch (e) { fail(e.message); }
   };
-  $("cgo").onclick = () => { const a = parse($("cs").value), b = parse($("ce").value); if (a == null || b == null || b <= a) return fail("Enter a valid start and end (mm:ss)."); edit(a, b, "Custom clip"); };
+  $("cgo").onclick = () => { const a = parse($("cs").value), b = parse($("ce").value); if (a == null || b == null || b <= a) return fail("Enter a valid start and end (mm:ss)."); edit({ start: a, end: b, title: "Custom clip" }); };
 })();
 </script>
 </body>

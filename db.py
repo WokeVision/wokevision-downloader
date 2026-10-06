@@ -135,6 +135,22 @@ def init_db():
             # Per-platform versions of the posting caption (and the user's
             # edits to them), so nothing typed in the editor is lost.
             cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS platform_posts JSONB")
+            # Clipping sessions: one row per long video the clipper has
+            # analysed, with the suggested clips and the word-level
+            # transcript, so the Clipping history survives restarts.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS clip_sessions (
+                    id TEXT PRIMARY KEY,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    title TEXT,
+                    status TEXT,
+                    stage_label TEXT,
+                    error TEXT,
+                    duration REAL,
+                    clips JSONB,
+                    speech JSONB
+                )
+            """)
 
 
 def _encrypt(value: str):
@@ -368,7 +384,14 @@ def list_history(limit: int = 100):
     with _conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT * FROM history ORDER BY created_at DESC LIMIT %s", (limit,))
-            return [dict(r) for r in cur.fetchall()]
+            return [_titled(r) for r in cur.fetchall()]
+
+
+def _titled(r):
+    r = dict(r)
+    # The list/recognition title is the last saved on-screen caption.
+    r["title"] = (r.get("on_screen_caption") or "").strip() or r.get("title")
+    return r
 
 
 def get_history_entry(entry_id: str):
@@ -378,7 +401,48 @@ def get_history_entry(entry_id: str):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT * FROM history WHERE id = %s", (entry_id,))
             row = cur.fetchone()
+    return _titled(row) if row else None
+
+
+# --- Clipping sessions ---------------------------------------------------------
+
+_CLIP_COLS = ("title", "status", "stage_label", "error", "duration", "clips", "speech")
+
+
+def clip_upsert(cid: str, **fields):
+    if not configured():
+        return
+    fields = {k: v for k, v in fields.items() if k in _CLIP_COLS}
+    for k in ("clips", "speech"):
+        if k in fields:
+            fields[k] = json.dumps(fields[k])
+    cols = ["id"] + list(fields)
+    vals = [cid] + list(fields.values())
+    sets = ", ".join(f"{k} = EXCLUDED.{k}" for k in fields) or "id = EXCLUDED.id"
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO clip_sessions ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))}) "
+                f"ON CONFLICT (id) DO UPDATE SET {sets}", vals)
+
+
+def clip_get(cid: str):
+    if not configured():
+        return None
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM clip_sessions WHERE id = %s", (cid,))
+            row = cur.fetchone()
     return dict(row) if row else None
+
+
+def clip_list(limit: int = 60):
+    if not configured():
+        return []
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT id, created_at, title, status, duration, clips FROM clip_sessions ORDER BY created_at DESC LIMIT %s", (limit,))
+            return [dict(r) for r in cur.fetchall()]
 
 
 # --- Scheduled posts ----------------------------------------------------------

@@ -866,6 +866,7 @@
   // server, so it adapts rather than quietly lowballing.
   async function pollJob(jobId) {
     currentJobId = jobId;
+    try { localStorage.setItem("wvJob", jobId); } catch (_) {}
     while (true) {
       let job;
       try {
@@ -1946,6 +1947,13 @@
     if (m) openHistoryEntry(m[1]);
     const j = (location.hash || "").match(/^#job=([0-9a-f-]{36})/i);
     if (j) { resetUI(); pollJob(j[1]); }
+    else if (!m) {
+      // Came back to the editor: pick up a job that was still running.
+      let last = null; try { last = localStorage.getItem("wvJob"); } catch (_) {}
+      if (last) fetch("/jobs/" + last).then((r) => r.ok ? r.json() : null).then((jb) => {
+        if (jb && jb.status === "running") { resetUI(); pollJob(last); }
+      }).catch(() => {});
+    }
   })();
 </script>
 </body>

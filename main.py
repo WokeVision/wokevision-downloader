@@ -17,7 +17,7 @@ from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
 import speech
 from caption import (generate_captions, generate_on_screen_caption, generate_posting_caption,
-                     generate_platform_posts, normalize_platform_posts, PLATFORM_IDS)
+                     generate_platform_posts, normalize_platform_posts, PLATFORM_IDS, decide_credit)
 from render import render_staged, apply_caption
 import db
 import auth
@@ -400,6 +400,9 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
         _set_job(job_id, transcript=transcript, meta=meta, source_path=final_source_path)
 
         _set_stage(job_id, "captioning")
+        if "credit_ok" not in meta:
+            meta = {**meta, "credit_ok": decide_credit(meta, transcript)}
+            _set_job(job_id, meta=meta)
         on_screen_caption, posting_caption = generate_captions(transcript, meta)
         platform_posts = generate_platform_posts(transcript, meta, on_screen_caption, posting_caption)
 
@@ -1455,35 +1458,80 @@ def reopen_history(entry_id: str):
 
 
 # --- Clipping -----------------------------------------------------------------
+# Everything runs server-side in a background thread, so once the video is on
+# the server (a pasted link, or a finished upload) the browser can be closed.
+# Sessions + suggested clips + the word-level transcript are saved to Postgres
+# (history survives restarts); each suggested clip is also pre-cut to a small
+# file kept in durable storage, so a clip stays editable after the big source
+# file has been cleaned off disk.
 
 CLIPS = {}
 CLIPS_LOCK = threading.Lock()
+CLIP_MAX_BYTES = 2500 * 1024 * 1024
+CLIP_SOURCE_KEEP = 12 * 3600
 
 
 def _clip_set(cid, **kw):
     with CLIPS_LOCK:
         CLIPS.setdefault(cid, {}).update(kw)
+    try:
+        db.clip_upsert(cid, **kw)
+    except Exception as e:
+        print(f"CLIP DB SAVE FAILED ({cid}): {e}", flush=True)
+
+
+def _clip_load(cid: str):
+    """In-memory session, else rebuilt from the database (after a restart)."""
+    with CLIPS_LOCK:
+        c = CLIPS.get(cid)
+    if c:
+        return c
+    row = db.clip_get(cid)
+    if not row:
+        return None
+    c = {"title": row.get("title"), "status": row.get("status"), "stage_label": row.get("stage_label"),
+         "error": row.get("error"), "duration": row.get("duration"),
+         "clips": row.get("clips") or [], "speech": row.get("speech"),
+         "source": os.path.join(DOWNLOAD_DIR, f"clip_{cid}_source.mp4")}
+    if c["status"] == "running":
+        c["status"] = "error"
+        c["error"] = "The server restarted while this was running. Start it again."
+    with CLIPS_LOCK:
+        CLIPS[cid] = c
+    return c
+
+
+def _clip_file(cid: str, i: int) -> str:
+    return f"clip_{cid}_{i}.mp4"
 
 
 def _clip_analyze(cid: str, focus_text: str):
     try:
         c = CLIPS[cid]
-        _clip_set(cid, status="running", stage_label="Transcribing the whole video", clips=[])
+        _clip_set(cid, status="running", stage_label="Transcribing the whole video", clips=[], error=None)
         sp = c.get("speech")
         if not sp:
+            if not os.path.exists(c["source"]):
+                raise RuntimeError("The original video is no longer on the server, so it can't be re-analysed.")
             sp = speech.transcribe_words(c["source"])
             if not sp.get("segments"):
                 raise RuntimeError("No speech could be transcribed (is OPENAI_API_KEY set, and does the video have talking?).")
-            _clip_set(cid, speech=sp)
+            _clip_set(cid, speech=sp, duration=sp.get("duration") or 0)
         _clip_set(cid, stage_label="Finding the best moments")
         ranges, notes = speech.parse_focus(focus_text or "")
         clips = speech.pick_clips(sp, sp.get("duration") or 0, ranges or None, notes)
-        for i, k in enumerate(clips):
-            k["id"] = i
-            k["text"] = " ".join(w["w"] for w in sp["words"] if k["start"] <= w["start"] < k["end"])[:400]
         if not clips:
             raise RuntimeError("The clipper couldn't find a clean moment" + (" in those timestamps." if ranges else "."))
-        _clip_set(cid, status="done", stage_label="Done", clips=clips, duration=sp.get("duration") or 0)
+        for i, k in enumerate(clips):
+            _clip_set(cid, stage_label=f"Cutting clip {i + 1} of {len(clips)}")
+            k["id"] = i
+            k["text"] = " ".join(w["w"] for w in sp["words"] if k["start"] <= w["start"] < k["end"])[:400]
+            fn = _clip_file(cid, i)
+            path = os.path.join(DOWNLOAD_DIR, fn)
+            speech.cut_clip(c["source"], k["start"], k["end"], path)
+            storage.upload_many_async([(path, fn)])
+            k["file"] = fn
+        _clip_set(cid, status="done", stage_label="Done", clips=clips)
     except Exception as e:
         print("CLIP ANALYZE FAILED:", traceback.format_exc(), flush=True)
         _clip_set(cid, status="error", error=str(e))
@@ -1494,41 +1542,14 @@ def _clip_ingest_and_analyze(cid: str, url: str, focus_text: str):
     if url:
         try:
             _clip_set(cid, status="running", stage_label="Downloading video")
-            download_video(url, c["source"])
+            meta = download_video(url, c["source"])
+            if meta.get("title"):
+                _clip_set(cid, title=meta["title"][:200])
         except DownloadError as e:
             _clip_set(cid, status="error", error=f"Could not download video: {e}. If it's YouTube, download it yourself and upload the file instead.")
             return
-    try:
-        _clip_shrink(cid)
-    except Exception as e:
-        print("CLIP PROXY FAILED:", e, flush=True)
-        _clip_set(cid, status="error", error="Couldn't prepare that video (it may be corrupt or too large for the server). Try compressing it first.")
-        return
-    _cleanup_later(CLIPS[cid]["source"], delay=3 * 3600)
+    _cleanup_later(c["source"], delay=CLIP_SOURCE_KEEP)
     _clip_analyze(cid, focus_text)
-
-
-CLIP_PROXY_ABOVE = 250 * 1024 * 1024
-CLIP_MAX_BYTES = 2500 * 1024 * 1024
-
-
-def _clip_shrink(cid: str):
-    """Big sources are re-encoded once to a lighter file (max 960px tall) and
-    the original deleted, so the server disk isn't filled. The editor output
-    is 720x1280 anyway, so the final clips look the same."""
-    src = CLIPS[cid]["source"]
-    if os.path.getsize(src) <= CLIP_PROXY_ABOVE:
-        return
-    _clip_set(cid, stage_label="Optimising large video (a few minutes)")
-    proxy = src.replace("_source.mp4", "_proxy.mp4")
-    cmd = ["ffmpeg", "-y", "-i", src, "-vf", "scale=-2:'min(960,ih)'", "-c:v", "libx264",
-           "-preset", "ultrafast", "-crf", "25", "-c:a", "aac", "-b:a", "96k",
-           "-movflags", "+faststart", proxy]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0 or not os.path.exists(proxy):
-        raise RuntimeError(r.stderr[-500:])
-    os.remove(src)
-    _clip_set(cid, source=proxy)
 
 
 @app.get("/clipping")
@@ -1540,32 +1561,53 @@ def clipping_page():
 async def clip_start(file: UploadFile = File(None), url: str = Form(""), focus: str = Form("")):
     cid = uuid.uuid4().hex
     source = os.path.join(DOWNLOAD_DIR, f"clip_{cid}_source.mp4")
+    title = ""
     if file is not None and file.filename:
         try:
             with open(source, "wb") as f:
                 shutil.copyfileobj(file.file, f)
         finally:
             await file.close()
-        if os.path.getsize(source) == 0:
+        size = os.path.getsize(source)
+        if size == 0:
             raise HTTPException(status_code=400, detail="Upload failed: no file data received.")
-        if os.path.getsize(source) > CLIP_MAX_BYTES:
+        if size > CLIP_MAX_BYTES:
             os.remove(source)
             raise HTTPException(status_code=413, detail="That file is over 2.5GB. Compress it first (720p is plenty) and try again.")
+        title = os.path.splitext(file.filename)[0][:200]
         url = ""
     elif not url.strip():
         raise HTTPException(status_code=400, detail="Add a link or upload a video.")
-    _clip_set(cid, status="running", stage_label="Starting", source=source, clips=[])
+    else:
+        title = url.strip()[:200]
+    _clip_set(cid, status="running", stage_label="Starting", source=source, clips=[], title=title)
     threading.Thread(target=_clip_ingest_and_analyze, args=(cid, url.strip(), focus), daemon=True).start()
     return {"clip_id": cid}
 
 
+def _clip_public(cid, c):
+    base = {k: v for k, v in c.items() if k not in ("speech", "source")}
+    base["id"] = cid
+    base["clips"] = [{**k, "video_url": f"/files/{k['file']}"} for k in (c.get("clips") or []) if k.get("file")]
+    return base
+
+
+@app.get("/api/clips")
+def clip_history():
+    out = []
+    for r in db.clip_list():
+        out.append({"id": r["id"], "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+                    "title": r.get("title") or "Untitled video", "status": r.get("status"),
+                    "duration": r.get("duration"), "clip_count": len(r.get("clips") or [])})
+    return {"history": out}
+
+
 @app.get("/api/clip/{cid}")
 def clip_status(cid: str):
-    with CLIPS_LOCK:
-        c = CLIPS.get(cid)
-        if not c:
-            raise HTTPException(status_code=404, detail="Unknown clipping session (the server may have restarted).")
-        return {k: v for k, v in c.items() if k not in ("speech", "source")} | {"video_url": "/files/" + os.path.basename(c.get("source", ""))}
+    c = _clip_load(cid)
+    if not c:
+        raise HTTPException(status_code=404, detail="Unknown clipping session.")
+    return _clip_public(cid, c)
 
 
 class ClipFocus(BaseModel):
@@ -1574,32 +1616,51 @@ class ClipFocus(BaseModel):
 
 @app.post("/api/clip/{cid}/reanalyze")
 def clip_reanalyze(cid: str, req: ClipFocus):
-    with CLIPS_LOCK:
-        c = CLIPS.get(cid)
-        if not c:
-            raise HTTPException(status_code=404, detail="Unknown clipping session.")
-        if c.get("status") == "running":
-            raise HTTPException(status_code=409, detail="Still working.")
-        c["status"] = "running"; c["stage_label"] = "Finding the best moments"; c.pop("error", None)
+    c = _clip_load(cid)
+    if not c:
+        raise HTTPException(status_code=404, detail="Unknown clipping session.")
+    if c.get("status") == "running":
+        raise HTTPException(status_code=409, detail="Still working.")
+    if not c.get("speech"):
+        raise HTTPException(status_code=409, detail="This session has no transcript to re-run from.")
+    if not os.path.exists(c["source"]) and not storage.fetch_to(c["source"], os.path.basename(c["source"])):
+        raise HTTPException(status_code=410, detail="The original video has been cleared from the server (it's kept for 12 hours). Upload it again to re-run the clipper; your existing clips are still editable.")
+    _clip_set(cid, status="running", stage_label="Finding the best moments", error=None)
     threading.Thread(target=_clip_analyze, args=(cid, req.focus), daemon=True).start()
     return {"ok": True}
 
 
 class ClipPick(BaseModel):
-    start: float
-    end: float
+    index: int | None = None
+    start: float = 0
+    end: float = 0
     title: str = ""
 
 
-def _run_clip_to_editor(job_id: str, cid: str, start: float, end: float, title: str):
+def _run_clip_to_editor(job_id: str, cid: str, pick: dict):
     try:
-        c = CLIPS[cid]
+        c = _clip_load(cid)
         out = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
-        _set_job(job_id, stage="downloading", stage_label="Cutting the clip", progress=0.1)
-        speech.cut_clip(c["source"], start, end, out)
-        words = speech.clip_words(c["speech"]["words"], start, end)
+        words_all = c["speech"]["words"]
+        if pick.get("file"):
+            _set_job(job_id, stage="downloading", stage_label="Loading the clip", progress=0.1)
+            src = os.path.join(DOWNLOAD_DIR, pick["file"])
+            if not os.path.exists(src):
+                storage.fetch_to(src, pick["file"])
+            if not os.path.exists(src):
+                raise RuntimeError("That clip file has expired.")
+            shutil.copyfile(src, out)
+        else:
+            if not os.path.exists(c["source"]):
+                storage.fetch_to(c["source"], os.path.basename(c["source"]))
+            if not os.path.exists(c["source"]):
+                raise RuntimeError("The original video has been cleared from the server, so a custom range can't be cut. Pick one of the suggested clips, or upload the video again.")
+            _set_job(job_id, stage="downloading", stage_label="Cutting the clip", progress=0.1)
+            speech.cut_clip(c["source"], pick["start"], pick["end"], out)
+        start, end = pick["start"], pick["end"]
+        words = speech.clip_words(words_all, start, end)
         pre = {"text": " ".join(w["w"] for w in words), "words": words}
-        meta = {"title": title or "Clip", "description": "", "method": f"clipped {int(start)}s-{int(end)}s"}
+        meta = {"title": pick.get("title") or "Clip", "description": "", "method": f"clipped {int(start)}s-{int(end)}s"}
         _run_pipeline(job_id, out, meta, pre_speech=pre)
     except Exception as e:
         print("CLIP TO EDITOR FAILED:", traceback.format_exc(), flush=True)
@@ -1608,18 +1669,24 @@ def _run_clip_to_editor(job_id: str, cid: str, start: float, end: float, title: 
 
 @app.post("/api/clip/{cid}/edit")
 def clip_to_editor(cid: str, req: ClipPick):
-    with CLIPS_LOCK:
-        c = CLIPS.get(cid)
+    c = _clip_load(cid)
     if not c or not c.get("speech"):
         raise HTTPException(status_code=404, detail="Unknown clipping session.")
-    dur = c["speech"].get("duration") or 0
-    start, end = max(0.0, req.start), min(req.end, dur or req.end)
-    if end - start < 3:
-        raise HTTPException(status_code=400, detail="Clip is too short.")
+    pick = {"title": req.title}
+    clips = c.get("clips") or []
+    if req.index is not None and 0 <= req.index < len(clips):
+        k = clips[req.index]
+        pick.update(start=k["start"], end=k["end"], file=k.get("file"), title=req.title or k.get("title", ""))
+    else:
+        dur = c.get("duration") or 0
+        start, end = max(0.0, req.start), min(req.end, dur or req.end)
+        if end - start < 3:
+            raise HTTPException(status_code=400, detail="Clip is too short.")
+        pick.update(start=start, end=end)
     job_id = str(uuid.uuid4())
     with JOBS_LOCK:
-        JOBS[job_id] = {"stage": "downloading", "stage_label": "Cutting the clip", "progress": 0.05, "status": "running", "angle": ""}
-    threading.Thread(target=_run_clip_to_editor, args=(job_id, cid, start, end, req.title), daemon=True).start()
+        JOBS[job_id] = {"stage": "downloading", "stage_label": "Preparing the clip", "progress": 0.05, "status": "running", "angle": ""}
+    threading.Thread(target=_run_clip_to_editor, args=(job_id, cid, pick), daemon=True).start()
     return {"job_id": job_id}
 
 

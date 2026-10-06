@@ -363,13 +363,55 @@ def enforce_tag_mix(text: str, theme_text: str = "", total: int = 5) -> str:
     return f"{body}\n\n{' '.join(final)}" if body else " ".join(final)
 
 
-def credit_handle(meta: dict) -> str:
-    """The original creator's handle for the 'Credit: @x' line, or '' when
-    it isn't a usable handle (numeric ids, names with spaces, etc.)."""
-    h = ((meta or {}).get("uploader_id") or "").strip().lstrip("@")
-    if not h or " " in h or h.isdigit() or len(h) > 40:
+def _clean_handle(h: str) -> str:
+    h = (h or "").strip().lstrip("@")
+    if not h or " " in h or h.isdigit() or len(h) > 40 or "/" in h:
         return ""
     return h
+
+
+def credit_handle(meta: dict) -> str:
+    """The original creator's handle for the 'Credit: @x' line, or '' when
+    none can be found -- or when the page we got the video from looks like a
+    repost/aggregator rather than the creator (meta["credit_ok"] is False,
+    see decide_credit)."""
+    meta = meta or {}
+    if meta.get("credit_ok") is False:
+        return ""
+    for key in ("uploader_id", "channel", "uploader"):
+        h = _clean_handle(meta.get(key))
+        if h:
+            return h
+    url = meta.get("source_url") or ""
+    m = re.search(r"(?:tiktok\.com|youtube\.com|threads\.(?:net|com))/@([A-Za-z0-9._-]+)", url) \
+        or re.search(r"(?:instagram\.com|x\.com|twitter\.com)/([A-Za-z0-9._]+)/(?:reel|p|status|tv)", url)
+    if m and m.group(1).lower() not in ("reel", "p", "i", "share"):
+        return _clean_handle(m.group(1))
+    return ""
+
+
+def decide_credit(meta: dict, transcript: str) -> bool:
+    """False only when the source account is obviously a repost/aggregator
+    page (clips, memes, news roundups, 'viral' pages etc.) rather than the
+    person/outlet that made the video. Any doubt or failure -> True (credit)."""
+    handle_src = (meta or {}).get("uploader") or (meta or {}).get("uploader_id") or ""
+    if not OPENAI_API_KEY or not handle_src:
+        return True
+    try:
+        data = _call_openai(
+            "You decide whether to credit the account a video was downloaded from. Answer JSON "
+            '{"original": true|false}. true = the account looks like the ORIGINAL creator/owner of the '
+            "video (a person filming themselves, a journalist/outlet/channel posting its own footage, a "
+            "streamer, a company, a podcast's own channel). false = it is OBVIOUSLY a repost/aggregator "
+            "page (generic viral/meme/clips/news-compilation/fan pages reposting other people's footage, "
+            "watermarks of other accounts mentioned in the title or description). When unsure answer true.",
+            f"Source account: {handle_src}\nTitle: {(meta or {}).get('title','')}\n"
+            f"Description: {((meta or {}).get('description') or '')[:500]}\nTranscript: {(transcript or '')[:600]}",
+        )
+        return bool(data.get("original", True))
+    except Exception as e:
+        print(f"CREDIT DECISION FAILED: {e}", flush=True)
+        return True
 
 
 def _ensure_credit(text: str, handle: str) -> str:

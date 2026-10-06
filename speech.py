@@ -299,8 +299,8 @@ def pick_clips(transcript, duration, focus_ranges=None, notes="", max_clips=6,
 def cut_clip(video_path, start, end, out_path):
     """Frame-accurate cut (re-encode, fast preset) so the editor pipeline
     gets a normal standalone source file."""
-    cmd = ["ffmpeg", "-y", "-ss", f"{start:.2f}", "-i", video_path, "-t", f"{end - start:.2f}",
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac",
+    cmd = ["nice", "-n", "15", "ffmpeg", "-y", "-threads", "2", "-ss", f"{start:.2f}", "-i", video_path, "-t", f"{end - start:.2f}",
+           "-c:v", "libx264", "-preset", "ultrafast", "-crf", "21", "-c:a", "aac",
            "-movflags", "+faststart", out_path]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     if r.returncode != 0:

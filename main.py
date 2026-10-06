@@ -1528,9 +1528,16 @@ def _clip_analyze(cid: str, focus_text: str):
             k["text"] = " ".join(w["w"] for w in sp["words"] if k["start"] <= w["start"] < k["end"])[:400]
             fn = _clip_file(cid, i)
             path = os.path.join(DOWNLOAD_DIR, fn)
-            speech.cut_clip(c["source"], k["start"], k["end"], path)
+            try:
+                speech.cut_clip(c["source"], k["start"], k["end"], path)
+            except Exception as ce:
+                print(f"CLIP CUT FAILED ({cid} #{i}): {ce}", flush=True)
+                continue
             storage.upload_many_async([(path, fn)])
             k["file"] = fn
+        clips = [k for k in clips if k.get("file")]
+        if not clips:
+            raise RuntimeError("The clips were found but none could be cut. Try again, or use a smaller file.")
         _clip_set(cid, status="done", stage_label="Done", clips=clips)
     except Exception as e:
         print("CLIP ANALYZE FAILED:", traceback.format_exc(), flush=True)

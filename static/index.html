@@ -865,16 +865,20 @@
   // self-tuning average of how long each stage has actually taken on this
   // server, so it adapts rather than quietly lowballing.
   async function pollJob(jobId) {
+    let pollMisses = 0;
     currentJobId = jobId;
     try { localStorage.setItem("wvJob", jobId); } catch (_) {}
     while (true) {
       let job;
       try {
         const resp = await fetch(`/jobs/${jobId}`);
-        job = await resp.json();
+        job = JSON.parse(await resp.text());
+        pollMisses = 0;
       } catch (err) {
-        showError("Lost connection while checking progress.");
-        return;
+        // Server briefly too busy to answer -- keep trying rather than giving up.
+        if (++pollMisses > 60) { showError("Lost connection while checking progress."); return; }
+        await new Promise((r) => setTimeout(r, 4000));
+        continue;
       }
 
       if (job.status === "error") {

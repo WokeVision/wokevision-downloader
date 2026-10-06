@@ -97,13 +97,27 @@
   function busy(label) { $("busy").classList.remove("hidden"); $("busyLabel").textContent = label; $("errCard").classList.add("hidden"); }
   function fail(msg) { $("busy").classList.add("hidden"); $("errCard").textContent = msg; $("errCard").classList.remove("hidden"); $("go").disabled = false; }
   async function poll() {
+    let misses = 0;
     for (;;) {
       let d;
-      try { const r = await fetch("/api/clip/" + cid); d = await r.json(); if (!r.ok) throw new Error(d.detail); } catch (e) { try { localStorage.removeItem("wvClip"); } catch (_) {} return fail(e.message || "Lost connection."); }
-      if (d.status === "error") { $("busy").classList.add("hidden"); $("go").disabled = false; if (d.clips && d.clips.length) show(d); return fail(d.error); }
+      try {
+        const r = await fetch("/api/clip/" + cid);
+        const t = await r.text();
+        try { d = JSON.parse(t); } catch (_) { throw new Error("server busy"); }
+        if (r.status === 404) { try { localStorage.removeItem("wvClip"); } catch (_) {} return fail(d.detail || "Unknown session."); }
+        if (!r.ok) throw new Error(d.detail || "server busy");
+        misses = 0;
+      } catch (e) {
+        // The free server can be too busy (or restarting) to answer for a bit -- keep trying quietly.
+        if (++misses > 60) return fail("Lost contact with the server. Reload the page and open it from History.");
+        $("busyLabel").textContent = "Server is busy, reconnecting…";
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+      if (d.status === "error") { $("busy").classList.add("hidden"); $("go").disabled = false; loadHistory(); if (d.clips && d.clips.length) show(d); return fail(d.error); }
       if (d.status === "done") { $("busy").classList.add("hidden"); $("go").disabled = false; loadHistory(); return show(d); }
       $("busyLabel").textContent = d.stage_label || "Working";
-      await new Promise((r) => setTimeout(r, 2500));
+      await new Promise((r) => setTimeout(r, 3000));
     }
   }
   function show(d) {

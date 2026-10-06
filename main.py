@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
 import speech
+import notify
 from caption import (generate_captions, generate_on_screen_caption, generate_posting_caption,
                      generate_platform_posts, normalize_platform_posts, PLATFORM_IDS, decide_credit)
 from render import render_staged, apply_caption
@@ -26,6 +27,13 @@ import insights
 import scheduler
 import accounts
 from platforms import instagram, threads, youtube, x, tiktok, facebook
+
+try:
+    if os.environ.get("SENTRY_DSN"):
+        import sentry_sdk
+        sentry_sdk.init(dsn=os.environ["SENTRY_DSN"], traces_sample_rate=0.0, send_default_pii=False)
+except Exception as _e:
+    print(f"SENTRY INIT FAILED: {_e}", flush=True)
 
 app = FastAPI()
 
@@ -39,6 +47,12 @@ def _startup():
         db.init_db()
     except Exception as e:
         print(f"DB INIT FAILED (platform connections will be unavailable): {e}", flush=True)
+    try:
+        n = db.jobs_mark_interrupted()
+        if n:
+            print(f"Marked {n} interrupted job(s)", flush=True)
+    except Exception as e:
+        print(f"JOB RECOVERY FAILED: {e}", flush=True)
     try:
         scheduler.start_loop(PLATFORM_MODULES)
     except Exception as e:
@@ -249,6 +263,14 @@ KEEP_ALIVE_SECONDS = 24 * 60 * 60
 def _set_job(job_id, **fields):
     with JOBS_LOCK:
         JOBS[job_id].update(fields)
+        st = JOBS[job_id].get("status")
+        label = JOBS[job_id].get("stage_label")
+        err = JOBS[job_id].get("error")
+    if "status" in fields:
+        try:
+            db.job_upsert(job_id, st, label, err)
+        except Exception as e:
+            print(f"JOB DB SAVE FAILED: {e}", flush=True)
 
 
 def _set_stage(job_id, stage, within_stage=0.0):
@@ -445,6 +467,9 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
         )
         _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
         _save_platform_posts(job_id, platform_posts)
+        if not (JOBS.get(job_id) or {}).get("_quiet"):
+            _b = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+            notify.notify("Edit ready", on_screen_caption[:120], f"{_b}/editor#entry={job_id}" if _b else None)
         # Mirror to durable storage (no-op if not configured) so the video
         # and the files behind fast caption edits survive redeploys.
         storage.upload_many_async([
@@ -458,6 +483,8 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
         if os.path.exists(final_source_path):
             os.remove(final_source_path)
         _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
+        if not (JOBS.get(job_id) or {}).get("_quiet"):
+            notify.notify("Edit failed", str(e)[:200])
 
 
 def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: str, platform_posts: dict = None):
@@ -919,6 +946,13 @@ def get_job(job_id: str):
     with JOBS_LOCK:
         job = JOBS.get(job_id)
     if not job:
+        row = None
+        try:
+            row = db.job_get(job_id)
+        except Exception:
+            pass
+        if row and row.get("status") == "error":
+            return {"status": "error", "stage": "error", "stage_label": "Error", "error": row.get("error") or "This job was interrupted."}
         raise HTTPException(status_code=404, detail="Unknown job id")
     return job
 
@@ -1545,7 +1579,7 @@ def _clip_analyze(cid: str, focus_text: str):
             jid = str(uuid.uuid4())
             try:
                 with JOBS_LOCK:
-                    JOBS[jid] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": ""}
+                    JOBS[jid] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": "", "_quiet": True}
                 src = os.path.join(DOWNLOAD_DIR, f"{jid}_source.mp4")
                 shutil.copyfile(os.path.join(DOWNLOAD_DIR, k["file"]), src)
                 words = speech.clip_words(sp["words"], k["start"], k["end"])
@@ -1561,9 +1595,12 @@ def _clip_analyze(cid: str, focus_text: str):
         if not clips:
             raise RuntimeError("The clips were found but none could be cut. Try again, or use a smaller file.")
         _clip_set(cid, status="done", stage_label="Done", clips=clips)
+        _b = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        notify.notify("Clips ready", f"{len(clips)} clips from {CLIPS[cid].get('title') or 'your video'}", f"{_b}/clipping" if _b else None)
     except Exception as e:
         print("CLIP ANALYZE FAILED:", traceback.format_exc(), flush=True)
         _clip_set(cid, status="error", error=str(e))
+        notify.notify("Clipping failed", str(e)[:200])
 
 
 def _clip_ingest_and_analyze(cid: str, url: str, focus_text: str):
@@ -1579,6 +1616,15 @@ def _clip_ingest_and_analyze(cid: str, url: str, focus_text: str):
             return
     _cleanup_later(c["source"], delay=CLIP_SOURCE_KEEP)
     _clip_analyze(cid, focus_text)
+
+
+@app.get("/api/attention")
+def attention():
+    try:
+        return {"items": db.attention_items()}
+    except Exception as e:
+        print(f"ATTENTION FAILED: {e}", flush=True)
+        return {"items": []}
 
 
 @app.get("/clipping")

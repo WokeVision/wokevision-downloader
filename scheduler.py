@@ -12,6 +12,7 @@ import threading
 import datetime
 
 import db
+import notify
 import storage
 from caption import normalize_platform_posts
 
@@ -72,6 +73,8 @@ def run_due(modules: dict) -> int:
                     db.sched_finish(item["id"], "error", res, retry_in_minutes=3)   # one automatic retry
                 else:
                     db.sched_finish(item["id"], "error", res)
+                    notify.notify(f"Scheduled {item['platform']} post failed", str(res.get("error") or "")[:200],
+                                  os.environ.get("PUBLIC_BASE_URL", "").rstrip("/") + "/schedule")
             except Exception as ex:
                 print(f"SCHEDULE: finish failed: {ex}", flush=True)
 

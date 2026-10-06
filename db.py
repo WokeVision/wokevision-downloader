@@ -135,6 +135,17 @@ def init_db():
             # Per-platform versions of the posting caption (and the user's
             # edits to them), so nothing typed in the editor is lost.
             cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS platform_posts JSONB")
+            # Editor jobs: just enough to tell the page what happened to a job
+            # after a server restart (the live progress itself stays in memory).
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id TEXT PRIMARY KEY,
+                    status TEXT,
+                    stage_label TEXT,
+                    error TEXT,
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )
+            """)
             # Clipping sessions: one row per long video the clipper has
             # analysed, with the suggested clips and the word-level
             # transcript, so the Clipping history survives restarts.
@@ -402,6 +413,82 @@ def get_history_entry(entry_id: str):
             cur.execute("SELECT * FROM history WHERE id = %s", (entry_id,))
             row = cur.fetchone()
     return _titled(row) if row else None
+
+
+# --- Editor jobs (restart safety) ----------------------------------------------
+
+def job_upsert(job_id: str, status: str, stage_label: str = None, error: str = None):
+    if not configured():
+        return
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO jobs (id, status, stage_label, error, updated_at) VALUES (%s, %s, %s, %s, now())
+                ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, stage_label = EXCLUDED.stage_label,
+                    error = EXCLUDED.error, updated_at = now()
+            """, (job_id, status, stage_label, error))
+
+
+def job_get(job_id: str):
+    if not configured():
+        return None
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM jobs WHERE id = %s", (job_id,))
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def jobs_mark_interrupted() -> int:
+    """Called at startup: anything still 'running' died with the old process."""
+    if not configured():
+        return 0
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE jobs SET status = 'error', stage_label = 'Error', updated_at = now(),
+                    error = 'The server restarted while this was processing. Please start it again.'
+                WHERE status = 'running'
+            """)
+            n = cur.rowcount
+            cur.execute("""
+                UPDATE clip_sessions SET status = 'error',
+                    error = 'The server restarted while this was running. Start it again.'
+                WHERE status = 'running'
+            """)
+            return n
+
+
+def attention_items():
+    """Things that need a human: failed scheduled posts (last 7 days) and
+    connections that are broken or about to expire."""
+    out = []
+    if not configured():
+        return out
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT s.id, s.platform, s.run_at, s.result, h.on_screen_caption, s.history_id
+                FROM scheduled_posts s LEFT JOIN history h ON h.id = s.history_id
+                WHERE s.status = 'error' AND s.run_at > now() - interval '7 days'
+                ORDER BY s.run_at DESC LIMIT 20
+            """)
+            for r in cur.fetchall():
+                err = ((r.get("result") or {}).get("error") or "Failed")[:160]
+                out.append({"kind": "post_failed", "platform": r["platform"], "history_id": str(r["history_id"]),
+                            "text": f"Scheduled {r['platform']} post failed: {err}", "href": "/schedule"})
+            cur.execute("""
+                SELECT platform, expires_at, last_check_ok, last_error FROM connections
+                WHERE last_check_ok = false OR (expires_at IS NOT NULL AND expires_at < now() + interval '5 days')
+            """)
+            for r in cur.fetchall():
+                if r["last_check_ok"] is False:
+                    out.append({"kind": "connection", "platform": r["platform"],
+                                "text": f"{r['platform']} connection is failing: {(r.get('last_error') or '')[:120]}", "href": "/accounts"})
+                else:
+                    out.append({"kind": "expiry", "platform": r["platform"],
+                                "text": f"{r['platform']} login expires soon -- reconnect it", "href": "/accounts"})
+    return out
 
 
 # --- Clipping sessions ---------------------------------------------------------

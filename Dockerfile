@@ -21,7 +21,7 @@ RUN git clone --single-branch --branch 2.0.0 \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py render.py emoji_names.py downloader.py transcribe.py caption.py db.py auth.py storage.py insights.py scheduler.py accounts.py speech.py .
+COPY main.py render.py emoji_names.py downloader.py transcribe.py caption.py db.py auth.py storage.py insights.py scheduler.py accounts.py speech.py notify.py .
 COPY platforms ./platforms
 COPY assets ./assets
 COPY fonts ./fonts

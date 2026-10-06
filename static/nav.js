@@ -28,3 +28,18 @@
     a.style.visibility = "visible";
   }).catch(function () { document.getElementById("wvNavAuth").style.visibility = "visible"; });
 })();
+
+// "Needs attention" strip: failed scheduled posts, broken/expiring logins.
+(function () {
+  if (location.pathname === "/" || location.pathname.indexOf("/login") === 0) return;
+  fetch("/api/attention").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d || !d.items || !d.items.length) return;
+    var bar = document.createElement("div");
+    bar.className = "wvAttn";
+    var first = d.items[0];
+    bar.innerHTML = '<a href="' + first.href + '"><b>' + d.items.length + ' thing' + (d.items.length > 1 ? "s" : "") + ' need attention</b> &mdash; ' +
+      String(first.text).replace(/</g, "&lt;") + '</a>';
+    var nav = document.querySelector(".wvNav");
+    if (nav && nav.parentNode) nav.parentNode.insertBefore(bar, nav.nextSibling);
+  }).catch(function () {});
+})();

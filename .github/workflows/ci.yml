@@ -1,0 +1,20 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pytest requests pillow
+      - run: python -m py_compile *.py platforms/*.py
+      - run: pytest -q tests
+      - name: JS syntax
+        run: |
+          for f in static/*.html; do python3 - "$f" <<'PY'
+          import re,sys
+          t=open(sys.argv[1]).read()
+          open("/tmp/x.js","w").write("\n".join(re.findall(r"<script>(.*?)</script>",t,re.S)))
+          PY
+          node --check /tmp/x.js || exit 1; done

@@ -17,7 +17,7 @@ from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
 import speech
 import notify
-from caption import (generate_captions, generate_on_screen_caption, generate_posting_caption,
+from caption import (generate_hook_options, generate_captions, generate_on_screen_caption, generate_posting_caption,
                      generate_platform_posts, normalize_platform_posts, PLATFORM_IDS, decide_credit, apply_disclosure,
                      credit_handle as caption_credit_handle, set_credit_in_posts)
 from render import render_staged, apply_caption
@@ -980,6 +980,42 @@ def process(req: ProcessRequest):
     return {"job_id": job_id}
 
 
+class BatchRequest(BaseModel):
+    urls: list
+    angle: str = ""
+    wm_token: str = ""
+    wm_pos: str = "right"
+
+
+def _run_batch(items):
+    for job_id, url in items:
+        path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
+        try:
+            _run_download_then_pipeline(job_id, url, path)
+        except Exception as e:
+            print(f"BATCH ITEM FAILED {url}: {e}", flush=True)
+            _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
+
+
+@app.post("/api/batch")
+def process_batch(req: BatchRequest):
+    """Several links at once: every job exists immediately (so they all show
+    in History as queued) and they're worked through one at a time so the
+    server isn't hammered."""
+    urls = [u.strip() for u in req.urls if isinstance(u, str) and u.strip().startswith(("http://", "https://"))][:15]
+    if not urls:
+        raise HTTPException(status_code=400, detail="No valid links found.")
+    items = []
+    with JOBS_LOCK:
+        for u in urls:
+            jid = str(uuid.uuid4())
+            JOBS[jid] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running",
+                         "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos}
+            items.append((jid, u))
+    threading.Thread(target=_run_batch, args=(items,), daemon=True).start()
+    return {"job_ids": [j for j, _ in items]}
+
+
 @app.post("/process-file")
 async def process_file(file: UploadFile = File(...), angle: str = Form(""), wm_token: str = Form(""), wm_pos: str = Form("right")):
     """Direct upload path: skips the download step entirely. Use this when a
@@ -1190,6 +1226,15 @@ def set_on_screen_caption(job_id: str, req: OnScreenCaptionRequest):
         job["eta_seconds"] = _estimate_eta_seconds(job)
     threading.Thread(target=_run_set_on_screen_caption, args=(job_id, text), daemon=True).start()
     return {"job_id": job_id}
+
+
+@app.post("/jobs/{job_id}/hooks")
+def job_hooks(job_id: str):
+    job = get_job(job_id)
+    hooks = generate_hook_options(job.get("transcript", ""), job.get("meta", {}), job.get("on_screen_caption", ""))
+    if not hooks:
+        raise HTTPException(status_code=502, detail="Couldn't generate hook options right now.")
+    return {"hooks": hooks}
 
 
 @app.get("/files/{filename}")
@@ -1943,6 +1988,17 @@ def _clip_public(cid, c):
     base["clips"] = [{**k, "video_url": (f"/files/{k['job_id']}_final.mp4" if k.get("job_id") else f"/files/{k['file']}")}
                      for k in (c.get("clips") or []) if k.get("file")]
     return base
+
+
+@app.get("/api/clip/{cid}/words")
+def clip_words_window(cid: str, start: float = 0, end: float = 60):
+    """Transcript words in a time window -- powers the click-to-trim UI."""
+    c = _clip_load(cid)
+    if not c or not c.get("speech"):
+        raise HTTPException(status_code=404, detail="Unknown clipping session.")
+    end = min(end, start + 300)
+    ws = [w for w in c["speech"].get("words", []) if w["end"] >= start and w["start"] <= end]
+    return {"words": ws}
 
 
 @app.get("/api/clips")

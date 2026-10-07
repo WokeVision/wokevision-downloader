@@ -35,6 +35,7 @@
   @keyframes sl { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
   .clip video { width: 100%; border-radius: 12px; background: #000; max-height: 260px; }
+  .trim { margin-top: 10px; } .trim .wds { max-height: 180px; overflow: auto; font-size: 13.5px; line-height: 1.9; background: rgba(0,0,0,.3); border-radius: 10px; padding: 8px 10px; } .trim .wds span { cursor: pointer; padding: 1px 2px; border-radius: 4px; } .trim .wds span.in { background: rgba(255,43,60,.35); } .trim .tr { display: flex; gap: 6px; align-items: center; margin: 8px 0; font-size: 12.5px; flex-wrap: wrap; } .trim input { width: 70px; background: rgba(0,0,0,.35); color: inherit; border: 1px solid var(--border); border-radius: 8px; padding: 6px; margin: 0; }
   .clip h3 { margin: 10px 0 2px; font-size: 16px; }
   .meta { font-size: 12.5px; color: var(--dim); margin-bottom: 6px; }
   .score { display: inline-block; padding: 1px 8px; border-radius: 999px; background: rgba(255,43,60,.18); color: #ff8a93; font-weight: 700; font-size: 12px; margin-right: 6px; }
@@ -129,7 +130,7 @@
     window._src = d.video_url;
     (d.clips || []).forEach((c) => {
       const el = document.createElement("div"); el.className = "card clip";
-      el.innerHTML = '<video controls preload="metadata" playsinline></video><h3></h3><div class="meta"></div><div class="txt"></div><div class="row"><button class="primary" style="width:auto;padding:10px 16px">Edit this clip</button></div>';
+      el.innerHTML = '<video controls preload="metadata" playsinline></video><h3></h3><div class="meta"></div><div class="txt"></div><div class="row"><button class="primary" style="width:auto;padding:10px 16px">Edit this clip</button><button class="sec trimBtn" type="button">Trim</button></div><div class="trim hidden"></div>';
       el.querySelector("video").src = c.video_url;
       el.querySelector("h3").textContent = c.title || "Clip";
       el.querySelector(".meta").innerHTML = '<span class="score">' + c.score + '</span>' + fmt(c.start) + " – " + fmt(c.end) + " · " + Math.round(c.end - c.start) + "s<br>";
@@ -137,8 +138,26 @@
       el.querySelector(".txt").textContent = c.text || "";
       el.querySelector("button").onclick = c.job_id ? () => { location.href = "/editor#entry=" + c.job_id; } : () => edit({ index: c.id, title: c.title });
       if (c.job_id) el.querySelector("button").textContent = "Open in editor";
+      el.querySelector(".trimBtn").onclick = () => openTrim(el, c);
       g.appendChild(el);
     });
+  }
+  async function openTrim(el, c) {
+    const box = el.querySelector(".trim");
+    if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
+    box.classList.remove("hidden"); box.textContent = "Loading transcript…";
+    let st = c.start, en = c.end, pick = 0;
+    try {
+      const r = await fetch("/api/clip/" + cid + "/words?start=" + Math.max(0, c.start - 25) + "&end=" + (c.end + 25));
+      const d = await r.json(); if (!r.ok) throw new Error(d.detail || "failed");
+      box.innerHTML = '<div style="opacity:.6;font-size:12px">Click a word to set the start, then a word to set the end.</div><div class="wds"></div><div class="tr">Start <input type="number" step="0.5" class="ts"> End <input type="number" step="0.5" class="te"> <span class="len"></span></div><button class="primary" style="width:auto;padding:9px 14px">Edit this range</button>';
+      const wd = box.querySelector(".wds"), ts = box.querySelector(".ts"), te = box.querySelector(".te");
+      const spans = d.words.map((w) => { const sp = document.createElement("span"); sp.textContent = w.w + " "; sp.onclick = () => { if (pick === 0) { st = w.start; if (en <= st) en = w.end; pick = 1; } else { en = Math.max(w.end, st + 3); pick = 0; } paint(); }; wd.appendChild(sp); return [sp, w]; });
+      function paint() { ts.value = st.toFixed(1); te.value = en.toFixed(1); box.querySelector(".len").textContent = Math.round(en - st) + "s"; spans.forEach(([sp, w]) => sp.classList.toggle("in", w.start >= st - 0.05 && w.end <= en + 0.05)); }
+      ts.onchange = () => { st = +ts.value; paint(); }; te.onchange = () => { en = +te.value; paint(); };
+      paint();
+      box.querySelector("button").onclick = () => edit({ start: st, end: en, title: c.title });
+    } catch (e) { box.textContent = "Couldn't load the transcript: " + e.message; }
   }
   async function edit(body) {
     busy("Sending to the editor");

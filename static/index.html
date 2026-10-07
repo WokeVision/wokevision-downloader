@@ -140,6 +140,7 @@
   .ccRow .x { background: none; border: 0; color: var(--text-faint); font-size: 18px; cursor: pointer; padding: 6px 0 0; }
   .ccSel { background: rgba(0,0,0,.35); color: inherit; border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 12.5px; }
   .ccRow { grid-template-columns: 62px 1fr 28px; } .ccRow .t input { width: 56px; background: rgba(0,0,0,.35); color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 3px 4px; font-size: 11.5px; margin-bottom: 3px; }
+  .hookOpts { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; } .hookOpts button { text-align: left; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,.06); color: inherit; font: inherit; font-size: 13.5px; cursor: pointer; } .hookOpts button small { display: block; opacity: .55; text-transform: uppercase; letter-spacing: .06em; font-size: 10.5px; margin-bottom: 2px; }
   .ccEmpty { font-size: 13px; opacity: .65; padding: 6px 0 10px; }
 
   /* Touch devices: bigger, easier targets */
@@ -647,7 +648,7 @@
     <div id="linkPanel" class="panel active">
       <form id="form">
         <label class="fieldLabel" for="url">Video URL</label>
-        <input type="text" id="url" placeholder="https://..." required />
+        <input type="text" id="url" placeholder="Paste a link (or several, separated by spaces)" required />
         <button type="submit" id="submitBtn" class="primary">Process video</button>
       </form>
     </div>
@@ -686,8 +687,10 @@
         <div class="actionRow">
           <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
           <button class="secondary" id="saveOnScreenCaptionBtn" type="button">Save caption</button>
+          <button class="secondary" id="hookOptsBtn" type="button">3 hook options</button>
           <span class="inlineSpinner" id="onScreenCaptionSpinner">Updating...</span>
         </div>
+        <div id="hookOpts" class="hookOpts"></div>
         <div class="capDivider"></div>
         <h3 class="capSub">Core caption</h3>
         <textarea id="captionBox"></textarea>
@@ -927,11 +930,20 @@
     e.preventDefault();
     const url = document.getElementById("url").value.trim();
     if (!url) return;
+    const many = url.match(/https?:\/\/\S+/g) || [];
 
     submitBtn.disabled = true;
     resetUI();
 
     try {
+      if (many.length > 1) {
+        const rb = await fetch("/api/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: many, angle: document.getElementById("angleBox").value, wm_token: await wmToken(), wm_pos: wmPos }) });
+        const db = await rb.json(); if (!rb.ok) throw new Error(db.detail || "Something went wrong.");
+        alert(db.job_ids.length + " videos queued. They're processed one at a time — find each in History as it finishes (you'll get a phone alert if alerts are set up).");
+        document.getElementById("url").value = "";
+        await pollJob(db.job_ids[0]);
+        return;
+      }
       const resp = await fetch("/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1231,6 +1243,22 @@
     finally { btn.disabled = false; sp.style.display = "none"; }
   });
   wmRefresh();
+  document.getElementById("hookOptsBtn").addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const b = document.getElementById("hookOptsBtn"), box = document.getElementById("hookOpts");
+    b.disabled = true; b.textContent = "Thinking…";
+    try {
+      const r = await fetch(`/jobs/${currentJobId}/hooks`, { method: "POST" });
+      const d = await r.json(); if (!r.ok) throw new Error(d.detail || "failed");
+      box.innerHTML = "";
+      d.hooks.forEach((h) => {
+        const x = document.createElement("button"); x.type = "button";
+        const sm = document.createElement("small"); sm.textContent = h.style; x.appendChild(sm); x.appendChild(document.createTextNode(h.text));
+        x.addEventListener("click", () => { document.getElementById("onScreenBox").value = h.text; box.innerHTML = ""; document.getElementById("saveOnScreenCaptionBtn").click(); });
+        box.appendChild(x);
+      });
+    } catch (e) { alert("Couldn't get hooks: " + e.message); } finally { b.disabled = false; b.textContent = "3 hook options"; }
+  });
   const paidPromo = document.getElementById("paidPromo");
   document.getElementById("creditBtn").addEventListener("click", async () => {
     if (!currentJobId) return;

@@ -527,6 +527,36 @@ def generate_on_screen_caption(transcript: str, meta: dict, avoid: str = None) -
         return title
 
 
+HOOKS_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"""
+
+Your job right now: write THREE different on-screen hooks for this clip, each built on a different tactic:
+1. "question" - a sharp question that makes the viewer need the answer.
+2. "claim" - a bold, specific statement that takes a clear side.
+3. "curiosity" - an open loop that withholds the payoff.
+Each must follow these rules: {ON_SCREEN_RULES}
+
+Respond ONLY with JSON: {{"hooks": [{{"style": "question", "text": "..."}}, {{"style": "claim", "text": "..."}}, {{"style": "curiosity", "text": "..."}}]}}"""
+
+
+def generate_hook_options(transcript: str, meta: dict, current: str = "") -> list:
+    """Three alternative on-screen hooks (question / claim / curiosity) so the
+    editor can pick instead of re-rolling one at a time. [] on any failure."""
+    if not OPENAI_API_KEY:
+        return []
+    note = f'The current hook is: "{current}" -- all three must be different from it.' if current else ""
+    try:
+        data = _call_openai(HOOKS_SYSTEM, _build_context(transcript, meta, note))
+        out = []
+        for h in (data.get("hooks") or [])[:3]:
+            t = _enforce_single_trailing_emoji((h.get("text") or "").strip())
+            if t:
+                out.append({"style": str(h.get("style") or ""), "text": t})
+        return out
+    except Exception as e:
+        print(f"HOOK OPTIONS FAILED: {e}", flush=True)
+        return []
+
+
 def generate_posting_caption(transcript: str, meta: dict, on_screen_caption: str = "", avoid: str = None) -> str:
     """The longer caption for the actual social posts (Instagram, YouTube,
     X, TikTok, Threads, Facebook), hashtags included. Falls back to the

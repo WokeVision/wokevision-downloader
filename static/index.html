@@ -729,6 +729,10 @@
         </div>
         <div id="ccList"></div>
         <div class="actionRow">
+          <select id="ccLang" class="ccSel" title="Translate subtitles"><option value="">Translate to…</option><option>Spanish</option><option>French</option><option>German</option><option>Portuguese</option><option>Italian</option><option>Arabic</option><option>Hindi</option><option>Turkish</option><option>Indonesian</option><option>Japanese</option><option>Korean</option><option>English</option></select>
+          <button class="secondary" id="ccRestore" type="button" style="display:none">Restore original</button>
+        </div>
+        <div class="actionRow">
           <button class="secondary" id="ccApplyBtn" type="button">Apply captions</button>
           <span class="inlineSpinner" id="ccSpinner">Updating...</span>
         </div>
@@ -753,6 +757,11 @@
       <span class="switch"><input type="checkbox" id="paidPromo" /><span class="track"></span></span>
     </label>
 
+      <div class="actionRow">
+        <button class="secondary" id="riskBtn" type="button">Check for risks</button>
+        <span class="saveState" id="riskMsg"></span>
+      </div>
+      <div id="riskOut" style="font-size:13px;line-height:1.5"></div>
       <div class="actionRow">
         <button class="secondary" id="rewriteAllBtn" type="button">Rewrite all platforms</button>
         <span class="inlineSpinner" id="rewriteSpinner">Rewriting...</span>
@@ -1252,6 +1261,42 @@
       ccList.appendChild(row);
     });
   }
+
+  // --- translated subtitles
+  const ccLang = document.getElementById("ccLang"), ccRestore = document.getElementById("ccRestore");
+  ccLang.addEventListener("change", async () => {
+    const lang = ccLang.value; if (!lang) return;
+    const rows = [...ccList.querySelectorAll(".ccRow")]; if (!rows.length) { ccLang.value = ""; return; }
+    rows.forEach((r) => { if (r.dataset.src === undefined) { r.dataset.src = r.querySelector("textarea").value; r.dataset.srcWords = r.dataset.words; } });
+    ccLang.disabled = true;
+    try {
+      const r = await fetch("/api/translate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lines: rows.map((x) => x.querySelector("textarea").value), language: lang }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.detail || "failed");
+      rows.forEach((row, i) => { row.querySelector("textarea").value = d.lines[i]; row.dataset.words = "[]"; });
+      ccRestore.style.display = "";
+    } catch (e) { alert("Couldn't translate: " + e.message); }
+    ccLang.disabled = false; ccLang.value = "";
+  });
+  ccRestore.addEventListener("click", () => {
+    ccList.querySelectorAll(".ccRow").forEach((row) => { if (row.dataset.src !== undefined) { row.querySelector("textarea").value = row.dataset.src; row.dataset.words = row.dataset.srcWords || "[]"; } });
+    ccRestore.style.display = "none";
+  });
+  // --- pre-publish risk scan
+  document.getElementById("riskBtn").addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const b = document.getElementById("riskBtn"), out = document.getElementById("riskOut"), m = document.getElementById("riskMsg");
+    b.disabled = true; m.textContent = "Checking…"; out.innerHTML = "";
+    try {
+      const r = await fetch(`/jobs/${currentJobId}/risk-check`, { method: "POST" });
+      const d = await r.json(); if (!r.ok) throw new Error(d.detail || "failed");
+      m.textContent = "";
+      const esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+      const col = { high: "#ff6b6b", medium: "#ffb454", low: "#9aa4b2" };
+      out.innerHTML = '<div style="margin:8px 0;opacity:.8">' + esc(d.summary || (d.flags.length ? "" : "No concerns found.")) + "</div>" +
+        d.flags.map((f) => '<div style="border-left:3px solid ' + (col[f.severity] || col.low) + ';padding:6px 10px;margin:8px 0;background:rgba(255,255,255,.04);border-radius:6px"><b>' + esc(f.category) + " · " + esc(f.severity) + "</b><br>“" + esc(f.quote) + "”<br>" + esc(f.why) + '<br><i>Safer: ' + esc(f.fix) + "</i></div>").join("");
+    } catch (e) { m.textContent = "Couldn't check: " + e.message; }
+    b.disabled = false;
+  });
   document.getElementById("ccApplyBtn").addEventListener("click", async () => {
     if (!currentJobId) return;
     const cues = [...ccList.querySelectorAll(".ccRow")].map((r) => { const text = r.querySelector("textarea").value; let words = []; try { words = JSON.parse(r.dataset.words || "[]"); } catch (e) {} return { start: +r.querySelector(".cs").value, end: +r.querySelector(".ce").value, text, words: text === r.dataset.orig ? words : [] }; });

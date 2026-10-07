@@ -18,7 +18,7 @@ from downloader import download_video, DownloadError
 from transcribe import transcribe_audio
 import speech
 import notify
-from caption import (generate_hook_options, generate_captions, generate_on_screen_caption, generate_posting_caption,
+from caption import (risk_check, translate_lines, generate_hook_options, generate_captions, generate_on_screen_caption, generate_posting_caption,
                      generate_platform_posts, normalize_platform_posts, PLATFORM_IDS, decide_credit, apply_disclosure,
                      credit_handle as caption_credit_handle, set_credit_in_posts)
 from render import render_staged, apply_caption
@@ -1286,6 +1286,39 @@ def job_hooks(job_id: str):
     if not hooks:
         raise HTTPException(status_code=502, detail="Couldn't generate hook options right now.")
     return {"hooks": hooks}
+
+
+@app.post("/jobs/{job_id}/risk-check")
+def job_risk_check(job_id: str):
+    job = get_job(job_id)
+    texts = {"on-screen": job.get("on_screen_caption", ""), "caption": job.get("posting_caption", "")}
+    for k, v in (job.get("platform_posts") or {}).items():
+        if isinstance(v, dict):
+            for fk, fv in v.items():
+                if isinstance(fv, str) and fv.strip() and fk in ("caption", "text", "title", "description"):
+                    texts[f"{k} {fk}"] = fv
+    try:
+        return risk_check(job.get("transcript", ""), texts)
+    except Exception as e:
+        print(f"RISK CHECK FAILED: {e}", flush=True)
+        raise HTTPException(status_code=502, detail="Couldn't run the risk check right now.")
+
+
+class TranslateRequest(BaseModel):
+    lines: list
+    language: str
+
+
+@app.post("/api/translate")
+def api_translate(req: TranslateRequest):
+    lines = [str(x)[:300] for x in req.lines][:200]
+    if not lines:
+        return {"lines": []}
+    try:
+        return {"lines": translate_lines(lines, req.language[:40])}
+    except Exception as e:
+        print(f"TRANSLATE FAILED: {e}", flush=True)
+        raise HTTPException(status_code=502, detail="Translation failed, try again.")
 
 
 @app.get("/files/{filename}")

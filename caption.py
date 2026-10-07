@@ -561,6 +561,36 @@ def generate_hook_options(transcript: str, meta: dict, current: str = "") -> lis
         return []
 
 
+RISK_SYSTEM = """You are a cautious social-media legal/policy reviewer for a political meme page. \
+Review the post copy and video transcript BEFORE publishing. Flag only real concerns, each with a severity ("high" or "medium" or "low"), \
+a category (one of: defamation, unverified claim, hate speech, graphic content, harassment, misinformation, platform policy, copyright, other), \
+a short quote of the problematic text, why it is a risk, and a concrete safer rewrite. Defamation concerns apply mainly to false factual \
+accusations about private individuals; opinion and satire about public figures is normally fine. If nothing is concerning, return an empty list. \
+Respond ONLY with JSON: {"summary": "one sentence", "flags": [{"severity": "...", "category": "...", "quote": "...", "why": "...", "fix": "..."}]}"""
+
+
+def risk_check(transcript: str, texts: dict) -> dict:
+    """Pre-publish scan of the copy + transcript. Raises on failure."""
+    body = "VIDEO TRANSCRIPT:\n" + (transcript or "(none)")[:6000] + "\n\nPOST COPY:\n" + \
+        "\n".join(f"[{k}] {v}" for k, v in (texts or {}).items() if v)
+    data = _call_openai(RISK_SYSTEM, body, temperature=0.2, kind="risk")
+    flags = []
+    for f in (data.get("flags") or [])[:10]:
+        flags.append({k: str(f.get(k) or "")[:400] for k in ("severity", "category", "quote", "why", "fix")})
+    return {"summary": str(data.get("summary") or "")[:300], "flags": flags}
+
+
+def translate_lines(lines: list, language: str) -> list:
+    """Translate subtitle lines, keeping count and order. Raises on failure."""
+    system = ("You translate subtitle lines into " + language + ". Keep each line short, natural and in the same order; "
+              "keep names and hashtags. Respond ONLY with JSON: {\"lines\": [\"...\"]} with exactly the same number of lines as the input.")
+    data = _call_openai(system, json.dumps({"lines": lines}), temperature=0.2, kind="translate")
+    out = [str(x) for x in (data.get("lines") or [])]
+    if len(out) != len(lines):
+        raise ValueError("translation line count mismatch")
+    return out
+
+
 def generate_posting_caption(transcript: str, meta: dict, on_screen_caption: str = "", avoid: str = None) -> str:
     """The longer caption for the actual social posts (Instagram, YouTube,
     X, TikTok, Threads, Facebook), hashtags included. Falls back to the

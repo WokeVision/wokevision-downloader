@@ -61,3 +61,33 @@ def notify(title: str, message: str, url: str = None):
     if not configured():
         return
     threading.Thread(target=_send, args=(title, message, url), daemon=True).start()
+
+
+def email_configured() -> bool:
+    return bool(os.environ.get("SMTP_HOST") and os.environ.get("SMTP_USER") and os.environ.get("SMTP_PASS"))
+
+
+def send_email(to: str, subject: str, body: str, reply_to: str = None) -> bool:
+    """Sends a plain-text email through SMTP (SMTP_HOST/PORT/USER/PASS, SMTP_FROM optional).
+    Returns False (never raises) when SMTP isn't set up or sending fails."""
+    if not email_configured() or not to:
+        return False
+    import smtplib
+    from email.message import EmailMessage
+    try:
+        msg = EmailMessage()
+        msg["From"] = os.environ.get("SMTP_FROM") or os.environ["SMTP_USER"]
+        msg["To"] = to
+        msg["Subject"] = subject
+        if reply_to:
+            msg["Reply-To"] = reply_to
+        msg.set_content(body)
+        port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(os.environ["SMTP_HOST"], port, timeout=20) as s:
+            s.starttls()
+            s.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
+            s.send_message(msg)
+        return True
+    except Exception as e:
+        print(f"EMAIL FAILED: {e}", flush=True)
+        return False

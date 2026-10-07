@@ -587,6 +587,9 @@ def attention_items():
                 else:
                     out.append({"kind": "expiry", "platform": r["platform"],
                                 "text": f"{r['platform']} login expires soon -- reconnect it", "href": "/accounts#connections"})
+    n = req_pending_count()
+    if n:
+        out.append({"kind": "requests", "platform": "", "text": f"{n} customer request{'s' if n != 1 else ''} waiting for review", "href": "/requests"})
     return out
 
 
@@ -1019,3 +1022,68 @@ def bio_campaign_clicks(cid):
         cur.execute("""SELECT l.label, count(c.id) AS clicks FROM bio_links l LEFT JOIN bio_clicks c ON c.link_id = l.id
                        WHERE l.campaign_id = %s GROUP BY l.id, l.label ORDER BY l.id""", (cid,))
         return [dict(r) for r in cur.fetchall()]
+
+
+# --- Customer requests (paid post orders + consultation bookings) -------------------------
+_REQ_DDL = ("CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, kind TEXT, status TEXT DEFAULT 'pending', "
+            "created_at TIMESTAMPTZ DEFAULT now(), name TEXT, email TEXT, data JSONB DEFAULT '{}'::jsonb, "
+            "run_at TIMESTAMPTZ, history_id TEXT, owner_note TEXT DEFAULT '')")
+
+
+def _req_cur(conn, **kw):
+    cur = conn.cursor(**kw)
+    cur.execute(_REQ_DDL)
+    return cur
+
+
+def req_create(rid, kind, name, email, data, run_at=None):
+    with _conn() as conn:
+        cur = _req_cur(conn)
+        cur.execute("INSERT INTO requests (id, kind, name, email, data, run_at) VALUES (%s,%s,%s,%s,%s,%s)",
+                    (rid, kind, name, email, json.dumps(data or {}), run_at))
+
+
+def _req_row(r):
+    r = dict(r)
+    r["created_at"] = r["created_at"].isoformat() if r.get("created_at") else None
+    r["run_at"] = r["run_at"].isoformat() if r.get("run_at") else None
+    return r
+
+
+def req_list(limit=200):
+    with _conn() as conn:
+        cur = _req_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM requests WHERE status <> 'archived' ORDER BY (status = 'pending') DESC, created_at DESC LIMIT %s", (limit,))
+        return [_req_row(r) for r in cur.fetchall()]
+
+
+def req_get(rid):
+    with _conn() as conn:
+        cur = _req_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM requests WHERE id = %s", (rid,))
+        r = cur.fetchone()
+        return _req_row(r) if r else None
+
+
+def req_update(rid, status=None, data=None, run_at=None, history_id=None, owner_note=None):
+    with _conn() as conn:
+        cur = _req_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT data FROM requests WHERE id = %s", (rid,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        merged = {**(row["data"] or {}), **(data or {})}
+        cur.execute("""UPDATE requests SET status = coalesce(%s, status), data = %s, run_at = coalesce(%s, run_at),
+                       history_id = coalesce(%s, history_id), owner_note = coalesce(%s, owner_note) WHERE id = %s""",
+                    (status, json.dumps(merged), run_at, history_id, owner_note, rid))
+        return True
+
+
+def req_pending_count():
+    try:
+        with _conn() as conn:
+            cur = _req_cur(conn)
+            cur.execute("SELECT count(*) FROM requests WHERE status = 'pending'")
+            return int(cur.fetchone()[0])
+    except Exception:
+        return 0

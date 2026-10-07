@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0A0A0C" /><link rel="icon" href="/static/assets/logo-mark.png" />
+<title>Requests · WokeVision</title>
+<link rel="stylesheet" href="/static/nav.css" />
+<style>
+  :root { color-scheme: dark; --bg:#0A0A0C; --surface:rgba(255,255,255,0.055); --border:rgba(255,255,255,0.10); --text:#F5F5F7; --faint:rgba(245,245,247,0.5); --accent:#FF2B3C; }
+  * { box-sizing: border-box; } html, body { background: var(--bg); color: var(--text); margin: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; padding-bottom: 48px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,0.10), transparent 55%), var(--bg); }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 22px 18px 0; } h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.02em; } .sub { color: var(--faint); font-size: 13px; margin-bottom: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 16px; margin-bottom: 14px; }
+  input, textarea, select { width: 100%; background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px; font: inherit; font-size: 14.5px; margin-bottom: 10px; }
+  label { display: block; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); margin-bottom: 5px; }
+  .btn { border: 1px solid var(--border); background: rgba(255,255,255,.06); color: var(--text); font: inherit; font-weight: 600; font-size: 13.5px; padding: 9px 14px; border-radius: 999px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.accent { background: var(--accent); border-color: transparent; } .btn.danger { color: #FFB4B4; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.1); }
+  .ok { background: rgba(48,209,88,.2); color: #6ee79a; } .chg { background: rgba(255,214,10,.18); color: #FFD60A; }
+  video { width: 100%; max-width: 220px; border-radius: 12px; background: #000; } .th { height: 90px; border-radius: 8px; margin: 0 6px 6px 0; } .st { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.1); } .st.pending { background: rgba(255,214,10,.18); color: #FFD60A; } .st.approved, .st.done { background: rgba(48,209,88,.2); color: #6ee79a; } .st.error, .st.declined { background: rgba(255,69,58,.2); color: #ff8a93; } textarea { min-height: 90px; } .sm { font-size: 12.5px; color: var(--faint); }
+</style></head><body>
+<script src="/static/nav.js"></script>
+<div class="wrap">
+  <h1>Requests</h1><div class="sub">Customer post bookings and consultation requests from your bio link. Approve a booking to schedule it; nothing posts until you do.</div>
+  <div id="note" class="sub"></div>
+  <div id="list"></div>
+</div>
+<script>
+var BASE=location.origin, emailOK=false, items=[];
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function j(u,m,b){return fetch(u,{method:m||"GET",headers:{"Content-Type":"application/json"},body:b?JSON.stringify(b):undefined}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.detail||"failed");return d;});});}
+function loc(iso){if(!iso)return "";var d=new Date(iso),z=new Date(d.getTime()-d.getTimezoneOffset()*60000);return z.toISOString().slice(0,16);}
+function fmt(iso){return iso?new Date(iso).toLocaleString([],{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"";}
+var PL={instagram:"Instagram",tiktok:"TikTok",youtube:"YouTube",x:"X",threads:"Threads",facebook:"Facebook"};
+function sendMail(id,to,subject,body){
+  j("/api/requests/"+id+"/email","POST",{subject:subject,body:body}).then(function(r){
+    if(r.sent){alert("Email sent to "+to+".");}
+    else{location.href="mailto:"+encodeURIComponent(to)+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);}
+  }).catch(function(e){alert(e.message);});}
+function card(r){
+  var d=r.data||{}, h='<div class="card" id="c'+r.id+'"><div class="row" style="justify-content:space-between"><b>'+esc(r.name)+' <span class="sm">&lt;'+esc(r.email)+'&gt;</span></b><span class="st '+r.status+'">'+({pending:"Needs review",processing:"Preparing…",approved:"Scheduled",declined:"Declined",error:"Problem",done:"Handled"}[r.status]||r.status)+'</span></div>';
+  if(r.kind==="consult"){
+    h+='<div class="sm" style="margin:6px 0">Consultation request · '+fmt(r.created_at)+'</div><div><b>Wants:</b> '+esc(d.when||"no time given")+'</div><div style="white-space:pre-wrap;margin:6px 0">'+esc(d.topic||"")+'</div>';
+    if(r.status==="pending"){h+='<label>Confirm a time (goes in the reply)</label><input id="ct'+r.id+'" value="'+esc(d.when||"")+'" /><div class="row"><button class="btn accent" data-cc="'+r.id+'">Reply to confirm</button><button class="btn" data-done="'+r.id+'">Mark handled</button></div>';}
+  } else {
+    var reel=d.type==="reel";
+    h+='<div class="sm" style="margin:6px 0">'+(reel?"Reel":"Still / carousel")+' · '+esc(d.currency||"$")+esc(d.price)+' · received '+fmt(r.created_at)+'</div>';
+    if(r.status==="error")h+='<div style="color:#ff8a93;margin:6px 0">'+esc(d.error||"Something went wrong.")+'</div>';
+    h+='<div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:12px">';
+    h+= reel? '<video src="'+esc(r.file_urls[0]||"")+'#t=0.4" controls preload="metadata" playsinline></video>' : '<div>'+r.file_urls.map(function(u){return '<img class="th" src="'+esc(u)+'">';}).join("")+'</div>';
+    h+='</div>';
+    if(r.status==="pending"||r.status==="error"){
+      h+='<label>Platform</label><select id="pl'+r.id+'">'+Object.keys(PL).filter(function(k){return reel||k==="instagram";}).map(function(k){return '<option value="'+k+'"'+(k===d.platform?' selected':'')+'>'+PL[k]+'</option>';}).join("")+'</select>';
+      h+='<label>Caption</label><textarea id="cp'+r.id+'">'+esc(d.caption)+'</textarea><label>Post at</label><input type="datetime-local" id="wh'+r.id+'" value="'+loc(r.run_at)+'" />';
+      if(d.notes)h+='<div class="sm">Customer note: '+esc(d.notes)+'</div>';
+      h+='<div class="row" style="margin-top:10px"><button class="btn accent" data-ap="'+r.id+'">Approve &amp; schedule</button><button class="btn danger" data-dc="'+r.id+'">Decline</button></div>';
+    } else {
+      h+='<div style="margin:8px 0"><b>'+esc(PL[d.platform]||d.platform)+'</b> · '+fmt(r.run_at)+(d.time_bumped?' <span class="sm">(moved forward — the requested time had passed)</span>':'')+'</div><div class="sm" style="white-space:pre-wrap">'+esc(d.caption)+'</div>';
+      if(r.status==="approved"){h+='<div class="row" style="margin-top:10px"><button class="btn accent" data-cf="'+r.id+'">'+(d.emailed?"Resend confirmation":"Email confirmation")+'</button><a class="btn" href="/schedule">View in schedule</a></div>';}
+      if(r.status==="declined"&&r.owner_note)h+='<div class="sm">Reason sent: '+esc(r.owner_note)+'</div>';
+    }
+  }
+  return h+((r.status==="declined"||r.status==="done"||r.status==="error")?'<div style="margin-top:8px"><button class="btn" data-ar="'+r.id+'">Remove</button></div>':'')+'</div>';
+}
+function find(id){return items.filter(function(x){return x.id===id;})[0];}
+function render(){
+  document.getElementById("list").innerHTML=items.map(card).join("")||'<div class="sub">Nothing yet. Requests from your bio link appear here.</div>';
+  document.getElementById("note").textContent=emailOK?"Emails to customers are sent from the app automatically.":"Emails open in your own mail app with the message pre-filled (add SMTP settings on Render to send them automatically).";
+  var q=function(a,f){document.querySelectorAll("["+a+"]").forEach(function(b){b.onclick=function(){f(b.getAttribute(a),b);};});};
+  q("data-ap",function(id,b){var c=find(id),d=c.data;b.disabled=true;
+    j("/api/requests/"+id,"PUT",{caption:document.getElementById("cp"+id).value,platform:document.getElementById("pl"+id).value,run_at:new Date(document.getElementById("wh"+id).value).toISOString()})
+     .then(function(){return j("/api/requests/"+id+"/approve","POST");}).then(load).catch(function(e){alert(e.message);b.disabled=false;});});
+  q("data-dc",function(id){var why=prompt("Optional: a short reason to include in the email to the customer");if(why===null)return;var c=find(id);
+    j("/api/requests/"+id+"/decline","POST",{note:why}).then(function(){sendMail(id,c.email,"About your post request","Hi "+c.name+",\n\nThanks for your request. Unfortunately we can't take this one on."+(why?"\n\n"+why:"")+"\n\nBest wishes");load();});});
+  q("data-cf",function(id){var c=find(id),d=c.data;
+    sendMail(id,c.email,"Your "+(d.type==="reel"?"reel":"post")+" is booked","Hi "+c.name+",\n\nGood news — your "+(d.type==="reel"?"reel":"post")+" is approved and scheduled for "+(PL[d.platform]||d.platform)+" on "+fmt(c.run_at)+".\n\nWe'll let you know if anything changes.\n\nBest wishes");setTimeout(load,1500);});
+  q("data-cc",function(id){var c=find(id),t=document.getElementById("ct"+id).value;
+    sendMail(id,c.email,"Your consultation","Hi "+c.name+",\n\nThanks for getting in touch. How does "+t+" work for a short call? Reply to confirm, or suggest another time.\n\nBest wishes");});
+  q("data-done",function(id){j("/api/requests/"+id+"/done","POST").then(load);});
+  q("data-ar",function(id){j("/api/requests/"+id,"DELETE").then(load);});
+}
+var timer;
+function load(){clearTimeout(timer);j("/api/requests").then(function(d){items=d.items;emailOK=d.email_configured;
+  var open=document.activeElement&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);if(!open)render();
+  if(items.some(function(x){return x.status==="processing";}))timer=setTimeout(load,4000);});}
+load();
+</script></body></html>

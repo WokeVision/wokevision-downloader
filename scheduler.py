@@ -27,6 +27,27 @@ def _publish_one(modules: dict, item: dict) -> dict:
         return {"ok": False, "error": "This platform isn't connected."}
     base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
     filename = e.get("video_filename") or ""
+    images = (e.get("meta") or {}).get("images") or []
+    if images:
+        # Still / carousel order: Instagram only for now.
+        if not hasattr(module, "publish_images"):
+            return {"ok": False, "error": f"Still posts can't be published to {platform} yet -- post this one manually."}
+        urls = []
+        for fn in images:
+            lp = os.path.join(os.environ.get("DOWNLOAD_DIR", "/tmp/downloads"), fn)
+            try:
+                storage.fetch_to(lp, fn)
+            except Exception as ex:
+                print(f"SCHEDULE: storage fetch failed for {fn}: {ex}", flush=True)
+            urls.append(f"{base}/files/{fn}")
+        caption = e.get("posting_caption") or ""
+        posts = normalize_platform_posts(e.get("platform_posts") or {}, caption)
+        try:
+            outcome = module.publish_images(urls, caption, post=posts.get(platform))
+            return {"ok": True, **(outcome or {})}
+        except Exception as ex:
+            print(f"SCHEDULED IMAGE PUBLISH FAILED ({platform}): {ex}", flush=True)
+            return {"ok": False, "error": str(ex)}
     if not filename:
         return {"ok": False, "error": "No video file recorded for this edit."}
     # Make sure the file is on local disk (pulled back from R2 if a redeploy

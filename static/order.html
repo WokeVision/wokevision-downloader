@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0A0A0C" /><link rel="icon" href="/static/assets/logo-mark.png" />
+<title>Book a post</title><meta name="robots" content="noindex" />
+<style>
+  :root { color-scheme: dark; --bg:#0A0A0C; --text:#F5F5F7; --faint:rgba(245,245,247,.58); --accent:#FF2B3C; --line:rgba(255,255,255,.12); }
+  * { box-sizing: border-box; } html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; display: flex; justify-content: center; padding: 28px 18px 70px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,.14), transparent 55%), var(--bg); }
+  main { width: 100%; max-width: 520px; } a.back { color: var(--faint); font-size: 13.5px; text-decoration: none; }
+  h1 { font-size: 24px; margin: 14px 0 4px; letter-spacing: -.01em; } .sub { color: var(--faint); font-size: 14px; line-height: 1.5; margin-bottom: 20px; }
+  label { display: block; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); margin: 14px 0 6px; }
+  input[type=text], input[type=email], input[type=datetime-local], select, textarea { width: 100%; background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 12px; font: inherit; font-size: 15.5px; }
+  textarea { min-height: 120px; resize: vertical; } input[type=file] { width: 100%; font-size: 14px; color: var(--faint); }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .seg label { margin: 0; text-transform: none; letter-spacing: 0; font-size: 14.5px; color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 12px; text-align: center; cursor: pointer; background: rgba(255,255,255,.04); }
+  .seg input { display: none; } .seg input:checked + span { color: #fff; font-weight: 700; } .seg label:has(input:checked) { background: var(--accent); border-color: transparent; }
+  button.go { width: 100%; margin-top: 22px; padding: 15px; border: 0; border-radius: 14px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; font-size: 16px; cursor: pointer; } button.go:disabled { opacity: .6; }
+  .err { color: #ff8a93; font-size: 14px; margin-top: 12px; min-height: 18px; } .hint { font-size: 12.5px; color: var(--faint); margin-top: 6px; }
+  .hp { position: absolute; left: -9999px; height: 0; overflow: hidden; }
+  .done { text-align: center; padding: 30px 6px; } .done h1 { margin-top: 0; } .btn2 { display: block; margin-top: 14px; padding: 14px; border-radius: 14px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 700; }
+  .bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.1); margin-top: 12px; overflow: hidden; display: none; } .bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+</style></head><body><main>
+
+<a class="back" href="/links">&larr; Back</a>
+<div id="form">
+  <h1 id="h">Book a post</h1><div class="sub" id="s">Send us what you'd like posted and when. We'll review it and confirm by email.</div>
+  <div class="seg" id="seg"><label><input type="radio" name="kind" value="reel" /><span id="lReel">Reel</span></label><label><input type="radio" name="kind" value="still" /><span id="lStill">Still / carousel</span></label></div>
+  <label>Platform</label><select id="platform"><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="youtube">YouTube Shorts</option><option value="x">X</option><option value="threads">Threads</option><option value="facebook">Facebook</option></select>
+  <div class="hint" id="pHint"></div>
+  <label id="fLabel">Your video</label><input type="file" id="files" />
+  <div class="hint" id="fHint"></div>
+  <label>Caption (include your hashtags)</label><textarea id="caption" maxlength="2200" placeholder="Write the caption exactly as you'd like it posted"></textarea>
+  <label>Date &amp; time to post</label><input type="datetime-local" id="when" /><div class="hint" id="tz"></div>
+  <label>Your name</label><input type="text" id="name" autocomplete="name" />
+  <label>Your email</label><input type="email" id="email" autocomplete="email" />
+  <label>Anything else we should know? (optional)</label><input type="text" id="notes" maxlength="500" />
+  <div class="hp"><label>Website</label><input type="text" id="website" tabindex="-1" autocomplete="off" /></div>
+  <div class="bar" id="bar"><i id="barI"></i></div>
+  <button class="go" id="go">Submit request</button><div class="err" id="err"></div>
+</div>
+<div id="thanks" class="done" style="display:none"><h1>Request received ✓</h1><div class="sub" id="tmsg"></div><a class="btn2" id="pay" href="#" style="display:none" target="_blank" rel="noopener"></a><a class="back" href="/links" style="display:inline-block;margin-top:16px">Back to links</a></div>
+</main>
+<script>
+var q=new URLSearchParams(location.search), price={}, cur="$", emailTo="";
+function $(i){return document.getElementById(i);}
+function kind(){return document.querySelector("input[name=kind]:checked").value;}
+function sync(){var r=kind()==="reel";
+  $("fLabel").textContent=r?"Your video":"Your image(s)"; $("files").multiple=!r; $("files").accept=r?"video/mp4,video/quicktime,video/*":"image/*";
+  $("fHint").textContent=r?"One video, 3–90 seconds, up to 250MB. Vertical (9:16) works best.":"One image, or up to 10 for a carousel (JPG, PNG or WebP).";
+  var p=$("platform"); if(!r){p.value="instagram"; p.disabled=true; $("pHint").textContent="Still and carousel posts are Instagram only.";} else {p.disabled=false; $("pHint").textContent="";}
+  $("files").value="";}
+document.querySelectorAll("input[name=kind]").forEach(function(i){i.onchange=sync;});
+fetch("/api/public/bio").then(function(r){return r.json();}).then(function(d){cur=d.currency;emailTo=d.contact_email;
+  $("lReel").textContent="Reel · "+cur+d.reel_price; $("lStill").textContent="Still · "+cur+d.still_price; price={reel:d.reel_price,still:d.still_price};});
+document.querySelector("input[name=kind][value="+(q.get("type")==="still"?"still":"reel")+"]").checked=true; sync();
+var d0=new Date(Date.now()+26*3600*1000); d0.setMinutes(0,0,0); function loc(d){var z=new Date(d.getTime()-d.getTimezoneOffset()*60000);return z.toISOString().slice(0,16);}
+$("when").min=loc(new Date(Date.now()+3600*1000)); $("when").value=loc(d0);
+$("tz").textContent="Times are in your timezone ("+(Intl.DateTimeFormat().resolvedOptions().timeZone||"local")+").";
+$("go").onclick=function(){
+  $("err").textContent="";
+  var fs=$("files").files; if(!fs.length){$("err").textContent="Please choose your file.";return;}
+  if(!$("caption").value.trim()){$("err").textContent="Please write your caption.";return;}
+  if(!$("name").value.trim()||!$("email").value.trim()){$("err").textContent="Please add your name and email.";return;}
+  if(!$("when").value){$("err").textContent="Please choose a date and time.";return;}
+  var fd=new FormData(); fd.append("kind",kind()); fd.append("platform",$("platform").value); fd.append("caption",$("caption").value);
+  fd.append("run_at",new Date($("when").value).toISOString()); fd.append("name",$("name").value); fd.append("email",$("email").value);
+  fd.append("notes",$("notes").value); fd.append("website",$("website").value); for(var i=0;i<fs.length;i++) fd.append("files",fs[i]);
+  var x=new XMLHttpRequest(); x.open("POST","/api/public/order"); $("go").disabled=true; $("bar").style.display="block";
+  x.upload.onprogress=function(e){if(e.lengthComputable)$("barI").style.width=(e.loaded/e.total*100)+"%";};
+  x.onload=function(){var r={};try{r=JSON.parse(x.responseText);}catch(e){}
+    if(x.status===200&&r.ok){$("form").style.display="none";$("thanks").style.display="";
+      $("tmsg").textContent="Thanks "+$("name").value.trim()+" — we'll review your "+(kind()==="reel"?"reel":"post")+" and email you at "+$("email").value.trim()+" to confirm.";
+      if(r.pay_link){var a=$("pay");a.href=r.pay_link;a.textContent="Pay "+r.currency+r.price;a.style.display="block";}}
+    else{$("err").textContent=r.detail||"Something went wrong. Please try again.";$("go").disabled=false;$("bar").style.display="none";}};
+  x.onerror=function(){$("err").textContent="Upload failed — check your connection and try again.";$("go").disabled=false;$("bar").style.display="none";};
+  x.send(fd);};
+</script></body></html>

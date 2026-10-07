@@ -271,6 +271,61 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     return out
 
 
+def publish_images(image_urls: list, caption: str, post: dict = None) -> dict:
+    """Publishes one image, or a carousel of up to 10, as a feed post. URLs must
+    be public JPEGs. Raises InstagramError with the platform's message on failure."""
+    caption = (post or {}).get("caption", caption) or ""
+    conn = db.get_connection(PLATFORM)
+    if not conn or not conn.get("access_token"):
+        raise InstagramError("Instagram isn't connected.")
+    refresh_if_needed()
+    conn = db.get_connection(PLATFORM)
+    token = conn["access_token"]
+    uid = conn["extra"].get("ig_user_id")
+    if not uid:
+        raise InstagramError("No Instagram account id on file -- try reconnecting.")
+    urls = [u for u in image_urls if u][:10]
+    if not urls:
+        raise InstagramError("No images to post.")
+
+    def _wait(container_id):
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            st = requests.get(f"{GRAPH_BASE}/{container_id}", params={"fields": "status_code", "access_token": token}, timeout=20).json().get("status_code", "IN_PROGRESS")
+            if st == "FINISHED":
+                return
+            if st in ("ERROR", "EXPIRED"):
+                raise InstagramError(f"Instagram couldn't process an image (status: {st}).")
+            time.sleep(3)
+        raise InstagramError("Timed out waiting for Instagram to process the image.")
+
+    if len(urls) == 1:
+        r = requests.post(f"{GRAPH_BASE}/{uid}/media", data={"image_url": urls[0], "caption": caption, "access_token": token}, timeout=60)
+        if r.status_code != 200:
+            raise InstagramError(f"Could not start the upload: {r.text[:500]}")
+        container = r.json().get("id")
+    else:
+        kids = []
+        for u in urls:
+            r = requests.post(f"{GRAPH_BASE}/{uid}/media", data={"image_url": u, "is_carousel_item": "true", "access_token": token}, timeout=60)
+            if r.status_code != 200:
+                raise InstagramError(f"Could not upload a carousel image: {r.text[:500]}")
+            kids.append(r.json().get("id"))
+        for k in kids:
+            _wait(k)
+        r = requests.post(f"{GRAPH_BASE}/{uid}/media", data={"media_type": "CAROUSEL", "children": ",".join(kids), "caption": caption, "access_token": token}, timeout=60)
+        if r.status_code != 200:
+            raise InstagramError(f"Could not create the carousel: {r.text[:500]}")
+        container = r.json().get("id")
+    if not container:
+        raise InstagramError("Instagram didn't return a container id.")
+    _wait(container)
+    pr = requests.post(f"{GRAPH_BASE}/{uid}/media_publish", data={"creation_id": container, "access_token": token}, timeout=30)
+    if pr.status_code != 200:
+        raise InstagramError(f"Could not publish: {pr.text[:500]}")
+    return {"media_id": pr.json().get("id")}
+
+
 # --- Direct messages + account insights (need the manage_messages /
 # manage_insights scopes; until Instagram is reconnected with them these
 # raise InstagramError with Instagram's own message, which callers treat as

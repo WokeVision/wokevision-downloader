@@ -74,6 +74,7 @@ def _startup():
 # thing -- if it's not set up yet, the app behaves exactly as before.
 PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/", "/c/", "/api/public/", "/go/")
 PUBLIC_PATHS = {
+    "/links/order", "/links/consult",
     "/links",               # public link-in-bio page
     "/sw.js",               # PWA service worker (must be at the root to cover the whole site)
     "/manifest.webmanifest",
@@ -942,10 +943,22 @@ def bio_public_page():
     return FileResponse("static/links.html")
 
 
+_BIO_DEFAULTS = {"title": "WokeVision", "handle": "@wokevision_", "text": "", "contact_email": "contactwokevision@gmail.com",
+                 "reel_price": 100, "still_price": 80, "currency": "$",
+                 "deal_note": "First-time customer deals and bulk-upload deals are available on request.",
+                 "socials": [{"label": "Instagram", "url": "https://instagram.com/wokevision_"}],
+                 "pay_link_reel": "", "pay_link_still": "", "consult_blurb": "", "show_services": True, "show_tool": True}
+
+
+def _bio_page() -> dict:
+    return {**_BIO_DEFAULTS, **{k: v for k, v in (db.bio_page_get() or {}).items() if v not in (None, "")}}
+
+
 @app.get("/api/public/bio")
 def bio_public_data():
-    page = db.bio_page_get()
-    return {"title": page.get("title") or "WokeVision", "handle": page.get("handle") or "@wokevision_", "text": page.get("text") or "",
+    page = _bio_page()
+    return {**{k: page[k] for k in ("title", "handle", "text", "contact_email", "reel_price", "still_price", "currency", "deal_note",
+                                    "socials", "consult_blurb", "show_services", "show_tool")},
             "links": [{"id": l["id"], "label": l["label"]} for l in db.bio_links_list(only_active=True)]}
 
 
@@ -972,6 +985,17 @@ class BioPage(BaseModel):
     title: str = ""
     handle: str = ""
     text: str = ""
+    contact_email: str = ""
+    reel_price: int = 100
+    still_price: int = 80
+    currency: str = "$"
+    deal_note: str = ""
+    socials: list = []
+    pay_link_reel: str = ""
+    pay_link_still: str = ""
+    consult_blurb: str = ""
+    show_services: bool = True
+    show_tool: bool = True
 
 
 class BioLink(BaseModel):
@@ -984,13 +1008,28 @@ class BioLink(BaseModel):
 
 @app.get("/api/bio")
 def bio_admin_data():
-    return {"page": db.bio_page_get(), "links": db.bio_links_list(with_stats=True),
+    return {"page": _bio_page(), "links": db.bio_links_list(with_stats=True),
             "campaigns": [{"id": c["id"], "name": c["name"]} for c in db.camp_list()]}
 
 
 @app.put("/api/bio/page")
 def bio_admin_page_save(req: BioPage):
-    db.bio_page_save({"title": req.title[:60], "handle": req.handle[:40], "text": req.text[:240]})
+    socials = []
+    for it in (req.socials or [])[:12]:
+        if isinstance(it, dict) and str(it.get("url") or "").strip():
+            socials.append({"label": str(it.get("label") or "").strip()[:30] or "Link", "url": _clean_link_url(str(it["url"]))})
+    for k in ("pay_link_reel", "pay_link_still"):
+        v = getattr(req, k).strip()
+        if v:
+            _clean_link_url(v)
+    em = req.contact_email.strip()
+    if em and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", em):
+        raise HTTPException(status_code=400, detail="That contact email doesn't look right.")
+    db.bio_page_save({"title": req.title[:60], "handle": req.handle[:40], "text": req.text[:240], "contact_email": em[:120],
+                      "reel_price": max(0, min(req.reel_price, 100000)), "still_price": max(0, min(req.still_price, 100000)),
+                      "currency": (req.currency or "$")[:3], "deal_note": req.deal_note[:300], "socials": socials,
+                      "pay_link_reel": req.pay_link_reel.strip()[:500], "pay_link_still": req.pay_link_still.strip()[:500],
+                      "consult_blurb": req.consult_blurb[:600], "show_services": req.show_services, "show_tool": req.show_tool})
     return {"ok": True}
 
 
@@ -1015,6 +1054,310 @@ class BioOrder(BaseModel):
 @app.put("/api/bio/order")
 def bio_admin_order(req: BioOrder):
     db.bio_links_reorder([int(i) for i in req.ids])
+    return {"ok": True}
+
+
+
+# --- Customer requests: paid post orders + consultation bookings --------------------------
+_REQ_HITS = {}   # (kind, ip) -> [timestamps]
+_ORDER_DIR = DOWNLOAD_DIR
+
+
+def _rate_ok(kind: str, ip: str, limit: int = 5, window: int = 3600) -> bool:
+    now = time.time()
+    hits = [t for t in _REQ_HITS.get((kind, ip), []) if now - t < window]
+    if len(hits) >= limit:
+        _REQ_HITS[(kind, ip)] = hits
+        return False
+    hits.append(now)
+    _REQ_HITS[(kind, ip)] = hits
+    return True
+
+
+@app.get("/links/order")
+def order_page():
+    return FileResponse("static/order.html")
+
+
+@app.get("/links/consult")
+def consult_page():
+    return FileResponse("static/consult.html")
+
+
+@app.get("/requests")
+def requests_page():
+    return FileResponse("static/requests.html")
+
+
+_VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm"}
+_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+_MAX_VIDEO = 250 * 1024 * 1024
+_MAX_IMAGE = 25 * 1024 * 1024
+_ORDER_PLATFORMS = {"instagram", "tiktok", "youtube", "x", "threads", "facebook"}
+
+
+def _stream_to(upload: UploadFile, path: str, limit: int) -> int:
+    size = 0
+    with open(path, "wb") as f:
+        while True:
+            chunk = upload.file.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > limit:
+                f.close()
+                os.remove(path)
+                raise HTTPException(status_code=413, detail=f"That file is too large (max {limit // (1024 * 1024)}MB).")
+            f.write(chunk)
+    return size
+
+
+def _prep_still(src: str, dest: str):
+    """JPEG, in Instagram's allowed 4:5-1.91:1 range (padded over a blurred copy if outside it)."""
+    from PIL import Image, ImageFilter, ImageOps
+    im = ImageOps.exif_transpose(Image.open(src)).convert("RGB")
+    im.thumbnail((1440, 1800))
+    w, h = im.size
+    ratio = w / h
+    lo, hi = 0.8, 1.91
+    if ratio < lo or ratio > hi:
+        tw, th = (int(h * lo), h) if ratio < lo else (w, int(w / hi))
+        bg = im.resize((tw, th)).filter(ImageFilter.GaussianBlur(24))
+        bg.paste(im, ((tw - w) // 2, (th - h) // 2))
+        im = bg
+    im.save(dest, "JPEG", quality=90)
+
+
+def _base_url() -> str:
+    return os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
+
+@app.post("/api/public/order")
+async def public_order(request: Request, kind: str = Form(...), platform: str = Form("instagram"), caption: str = Form(""),
+                       run_at: str = Form(""), name: str = Form(""), email: str = Form(""), notes: str = Form(""),
+                       website: str = Form(""), files: list[UploadFile] = File(...)):
+    if website:                                   # honeypot: real people never fill this
+        return {"ok": True, "id": "x"}
+    ip = _client_ip(request)
+    if not _rate_ok("order", ip):
+        raise HTTPException(status_code=429, detail="Too many requests from your connection. Please try again later.")
+    page = _bio_page()
+    kind = "reel" if kind == "reel" else "still"
+    platform = platform if platform in _ORDER_PLATFORMS else "instagram"
+    if kind == "still":
+        platform = "instagram"
+    name, email = name.strip()[:80], email.strip()[:120]
+    if not name or not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="Please add your name and a valid email so we can confirm your booking.")
+    caption = caption.strip()[:2200]
+    if not caption:
+        raise HTTPException(status_code=400, detail="Please write the caption you'd like us to post.")
+    when = _parse_when(run_at)
+    if when < _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=1):
+        raise HTTPException(status_code=400, detail="Please choose a date and time at least an hour from now.")
+    files = [f for f in files if f and f.filename]
+    rid = uuid.uuid4().hex[:14]
+    saved = []
+    try:
+        if kind == "reel":
+            if len(files) != 1 or os.path.splitext(files[0].filename.lower())[1] not in _VIDEO_EXT:
+                raise HTTPException(status_code=400, detail="Please upload one video file (MP4 or MOV).")
+            fn = f"order_{rid}_src{os.path.splitext(files[0].filename.lower())[1]}"
+            _stream_to(files[0], os.path.join(DOWNLOAD_DIR, fn), _MAX_VIDEO)
+            dur = render._probe_duration(os.path.join(DOWNLOAD_DIR, fn)) or 0
+            if dur < 3 or dur > 90:
+                raise HTTPException(status_code=400, detail="Reels need to be between 3 and 90 seconds long.")
+            saved = [fn]
+        else:
+            if not 1 <= len(files) <= 10:
+                raise HTTPException(status_code=400, detail="Please upload between 1 and 10 images.")
+            for i, f in enumerate(files):
+                if os.path.splitext(f.filename.lower())[1] not in _IMAGE_EXT:
+                    raise HTTPException(status_code=400, detail="Images must be JPG, PNG or WebP.")
+                raw = os.path.join(DOWNLOAD_DIR, f"order_{rid}_{i}.raw")
+                _stream_to(f, raw, _MAX_IMAGE)
+                try:
+                    _prep_still(raw, os.path.join(DOWNLOAD_DIR, f"order_{rid}_{i}.jpg"))
+                except Exception:
+                    raise HTTPException(status_code=400, detail=f"We couldn't read “{f.filename}” as an image.")
+                finally:
+                    if os.path.exists(raw):
+                        os.remove(raw)
+                saved.append(f"order_{rid}_{i}.jpg")
+    except HTTPException:
+        for fn in saved + [f"order_{rid}_src{e}" for e in _VIDEO_EXT]:
+            fp = os.path.join(DOWNLOAD_DIR, fn)
+            if os.path.exists(fp):
+                os.remove(fp)
+        raise
+    finally:
+        for f in files:
+            await f.close()
+    storage.upload_many_async([(os.path.join(DOWNLOAD_DIR, fn), fn) for fn in saved])
+    price = page["reel_price"] if kind == "reel" else page["still_price"]
+    db.req_create(rid, "order", name, email, {"type": kind, "platform": platform, "caption": caption, "files": saved,
+                                              "notes": notes.strip()[:500], "price": price, "currency": page["currency"]}, when)
+    notify.notify("New post request", f"{name}: {kind} for {platform} ({page['currency']}{price}) — scheduled {when.strftime('%d %b %H:%M')} UTC",
+                  f"{_base_url()}/requests" if _base_url() else None)
+    notify.send_email(email, "We got your request", f"Hi {name},\n\nThanks — we've received your {kind} request for {platform} and will confirm it by email shortly.\n\n{page['title']}", page["contact_email"])
+    pay = page.get("pay_link_reel" if kind == "reel" else "pay_link_still") or ""
+    return {"ok": True, "id": rid, "price": price, "currency": page["currency"], "pay_link": pay}
+
+
+class ConsultReq(BaseModel):
+    name: str
+    email: str
+    when: str = ""
+    topic: str = ""
+    website: str = ""
+
+
+@app.post("/api/public/consult")
+def public_consult(req: ConsultReq, request: Request):
+    if req.website:
+        return {"ok": True}
+    if not _rate_ok("consult", _client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many requests from your connection. Please try again later.")
+    name, email = req.name.strip()[:80], req.email.strip()[:120]
+    if not name or not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(status_code=400, detail="Please add your name and a valid email.")
+    when = req.when.strip()[:200]
+    rid = uuid.uuid4().hex[:14]
+    db.req_create(rid, "consult", name, email, {"when": when, "topic": req.topic.strip()[:1500]})
+    notify.notify("Consultation request", f"{name} would like a call: {when or 'time not given'}", f"{_base_url()}/requests" if _base_url() else None)
+    page = _bio_page()
+    notify.send_email(email, "We got your consultation request", f"Hi {name},\n\nThanks — we'll reply shortly to confirm a time.\n\n{page['title']}", page["contact_email"])
+    return {"ok": True}
+
+
+@app.get("/api/requests")
+def requests_list():
+    base = _base_url()
+    items = db.req_list()
+    for it in items:
+        d = it.get("data") or {}
+        it["file_urls"] = [f"{base}/files/{fn}" for fn in d.get("files", [])]
+    return {"items": items, "email_configured": notify.email_configured()}
+
+
+class ReqEdit(BaseModel):
+    caption: str = None
+    run_at: str = None
+    platform: str = None
+    note: str = None
+
+
+def _order_error(rid: str, msg: str):
+    print(f"ORDER {rid} FAILED: {msg}", flush=True)
+    db.req_update(rid, status="error", data={"error": msg[:300]})
+
+
+def _approve_order(rid: str):
+    r = db.req_get(rid)
+    d = r["data"]
+    try:
+        files = d.get("files") or []
+        kind, platform, caption = d["type"], d["platform"], d["caption"]
+        entry_id = str(uuid.uuid4())
+        meta = {"order_id": rid, "customer": r["name"]}
+        video_fn = ""
+        if kind == "reel":
+            src = os.path.join(DOWNLOAD_DIR, files[0])
+            storage.fetch_to(src, files[0])
+            video_fn = f"{entry_id}_final.mp4"
+            out = os.path.join(DOWNLOAD_DIR, video_fn)
+            p = subprocess.run(["ffmpeg", "-y", "-i", src, "-vf", "scale='min(1080,iw)':-2", "-c:v", "libx264", "-preset", "veryfast",
+                                "-crf", "22", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out],
+                               capture_output=True, text=True, timeout=1200)
+            if p.returncode != 0 or not os.path.exists(out):
+                raise RuntimeError("Couldn't prepare the video: " + (p.stderr or "")[-200:])
+            storage.upload_many_async([(out, video_fn)])
+        else:
+            meta["images"] = files
+        db.save_history_entry(entry_id, f"Order: {r['name']}", video_fn, files[0] if files else "", "", caption, "", meta)
+        db.update_history_platform_posts(entry_id, normalize_platform_posts({}, caption))
+        when = _parse_when(r["run_at"])
+        floor = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=3)
+        bumped = when < floor
+        if bumped:
+            when = floor
+        db.sched_upsert(entry_id, platform, when)
+        db.req_update(rid, status="approved", history_id=entry_id, run_at=when, data={"time_bumped": bumped})
+    except Exception as e:
+        _order_error(rid, str(e))
+
+
+@app.put("/api/requests/{rid}")
+def request_edit(rid: str, req: ReqEdit):
+    r = db.req_get(rid)
+    if not r or r["kind"] != "order" or r["status"] != "pending":
+        raise HTTPException(status_code=404, detail="That request can't be edited.")
+    data = {}
+    if req.caption is not None:
+        data["caption"] = req.caption.strip()[:2200]
+    if req.platform in _ORDER_PLATFORMS and (r["data"].get("type") == "reel" or req.platform == "instagram"):
+        data["platform"] = req.platform
+    when = _parse_when(req.run_at) if req.run_at else None
+    db.req_update(rid, data=data, run_at=when, owner_note=req.note)
+    return {"ok": True}
+
+
+@app.post("/api/requests/{rid}/approve")
+def request_approve(rid: str):
+    r = db.req_get(rid)
+    if not r or r["kind"] != "order" or r["status"] not in ("pending", "error"):
+        raise HTTPException(status_code=404, detail="That request can't be approved.")
+    db.req_update(rid, status="processing")
+    threading.Thread(target=_approve_order, args=(rid,), daemon=True).start()
+    return {"ok": True}
+
+
+class ReqDecision(BaseModel):
+    note: str = ""
+
+
+@app.post("/api/requests/{rid}/decline")
+def request_decline(rid: str, req: ReqDecision):
+    r = db.req_get(rid)
+    if not r or r["status"] not in ("pending", "error"):
+        raise HTTPException(status_code=404, detail="That request can't be declined.")
+    db.req_update(rid, status="declined", owner_note=req.note[:500])
+    return {"ok": True}
+
+
+class ReqEmail(BaseModel):
+    subject: str
+    body: str
+
+
+@app.post("/api/requests/{rid}/email")
+def request_email(rid: str, req: ReqEmail):
+    """Sends the customer an email through SMTP when it's configured; otherwise the
+    inbox falls back to opening the owner's own mail app (mailto) with the text filled in."""
+    r = db.req_get(rid)
+    if not r:
+        raise HTTPException(status_code=404, detail="Unknown request.")
+    sent = notify.send_email(r["email"], req.subject[:150], req.body[:4000], _bio_page()["contact_email"])
+    if sent:
+        db.req_update(rid, data={"emailed": True})
+    return {"sent": sent}
+
+
+@app.post("/api/requests/{rid}/done")
+def request_done(rid: str):
+    """Marks a consultation as handled."""
+    r = db.req_get(rid)
+    if not r:
+        raise HTTPException(status_code=404, detail="Unknown request.")
+    db.req_update(rid, status="done")
+    return {"ok": True}
+
+
+@app.delete("/api/requests/{rid}")
+def request_delete(rid: str):
+    r = db.req_get(rid)
+    if r and r["status"] in ("declined", "done", "error"):
+        db.req_update(rid, status="archived")
     return {"ok": True}
 
 
@@ -1542,7 +1885,9 @@ def get_file(filename: str):
         storage.fetch_to(path, os.path.basename(filename))
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="File not found or expired")
-    return FileResponse(path, media_type="video/mp4", headers={"Content-Disposition": "inline"})
+    _ext = os.path.splitext(path)[1].lower()
+    _mt = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".mov": "video/quicktime"}.get(_ext, "video/mp4")
+    return FileResponse(path, media_type=_mt, headers={"Content-Disposition": "inline"})
 
 
 # --- Platform connections (Instagram, and eventually Threads/YouTube/TikTok/X) ---

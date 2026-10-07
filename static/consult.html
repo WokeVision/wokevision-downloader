@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0A0A0C" /><link rel="icon" href="/static/assets/logo-mark.png" />
+<title>Book a consultation</title><meta name="robots" content="noindex" />
+<style>
+  :root { color-scheme: dark; --bg:#0A0A0C; --text:#F5F5F7; --faint:rgba(245,245,247,.58); --accent:#FF2B3C; --line:rgba(255,255,255,.12); }
+  * { box-sizing: border-box; } html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; display: flex; justify-content: center; padding: 28px 18px 70px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,.14), transparent 55%), var(--bg); }
+  main { width: 100%; max-width: 520px; } a.back { color: var(--faint); font-size: 13.5px; text-decoration: none; }
+  h1 { font-size: 24px; margin: 14px 0 4px; letter-spacing: -.01em; } .sub { color: var(--faint); font-size: 14px; line-height: 1.5; margin-bottom: 20px; }
+  label { display: block; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); margin: 14px 0 6px; }
+  input[type=text], input[type=email], input[type=datetime-local], select, textarea { width: 100%; background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 12px; font: inherit; font-size: 15.5px; }
+  textarea { min-height: 120px; resize: vertical; } input[type=file] { width: 100%; font-size: 14px; color: var(--faint); }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .seg label { margin: 0; text-transform: none; letter-spacing: 0; font-size: 14.5px; color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 12px; text-align: center; cursor: pointer; background: rgba(255,255,255,.04); }
+  .seg input { display: none; } .seg input:checked + span { color: #fff; font-weight: 700; } .seg label:has(input:checked) { background: var(--accent); border-color: transparent; }
+  button.go { width: 100%; margin-top: 22px; padding: 15px; border: 0; border-radius: 14px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; font-size: 16px; cursor: pointer; } button.go:disabled { opacity: .6; }
+  .err { color: #ff8a93; font-size: 14px; margin-top: 12px; min-height: 18px; } .hint { font-size: 12.5px; color: var(--faint); margin-top: 6px; }
+  .hp { position: absolute; left: -9999px; height: 0; overflow: hidden; }
+  .done { text-align: center; padding: 30px 6px; } .done h1 { margin-top: 0; } .btn2 { display: block; margin-top: 14px; padding: 14px; border-radius: 14px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 700; }
+  .bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,.1); margin-top: 12px; overflow: hidden; display: none; } .bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+</style></head><body><main>
+
+<a class="back" href="/links">&larr; Back</a>
+<div id="form">
+  <h1>Book a free consultation</h1><div class="sub">Tell us a bit about what you'd like and when suits you for a short call. We'll reply by email to confirm a time.</div>
+  <label>Your name</label><input type="text" id="name" autocomplete="name" />
+  <label>Your email</label><input type="email" id="email" autocomplete="email" />
+  <label>Preferred date &amp; time</label><input type="datetime-local" id="when" /><div class="hint" id="tz"></div>
+  <label>What would you like to build? (optional)</label><textarea id="topic" maxlength="1500" placeholder="e.g. We run a news page and want automatic captioned videos posted to TikTok and Instagram…"></textarea>
+  <div class="hp"><label>Website</label><input type="text" id="website" tabindex="-1" autocomplete="off" /></div>
+  <button class="go" id="go">Request a consultation</button><div class="err" id="err"></div>
+</div>
+<div id="thanks" class="done" style="display:none"><h1>Request sent ✓</h1><div class="sub">Thanks — we'll email you shortly to confirm a time.</div><a class="back" href="/links">Back to links</a></div>
+</main>
+<script>
+function $(i){return document.getElementById(i);}
+var d0=new Date(Date.now()+48*3600*1000); d0.setMinutes(0,0,0); var z=new Date(d0.getTime()-d0.getTimezoneOffset()*60000); $("when").value=z.toISOString().slice(0,16);
+var tzn=Intl.DateTimeFormat().resolvedOptions().timeZone||"local"; $("tz").textContent="Times are in your timezone ("+tzn+").";
+$("go").onclick=function(){$("err").textContent="";
+  if(!$("name").value.trim()||!$("email").value.trim()){$("err").textContent="Please add your name and email.";return;}
+  var w=$("when").value?new Date($("when").value).toLocaleString([],{dateStyle:"full",timeStyle:"short"})+" ("+tzn+")":"";
+  $("go").disabled=true;
+  fetch("/api/public/consult",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:$("name").value,email:$("email").value,when:w,topic:$("topic").value,website:$("website").value})})
+   .then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.detail||"failed");});})
+   .then(function(){$("form").style.display="none";$("thanks").style.display="";})
+   .catch(function(e){$("err").textContent=e.message;$("go").disabled=false;});};
+</script></body></html>

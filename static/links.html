@@ -4,26 +4,107 @@
 <title>WokeVision · Links</title>
 <meta name="robots" content="noindex" />
 <style>
-  :root { color-scheme: dark; --bg:#0A0A0C; --text:#F5F5F7; --faint:rgba(245,245,247,.55); --accent:#FF2B3C; }
+  :root { color-scheme: dark; --bg:#0A0A0C; --text:#F5F5F7; --faint:rgba(245,245,247,.58); --accent:#FF2B3C; --card:rgba(255,255,255,.06); --line:rgba(255,255,255,.12); }
   * { box-sizing: border-box; } html, body { margin: 0; background: var(--bg); color: var(--text); }
-  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; display: flex; justify-content: center; padding: 40px 18px 60px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,.16), transparent 55%), var(--bg); }
-  main { width: 100%; max-width: 460px; text-align: center; }
-  img { width: 84px; height: 84px; border-radius: 50%; object-fit: cover; background: #15151a; }
-  h1 { font-size: 22px; margin: 14px 0 2px; letter-spacing: -.01em; } .h { color: var(--faint); font-size: 14px; margin-bottom: 4px; } .t { font-size: 14.5px; margin: 10px 0 24px; line-height: 1.45; }
-  a.l { display: block; padding: 15px 18px; margin: 0 0 12px; border-radius: 16px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); color: var(--text); text-decoration: none; font-weight: 650; font-size: 16px; transition: transform .12s, background .12s; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; display: flex; justify-content: center; padding: 40px 18px 70px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,.16), transparent 55%), var(--bg); }
+  main { width: 100%; max-width: 480px; }
+  .top { text-align: center; }
+  .top img { width: 84px; height: 84px; border-radius: 50%; object-fit: cover; background: #15151a; }
+  h1 { font-size: 22px; margin: 14px 0 2px; letter-spacing: -.01em; } .h { color: var(--faint); font-size: 14px; } .t { font-size: 14.5px; margin: 10px 0 22px; line-height: 1.45; }
+  a.l { display: block; padding: 15px 18px; margin: 0 0 12px; border-radius: 16px; background: rgba(255,255,255,.07); border: 1px solid var(--line); color: var(--text); text-decoration: none; font-weight: 650; font-size: 16px; text-align: center; transition: transform .12s, background .12s; }
   a.l:hover, a.l:focus-visible { background: rgba(255,255,255,.12); transform: translateY(-1px); outline: none; }
-  a.l:first-of-type { background: var(--accent); border-color: transparent; }
+  #links a.l:first-child { background: var(--accent); border-color: transparent; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 18px 0 8px; }
+  .chip { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); text-decoration: none; font-size: 13.5px; font-weight: 600; }
+  .chip:hover { background: rgba(255,255,255,.12); }
+  .sec { margin-top: 28px; background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 20px; }
+  .sec h2 { font-size: 19px; margin: 0 0 6px; letter-spacing: -.01em; } .sec p { color: var(--faint); font-size: 14px; line-height: 1.5; margin: 0 0 14px; }
+  .prices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  .price { border: 1px solid var(--line); border-radius: 16px; padding: 14px; text-align: center; background: rgba(0,0,0,.25); }
+  .price b { display: block; font-size: 26px; letter-spacing: -.02em; } .price span { font-size: 12.5px; color: var(--faint); }
+  .price a { display: block; margin-top: 10px; padding: 10px; border-radius: 12px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 700; font-size: 14px; }
+  .deal { font-size: 13px; color: var(--faint); text-align: center; margin: 0 0 10px; line-height: 1.45; }
+  .deal a { color: #ff6b78; }
+  .btn2 { display: block; text-align: center; padding: 13px; border-radius: 14px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 700; font-size: 15px; }
+  .btn2.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  /* app preview */
+  .mock { display: grid; grid-template-columns: 128px 1fr; gap: 12px; margin: 0 0 16px; padding: 12px; border-radius: 16px; background: #0f0f13; border: 1px solid var(--line); }
+  .phone { aspect-ratio: 9/16; border-radius: 14px; background: linear-gradient(160deg, #2a2d3a, #12131a); position: relative; overflow: hidden; border: 1px solid var(--line); }
+  .phone .cap { position: absolute; top: 0; left: 0; right: 0; background: #fff; color: #111; font-weight: 800; font-size: 9.5px; line-height: 1.2; padding: 7px 6px; text-align: center; }
+  .phone .sub { position: absolute; left: 6px; right: 6px; bottom: 26px; text-align: center; font-weight: 800; font-size: 11px; color: #fff; text-shadow: 0 1px 3px #000; } .phone .sub i { font-style: normal; color: #FFD60A; }
+  .phone .face { position: absolute; left: 50%; top: 42%; width: 46px; height: 46px; margin-left: -23px; border-radius: 50%; background: rgba(255,255,255,.18); }
+  .side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; } .tabs span { font-size: 10px; font-weight: 700; padding: 4px 8px; border-radius: 999px; background: rgba(255,255,255,.08); } .tabs span:first-child { background: var(--accent); }
+  .box { flex: 1; border-radius: 10px; background: rgba(255,255,255,.05); padding: 8px; font-size: 10.5px; color: var(--faint); line-height: 1.4; }
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; } .cal span { aspect-ratio: 1; border-radius: 4px; background: rgba(255,255,255,.07); } .cal span.on { background: var(--accent); } .cal span.on2 { background: rgba(255,43,60,.45); }
+  .caps { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }
+  .caps li { font-size: 14px; line-height: 1.4; padding-left: 26px; position: relative; } .caps li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 800; }
+  .caps b { color: var(--text); } .caps li { color: var(--faint); }
+  .shots { display: none; gap: 8px; margin-bottom: 14px; overflow-x: auto; } .shots img { height: 220px; border-radius: 12px; border: 1px solid var(--line); }
+  footer { text-align: center; color: var(--faint); font-size: 12px; margin-top: 26px; }
 </style></head><body>
 <main>
-  <img src="/static/assets/logo-mark.png" alt="" />
-  <h1 id="title">WokeVision</h1><div class="h" id="handle"></div><div class="t" id="text"></div>
+  <div class="top">
+    <img src="/static/assets/logo-mark.png" alt="" />
+    <h1 id="title">WokeVision</h1><div class="h" id="handle"></div><div class="t" id="text"></div>
+  </div>
   <div id="links"></div>
+  <div class="chips" id="chips"></div>
+  <a class="l" id="contact" href="#" style="margin-top:6px">✉️ Contact us</a>
+
+  <section class="sec" id="services" style="display:none">
+    <h2>Advertise on WokeVision</h2>
+    <p>Put your brand in front of our audience. Send us your video or images, your caption and when you want it live &mdash; we handle the rest.</p>
+    <div class="prices">
+      <div class="price"><b id="pReel"></b><span>Reel</span><a href="/links/order?type=reel">Book a reel</a></div>
+      <div class="price"><b id="pStill"></b><span>Still or carousel post</span><a href="/links/order?type=still">Book a still</a></div>
+    </div>
+    <div class="deal" id="deal"></div>
+    <a class="btn2 ghost" id="dealBtn" href="#">Ask about a deal</a>
+  </section>
+
+  <section class="sec" id="tool" style="display:none">
+    <h2>Want a tool like this for your brand?</h2>
+    <p id="toolBlurb">This page is run by a custom social media management tool built in-house, with automatic video editing in our own style. We can build one tailored to your brand.</p>
+    <div class="shots" id="shots"></div>
+    <div class="mock" id="mock" aria-hidden="true">
+      <div class="phone"><div class="cap">The take everyone is thinking but nobody is saying 👀</div><div class="face"></div><div class="sub">and that's <i>exactly</i> the point</div></div>
+      <div class="side">
+        <div class="tabs"><span>Instagram</span><span>TikTok</span><span>YouTube</span><span>X</span></div>
+        <div class="box">Caption written in your voice, with hashtags per platform…</div>
+        <div class="cal"><span></span><span class="on"></span><span></span><span class="on2"></span><span></span><span class="on"></span><span></span><span></span><span class="on2"></span><span></span><span class="on"></span><span></span><span class="on2"></span><span></span></div>
+      </div>
+    </div>
+    <ul class="caps">
+      <li><b>Automatic video editing</b> &mdash; drop in a link or file and get a branded vertical video with your logo, watermark and on-screen caption.</li>
+      <li><b>Subtitles that follow the speech</b> &mdash; transcribed automatically, word-highlight style, editable and translatable.</li>
+      <li><b>Captions in your brand voice</b> &mdash; written for each platform (Instagram, TikTok, YouTube, X, Threads, Facebook).</li>
+      <li><b>Scheduling &amp; auto-posting</b> &mdash; calendar view, suggested best times, posts go out by themselves.</li>
+      <li><b>Analytics</b> &mdash; see what's working across every platform in one place.</li>
+      <li><b>Sponsor tools</b> &mdash; campaigns, required hashtags, client review links and reports.</li>
+      <li><b>Long video clipper</b> &mdash; finds the best moments in a long video and cuts them into shorts.</li>
+    </ul>
+    <a class="btn2" href="/links/consult">Book a free consultation</a>
+  </section>
+  <footer id="foot"></footer>
 </main>
 <script>
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
 fetch("/api/public/bio").then(function(r){return r.json();}).then(function(d){
   document.getElementById("title").textContent=d.title; document.title=d.title+" · Links";
   document.getElementById("handle").textContent=d.handle; document.getElementById("text").textContent=d.text;
-  document.getElementById("links").innerHTML=d.links.map(function(l){return '<a class="l" href="/go/'+l.id+'" rel="noopener">'+esc(l.label)+'</a>';}).join("")||'<div class="h">Nothing here yet.</div>';
+  document.getElementById("links").innerHTML=d.links.map(function(l){return '<a class="l" href="/go/'+l.id+'" rel="noopener">'+esc(l.label)+'</a>';}).join("");
+  document.getElementById("chips").innerHTML=(d.socials||[]).map(function(s){return '<a class="chip" href="'+esc(s.url)+'" target="_blank" rel="noopener">'+esc(s.label)+'</a>';}).join("");
+  var em=d.contact_email;
+  document.getElementById("contact").href="mailto:"+em+"?subject="+encodeURIComponent("Enquiry via "+d.title+" links");
+  if(!em) document.getElementById("contact").style.display="none";
+  if(d.show_services){document.getElementById("services").style.display="";
+    document.getElementById("pReel").textContent=d.currency+d.reel_price; document.getElementById("pStill").textContent=d.currency+d.still_price;
+    document.getElementById("deal").textContent=d.deal_note||"";
+    document.getElementById("dealBtn").href="mailto:"+em+"?subject="+encodeURIComponent("Deal enquiry — advertising")+"&body="+encodeURIComponent("Hi, I'd like to ask about a first-time or bulk-upload deal.\n\n");
+    if(!em) document.getElementById("dealBtn").style.display="none";}
+  if(d.show_tool){document.getElementById("tool").style.display=""; if(d.consult_blurb) document.getElementById("toolBlurb").textContent=d.consult_blurb;}
 });
+// Real screenshots replace the illustration when present: /static/assets/preview/1.png, 2.png, 3.png
+(function(){var box=document.getElementById("shots"),n=0;[1,2,3].forEach(function(i){var im=new Image();im.alt="App preview "+i;im.onload=function(){box.appendChild(im);box.style.display="flex";document.getElementById("mock").style.display="none";};im.src="/static/assets/preview/"+i+".png";});})();
 </script></body></html>

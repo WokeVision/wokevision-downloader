@@ -3189,6 +3189,131 @@ def schedule_post_now(sid: str):
     return {"ok": True}
 
 
+# --- Comments inbox (Instagram) ----------------------------------------------
+def _comment_cfg() -> dict:
+    out = {"saved_replies": [], "hide_words": []}
+    try:
+        out["saved_replies"] = json.loads(insights.kv_get("comment_saved") or "[]")
+        out["hide_words"] = json.loads(insights.kv_get("comment_hide_words") or "[]")
+    except Exception:
+        pass
+    return out
+
+
+class CommentCfg(BaseModel):
+    saved_replies: list[str] = []
+    hide_words: list[str] = []
+
+
+@app.get("/comments")
+def comments_page():
+    return FileResponse("static/comments.html")
+
+
+@app.get("/api/comments/config")
+def comments_cfg_get():
+    return _comment_cfg()
+
+
+@app.put("/api/comments/config")
+def comments_cfg_put(req: CommentCfg):
+    insights.kv_set("comment_saved", json.dumps([s.strip()[:300] for s in req.saved_replies if s.strip()][:30]))
+    insights.kv_set("comment_hide_words", json.dumps([w.strip().lower()[:40] for w in req.hide_words if w.strip()][:60]))
+    return {"ok": True}
+
+
+@app.get("/api/comments")
+def comments_list():
+    try:
+        items = instagram.recent_comments()
+    except Exception as e:
+        return {"items": [], "error": str(e)[:400]}
+    me = instagram.own_username().lower()
+    for c in items:
+        c["replied"] = any((r.get("username") or "").lower() == me for r in c["replies"]) if me else bool(c["replies"])
+        c["mine"] = (c.get("username") or "").lower() == me
+        c["platform"] = "instagram"
+    return {"items": [c for c in items if not c["mine"]], "config": _comment_cfg()}
+
+
+class CommentReply(BaseModel):
+    text: str
+
+
+@app.post("/api/comments/instagram/{cid}/reply")
+def comments_reply(cid: str, req: CommentReply):
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Write a reply first.")
+    try:
+        instagram.reply_comment(cid, text[:2000])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True}
+
+
+class CommentHide(BaseModel):
+    hide: bool = True
+
+
+@app.post("/api/comments/instagram/{cid}/hide")
+def comments_hide(cid: str, req: CommentHide):
+    try:
+        instagram.hide_comment(cid, req.hide)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True}
+
+
+class CommentSuggest(BaseModel):
+    text: str
+    post: str = ""
+
+
+@app.post("/api/comments/suggest")
+def comments_suggest(req: CommentSuggest):
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY isn't set.")
+    voice = (app_settings().get("voice_notes") or "").strip()[:800]
+    system = ("You write replies to Instagram comments for WokeVision, a political/news meme page. Replies are short (under 25 words), "
+              "warm or witty, never insulting, never making new factual claims, never taking a side on a person's private life. "
+              "If the comment is hostile or bait, give calm, brief, non-engaging options. "
+              + (f"Brand voice notes: {voice}. " if voice else "") + 'Return JSON {"replies":["...","...","..."]}.')
+    try:
+        data = speech._chat_json(system, f"Post: {req.post[:200]}\nComment: {req.text[:500]}", model="gpt-4o-mini", kind="comments")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't get suggestions: {str(e)[:150]}")
+    return {"replies": [str(r)[:300] for r in (data.get("replies") or [])][:3]}
+
+
+def _auto_hide_comments():
+    """Every ~15 min: hides new comments that contain any of the saved keywords."""
+    try:
+        if not db.configured():
+            return
+        last = insights.kv_get("comment_scan_last")
+        if last and time.time() - float(last) < 15 * 60:
+            return
+        words = _comment_cfg()["hide_words"]
+        if not words:
+            return
+        insights.kv_set("comment_scan_last", str(time.time()))
+        me = instagram.own_username().lower()
+        n = 0
+        for c in instagram.recent_comments(4, 40):
+            if c["hidden"] or (c.get("username") or "").lower() == me:
+                continue
+            low = (c.get("text") or "").lower()
+            if any(w in low for w in words):
+                instagram.hide_comment(c["id"], True)
+                n += 1
+        if n:
+            db.audit("comments_hidden", f"{n} comment(s) matched your keywords")
+            notify.notify("Comments hidden", f"{n} Instagram comment(s) matched your keyword list.")
+    except Exception as e:
+        print(f"AUTO-HIDE FAILED: {e}", flush=True)
+
+
 # --- Watched channels / podcasts ------------------------------------------------
 def _latest_videos(url: str, n: int = 4):
     """Newest-first [{id, url, title, duration}] for a channel/playlist/podcast feed (no downloading)."""
@@ -3508,6 +3633,7 @@ def cron_tick(request: Request, key: str = ""):
     _maybe_weekly_digest()
     threading.Thread(target=_maybe_daily_backup, daemon=True).start()
     threading.Thread(target=_check_watched, daemon=True).start()
+    threading.Thread(target=_auto_hide_comments, daemon=True).start()
     threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
     return {"ok": True}
 

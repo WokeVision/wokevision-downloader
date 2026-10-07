@@ -22,6 +22,7 @@
       '<a class="wvNavLink' + (active("/requests") ? " active" : "") + '" href="/requests">Requests</a>' +
       '<a class="wvNavLink' + (active("/bio") ? " active" : "") + '" href="/bio">Bio link</a>' +
       '<a class="wvNavLink' + (active("/sources") ? " active" : "") + '" href="/sources">Sources</a>' +
+      '<a class="wvNavLink' + (active("/comments") ? " active" : "") + '" href="/comments">Comments</a>' +
       '<a class="wvNavLink' + (active("/ideas") ? " active" : "") + '" href="/ideas">Ideas</a>' +
       '<a class="wvNavLink' + (active("/campaigns") ? " active" : "") + '" href="/campaigns">Campaigns</a>' +
       '<a class="wvNavLink' + (active("/schedule") ? " active" : "") + '" href="/schedule">Schedule</a>' +
@@ -124,7 +125,7 @@
 // Keyboard shortcuts: press ? for the list; "g" then a letter jumps to a page.
 (function () {
   if (location.pathname.indexOf("/login") === 0 || location.pathname === "/" || location.pathname.indexOf("/links") === 0) return;
-  var MAP = { e: ["/editor", "Video Editor"], c: ["/clipping", "Clipping"], r: ["/requests", "Requests"], b: ["/bio", "Bio link"], s: ["/schedule", "Schedule"], a: ["/dashboards", "Analytics Hub"], i: ["/ideas", "Ideas"], p: ["/campaigns", "Campaigns"], o: ["/sources", "Sources"], t: ["/settings", "Settings"] };
+  var MAP = { e: ["/editor", "Video Editor"], c: ["/clipping", "Clipping"], r: ["/requests", "Requests"], b: ["/bio", "Bio link"], s: ["/schedule", "Schedule"], a: ["/dashboards", "Analytics Hub"], i: ["/ideas", "Ideas"], p: ["/campaigns", "Campaigns"], o: ["/sources", "Sources"], m: ["/comments", "Comments"], t: ["/settings", "Settings"] };
   var armed = 0, ov = null;
   function typing(e) { var t = e.target, n = t && t.tagName; return n === "INPUT" || n === "TEXTAREA" || n === "SELECT" || (t && t.isContentEditable); }
   function help() {

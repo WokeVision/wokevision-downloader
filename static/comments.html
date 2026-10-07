@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0A0A0C" /><link rel="icon" href="/static/assets/logo-mark.png" />
+<title>Comments · WokeVision</title>
+<link rel="stylesheet" href="/static/nav.css" />
+<style>
+  :root { color-scheme: dark; --bg:#0A0A0C; --surface:rgba(255,255,255,0.055); --border:rgba(255,255,255,0.10); --text:#F5F5F7; --faint:rgba(245,245,247,0.5); --accent:#FF2B3C; }
+  * { box-sizing: border-box; } html, body { background: var(--bg); color: var(--text); margin: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; padding-bottom: 80px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,0.10), transparent 55%), var(--bg); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 22px 18px 0; } h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.02em; } .sub { color: var(--faint); font-size: 13px; margin-bottom: 14px; line-height: 1.5; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 14px; margin-bottom: 12px; }
+  textarea, input, select { width: 100%; background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px; font: inherit; font-size: 14px; margin-top: 6px; }
+  textarea { min-height: 64px; resize: vertical; }
+  .btn { border: 1px solid var(--border); background: rgba(255,255,255,.06); color: var(--text); font: inherit; font-weight: 600; font-size: 13px; padding: 8px 13px; border-radius: 999px; cursor: pointer; }
+  .btn.accent { background: var(--accent); border-color: transparent; } .btn:disabled { opacity: .5; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .sm { font-size: 12.5px; color: var(--faint); }
+  .pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.1); }
+  .pill.ok { background: rgba(48,209,88,.2); color: #6ee79a; } .pill.hid { background: rgba(255,214,10,.18); color: #FFD60A; }
+  .rep { margin: 8px 0 0 14px; padding-left: 10px; border-left: 2px solid var(--border); font-size: 13.5px; }
+  .c.hidden-c { opacity: .55; }
+  details summary { cursor: pointer; font-weight: 700; font-size: 14px; }
+  .banner { background: rgba(255,214,10,.09); border: 1px solid rgba(255,214,10,.28); color: #FFE48A; border-radius: 12px; padding: 11px 14px; font-size: 13.5px; margin-bottom: 12px; line-height: 1.45; }
+  label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); display: block; margin-top: 10px; }
+</style></head><body>
+<script src="/static/nav.js"></script>
+<div class="wrap">
+  <h1>Comments</h1>
+  <div class="sub">Recent Instagram comments on your latest posts. Reply, hide, or let the app suggest a reply. (Other platforms' comments aren't connected yet.)</div>
+  <div id="err"></div>
+  <details class="card" id="cfg"><summary>Saved replies &amp; auto-hide words</summary>
+    <label for="saved">Saved replies (one per line)</label>
+    <textarea id="saved" placeholder="Thanks for watching! 🙏&#10;Source is in the caption."></textarea>
+    <label for="words">Auto-hide comments containing (one word or phrase per line)</label>
+    <textarea id="words" placeholder="free followers&#10;dm me to earn"></textarea>
+    <div class="sm" style="margin-top:6px">Matching new comments are hidden automatically (checked every ~15 minutes). Hidden comments are only hidden from the public &mdash; you can unhide them here.</div>
+    <div class="row" style="margin-top:10px"><button class="btn accent" id="saveCfg">Save</button><span class="sm" id="cfgMsg"></span></div>
+  </details>
+  <div id="list"><div class="sub">Loading…</div></div>
+</div>
+<script>
+var items = [], cfg = { saved_replies: [], hide_words: [] };
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function j(u,m,b){return fetch(u,{method:m||"GET",headers:{"Content-Type":"application/json"},body:b?JSON.stringify(b):undefined}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.detail||"failed");return d;});});}
+function when(iso){return iso?new Date(iso).toLocaleString([],{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}):"";}
+function render(){
+  var f=document.getElementById("list");
+  if(!items.length){f.innerHTML='<div class="sub">No comments yet on your latest posts.</div>';return;}
+  f.innerHTML=items.map(function(c,i){
+    var sel='<select data-sv="'+i+'"><option value="">Insert a saved reply…</option>'+cfg.saved_replies.map(function(s,k){return '<option value="'+k+'">'+esc(s.slice(0,70))+'</option>';}).join("")+'</select>';
+    return '<div class="card c'+(c.hidden?' hidden-c':'')+'" id="c'+i+'"><div class="row" style="justify-content:space-between"><b>@'+esc(c.username)+'</b><span class="row"><span class="sm">'+when(c.ts)+'</span>'+(c.hidden?'<span class="pill hid">Hidden</span>':'')+(c.replied?'<span class="pill ok">Replied</span>':'')+'</span></div>'+
+      '<div style="margin:6px 0;white-space:pre-wrap">'+esc(c.text)+'</div><div class="sm">On: '+(c.permalink?'<a style="color:#ff6b78" target="_blank" rel="noopener" href="'+esc(c.permalink)+'">':'')+esc(c.media_caption||"post")+(c.permalink?'</a>':'')+' · ♥ '+(c.likes||0)+'</div>'+
+      c.replies.map(function(r){return '<div class="rep"><b>@'+esc(r.username)+'</b> '+esc(r.text)+'</div>';}).join("")+
+      '<textarea id="t'+i+'" placeholder="Write a reply…"></textarea>'+(cfg.saved_replies.length?sel:'')+
+      '<div class="row" style="margin-top:8px"><button class="btn accent" data-send="'+i+'">Reply</button><button class="btn" data-ai="'+i+'">Suggest replies</button><button class="btn" data-hide="'+i+'">'+(c.hidden?'Unhide':'Hide')+'</button><span class="sm" id="m'+i+'"></span></div><div id="s'+i+'"></div></div>';
+  }).join("");
+  f.querySelectorAll("[data-send]").forEach(function(b){b.onclick=function(){var i=+b.dataset.send,t=document.getElementById("t"+i).value.trim(),m=document.getElementById("m"+i);if(!t){m.textContent="Write a reply first.";return;}
+    b.disabled=true;m.textContent="Sending…";j("/api/comments/instagram/"+items[i].id+"/reply","POST",{text:t}).then(function(){items[i].replied=true;items[i].replies.push({username:"you",text:t});render();}).catch(function(e){m.textContent=e.message;b.disabled=false;});};});
+  f.querySelectorAll("[data-hide]").forEach(function(b){b.onclick=function(){var i=+b.dataset.hide,h=!items[i].hidden;b.disabled=true;j("/api/comments/instagram/"+items[i].id+"/hide","POST",{hide:h}).then(function(){items[i].hidden=h;render();}).catch(function(e){document.getElementById("m"+i).textContent=e.message;b.disabled=false;});};});
+  f.querySelectorAll("[data-ai]").forEach(function(b){b.onclick=function(){var i=+b.dataset.ai,m=document.getElementById("m"+i);b.disabled=true;m.textContent="Thinking…";
+    j("/api/comments/suggest","POST",{text:items[i].text,post:items[i].media_caption}).then(function(d){m.textContent="";document.getElementById("s"+i).innerHTML=(d.replies||[]).map(function(r,k){return '<div class="row" style="margin-top:6px"><span style="flex:1;font-size:13.5px">'+esc(r)+'</span><button class="btn" data-use="'+i+'|'+k+'">Use</button></div>';}).join("");
+      d.replies.forEach(function(r,k){document.querySelector('[data-use="'+i+'|'+k+'"]').onclick=function(){document.getElementById("t"+i).value=r;};});b.disabled=false;}).catch(function(e){m.textContent=e.message;b.disabled=false;});};});
+  f.querySelectorAll("[data-sv]").forEach(function(s){s.onchange=function(){if(s.value!=="")document.getElementById("t"+s.dataset.sv).value=cfg.saved_replies[+s.value];s.value="";};});
+}
+function load(){j("/api/comments").then(function(d){items=d.items||[];if(d.config)cfg=d.config;
+  document.getElementById("err").innerHTML=d.error?'<div class="banner">'+esc(d.error)+'</div>':"";
+  document.getElementById("saved").value=cfg.saved_replies.join("\n");document.getElementById("words").value=cfg.hide_words.join("\n");render();})
+  .catch(function(e){document.getElementById("list").innerHTML='<div class="banner">Couldn’t load comments: '+esc(e.message)+'</div>';});}
+document.getElementById("saveCfg").onclick=function(){var lines=function(id){return document.getElementById(id).value.split("\n").map(function(x){return x.trim();}).filter(Boolean);};
+  j("/api/comments/config","PUT",{saved_replies:lines("saved"),hide_words:lines("words")}).then(function(){cfg.saved_replies=lines("saved");cfg.hide_words=lines("words").map(function(x){return x.toLowerCase();});document.getElementById("cfgMsg").textContent="Saved ✓";render();}).catch(function(e){document.getElementById("cfgMsg").textContent=e.message;});};
+load();
+</script></body></html>

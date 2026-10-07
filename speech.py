@@ -273,7 +273,7 @@ def build_ass(cues, play_w, play_h, margin_v, font_size=52, font_name="Poppins",
 
 
 # ----------------------------------------------------------------- clipper
-def _chat_json(system, user, model="gpt-4o"):
+def _chat_json(system, user, model="gpt-4o", kind="clipper"):
     resp = requests.post(
         CHAT_URL,
         headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
@@ -287,7 +287,7 @@ def _chat_json(system, user, model="gpt-4o"):
     try:
         import db
         u = j.get("usage") or {}
-        db.record_ai_usage("clipper", model, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+        db.record_ai_usage(kind, model, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
     except Exception:
         pass
     return json.loads(j["choices"][0]["message"]["content"])

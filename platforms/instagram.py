@@ -359,6 +359,51 @@ def _auth():
     return conn["access_token"], uid
 
 
+def recent_comments(media_limit: int = 6, per_media: int = 30) -> list:
+    """Comments on the latest posts, newest first. Needs instagram_business_manage_comments."""
+    token, uid = _auth()
+    r = requests.get(f"{GRAPH_BASE}/{uid}/media", params={"fields": "id,caption,permalink,timestamp", "limit": media_limit, "access_token": token}, timeout=30)
+    if r.status_code != 200:
+        raise InstagramError(f"Couldn't list posts: {r.text[:300]}")
+    out = []
+    for m in r.json().get("data", []):
+        cr = requests.get(f"{GRAPH_BASE}/{m['id']}/comments", params={
+            "fields": "id,text,username,timestamp,hidden,like_count,replies{id,text,username,timestamp}",
+            "limit": per_media, "access_token": token}, timeout=30)
+        if cr.status_code != 200:
+            if "permission" in cr.text.lower() or cr.status_code in (400, 403):
+                raise InstagramError("Instagram needs the comments permission: reconnect Instagram on the Accounts page, then try again. (" + cr.text[:160] + ")")
+            continue
+        for c in cr.json().get("data", []):
+            out.append({"id": c["id"], "text": c.get("text", ""), "username": c.get("username", ""), "ts": c.get("timestamp"),
+                        "hidden": bool(c.get("hidden")), "likes": c.get("like_count", 0),
+                        "replies": [{"id": x.get("id"), "text": x.get("text", ""), "username": x.get("username", ""), "ts": x.get("timestamp")}
+                                    for x in (c.get("replies") or {}).get("data", [])],
+                        "media_caption": (m.get("caption") or "")[:140], "permalink": m.get("permalink")})
+    out.sort(key=lambda c: c.get("ts") or "", reverse=True)
+    return out
+
+
+def own_username() -> str:
+    conn = db.get_connection(PLATFORM) or {}
+    return (conn.get("extra") or {}).get("username") or ""
+
+
+def reply_comment(comment_id: str, text: str) -> dict:
+    token, _ = _auth()
+    r = requests.post(f"{GRAPH_BASE}/{comment_id}/replies", data={"message": text, "access_token": token}, timeout=30)
+    if r.status_code != 200:
+        raise InstagramError(f"Couldn't post the reply: {r.text[:300]}")
+    return r.json()
+
+
+def hide_comment(comment_id: str, hide: bool = True) -> None:
+    token, _ = _auth()
+    r = requests.post(f"{GRAPH_BASE}/{comment_id}", data={"hide": "true" if hide else "false", "access_token": token}, timeout=30)
+    if r.status_code != 200:
+        raise InstagramError(f"Couldn't {'hide' if hide else 'unhide'} the comment: {r.text[:300]}")
+
+
 def list_conversations(limit: int = 25) -> list:
     token, uid = _auth()
     url, params, out = f"{GRAPH_BASE}/me/conversations", {

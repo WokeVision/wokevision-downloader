@@ -2,6 +2,12 @@
 // Dashboards sit behind the passkey -- the server redirects to /login (and
 // back again afterwards) if there's no session, so the links are always shown.
 (function () {
+  try {
+    var ml = document.createElement("link"); ml.rel = "manifest"; ml.href = "/manifest.webmanifest"; document.head.appendChild(ml);
+    var tc = document.createElement("meta"); tc.name = "theme-color"; tc.content = "#0b0d12"; document.head.appendChild(tc);
+    var ai = document.createElement("link"); ai.rel = "apple-touch-icon"; ai.href = "/static/assets/icon-192.png"; document.head.appendChild(ai);
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function () {});
+  } catch (e) {}
   var path = location.pathname.replace(/\/+$/, "") || "/";
   function active(p) { return p === "/" ? path === "/" : path === p || path.indexOf(p + "/") === 0; }
   var nav = document.createElement("nav");

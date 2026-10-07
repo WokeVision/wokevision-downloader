@@ -74,6 +74,8 @@ def _startup():
 # thing -- if it's not set up yet, the app behaves exactly as before.
 PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/", "/c/", "/api/public/")
 PUBLIC_PATHS = {
+    "/sw.js",               # PWA service worker (must be at the root to cover the whole site)
+    "/manifest.webmanifest",
     "/",                    # public homepage
     "/api/home/popular",    # public: top Instagram posts for the homepage carousel
     "/login",
@@ -1091,6 +1093,35 @@ async def process_file(file: UploadFile = File(...), angle: str = Form(""), wm_t
     meta = {"title": os.path.splitext(file.filename or "")[0], "description": "", "method": "direct upload"}
     threading.Thread(target=_run_pipeline, args=(job_id, final_source_path, meta), daemon=True).start()
     return {"job_id": job_id}
+
+
+@app.get("/sw.js")
+def sw_js():
+    return FileResponse("static/sw.js", media_type="application/javascript", headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"})
+
+
+@app.get("/manifest.webmanifest")
+def manifest_file():
+    return FileResponse("static/manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.post("/share-target")
+async def share_target(video: UploadFile = File(None), title: str = Form(""), text: str = Form(""), url: str = Form("")):
+    """Android 'Share to WokeVision' from any app: a shared video file or a
+    shared link starts a new edit and lands in the editor."""
+    if video is not None and video.filename:
+        res = await process_file(file=video, angle="", wm_token="", wm_pos="right", campaign_id="")
+        return RedirectResponse(f"/editor#job={res['job_id']}", status_code=303)
+    m = re.search(r"https?://\S+", f"{url} {text}")
+    if not m:
+        return RedirectResponse("/editor", status_code=303)
+    link = m.group(0).rstrip(").,")
+    job_id = str(uuid.uuid4())
+    path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
+    with JOBS_LOCK:
+        JOBS[job_id] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": "", "wm_token": "", "wm_pos": "right", "campaign_id": ""}
+    threading.Thread(target=_run_download_then_pipeline, args=(job_id, link, path), daemon=True).start()
+    return RedirectResponse(f"/editor#job={job_id}", status_code=303)
 
 
 @app.get("/jobs/{job_id}")

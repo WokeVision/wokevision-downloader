@@ -400,6 +400,7 @@ class SettingsModel(BaseModel):
     mask_words: str = ""
     caption_style: str = "classic"
     slots: str = "08:00,12:00,18:00,20:00"
+    smart_crop: bool = True
 
 
 @app.get("/settings")
@@ -542,10 +543,17 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
         # can call apply_caption() straight against it instead of redoing
         # this work and re-decoding the original source every time.
         _set_stage(job_id, "rendering", 0.0)
+        _crop = None
+        if app_settings().get("smart_crop", True):
+            _crop = render.detect_subject(final_source_path)
+            if _crop:
+                meta = {**meta, "crop": _crop}
+                print(f"SMART CROP {job_id}: {_crop}", flush=True)
         render_staged(
             source_path=final_source_path,
             output_path=staged_path,
             progress_cb=lambda frac: _set_stage(job_id, "rendering", frac * 0.5),
+            crop=_crop,
         )
         _set_job(job_id, staged_path=staged_path)
         apply_caption(
@@ -642,6 +650,7 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
         render_staged(
             source_path=final_source_path, output_path=staged_path,
             progress_cb=lambda frac: _set_stage(job_id, "rendering", frac * 0.5),
+            crop=(meta or {}).get("crop"),
         )
         _cleanup_later(staged_path, delay=KEEP_ALIVE_SECONDS)
         _set_job(job_id, staged_path=staged_path)
@@ -1651,7 +1660,7 @@ def get_history(entry_id: str):
         "publish_results": e.get("publish_results") or {},
         "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
         **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
-           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief")},
+           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief", "crop")},
     }
 
 

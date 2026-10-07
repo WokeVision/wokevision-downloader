@@ -277,7 +277,84 @@ def _run_ffmpeg(cmd, progress_cb, duration):
         raise RuntimeError(stderr_text[-4000:])
 
 
-def _build_stage_graph(source_path: str):
+def detect_subject(source_path: str):
+    """Finds where the people are in a video so the 3:4 crop can follow them
+    instead of cutting dead centre. Returns {"cx", "cy"} (0-1, fraction of the
+    source frame) or None to keep the centre crop. Never raises."""
+    try:
+        import cv2
+        import glob
+        import tempfile
+        import numpy as np
+        dur = _probe_duration(source_path) or 0
+        if dur <= 0:
+            return None
+        # Only worth doing when the 3:4 crop actually removes something.
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                            "-of", "csv=p=0:s=x", source_path], capture_output=True, text=True, timeout=30)
+        w, h = [int(x) for x in r.stdout.strip().split("x")[:2]]
+        if abs((w / h) - 0.75) < 0.03:
+            return None
+        cascade_dir = getattr(getattr(cv2, "data", None), "haarcascades", "") or ""
+        cascades = []
+        for name in ("haarcascade_frontalface_default.xml", "haarcascade_frontalface_alt2.xml"):
+            c = cv2.CascadeClassifier(os.path.join(cascade_dir, name))
+            if not c.empty():
+                cascades.append(c)
+        if not cascades:
+            print("SMART CROP: no face model available, keeping centre crop", flush=True)
+            return None
+        n = 24
+        with tempfile.TemporaryDirectory() as td:
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", source_path, "-vf",
+                            f"fps={n / max(dur, 1):.4f},scale=480:-2", "-frames:v", str(n), os.path.join(td, "f%02d.jpg")],
+                           capture_output=True, timeout=240)
+            hits, frames = [], 0
+            for fp in sorted(glob.glob(os.path.join(td, "f*.jpg"))):
+                img = cv2.imread(fp)
+                if img is None:
+                    continue
+                frames += 1
+                g = cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+                ih, iw = g.shape
+                best = None
+                for c in cascades:
+                    for (x, y, fw, fh) in c.detectMultiScale(g, scaleFactor=1.1, minNeighbors=5, minSize=(int(iw * 0.06), int(iw * 0.06))):
+                        if best is None or fw * fh > best[2] * best[3]:
+                            best = (x, y, fw, fh)
+                    if best:
+                        break
+                if best:
+                    x, y, fw, fh = best
+                    hits.append(((x + fw / 2) / iw, (y + fh / 2) / ih, fw * fh))
+        if frames == 0 or len(hits) < max(3, 0.25 * frames):
+            return None
+        def wmedian(vals):
+            vals = sorted(vals)
+            tot = sum(v[1] for v in vals); acc = 0
+            for v, wt in vals:
+                acc += wt
+                if acc >= tot / 2:
+                    return v
+        cx = wmedian([(a, w_) for a, _, w_ in hits]); cy = wmedian([(b, w_) for _, b, w_ in hits])
+        return {"cx": round(float(cx), 3), "cy": round(float(cy), 3), "faces": len(hits), "frames": frames}
+    except Exception as e:
+        print(f"SMART CROP FAILED (keeping centre crop): {e}", flush=True)
+        return None
+
+
+def _crop_filter(crop):
+    """ffmpeg crop to 3:4, centred unless `crop` carries a subject position."""
+    if not crop or crop.get("cx") is None:
+        return "crop=min(iw\\,ih*3/4):min(ih\\,iw*4/3):(iw-out_w)/2:(ih-out_h)/2"
+    cx, cy = float(crop["cx"]), float(crop["cy"])
+    # Horizontally centre on the subject; vertically keep the face about 38% down the frame.
+    return ("crop=min(iw\\,ih*3/4):min(ih\\,iw*4/3):"
+            f"max(0\\,min(iw-out_w\\,{cx:.3f}*iw-out_w/2)):"
+            f"max(0\\,min(ih-out_h\\,{cy:.3f}*ih-0.38*out_h))")
+
+
+def _build_stage_graph(source_path: str, crop=None):
     """Builds the ffmpeg inputs/filters that composite the source video onto
     the canvas with the logo + watermark -- everything EXCEPT the on-screen
     caption. Shared by render_staged() (which caches this as its own file)
@@ -292,7 +369,7 @@ def _build_stage_graph(source_path: str):
     inputs = ["-i", source_path]
     filters = [
         f"color=white:s={CANVAS_W}x{CANVAS_H}[bg]",
-        f"[0:v]crop=min(iw\\,ih*3/4):min(ih\\,iw*4/3):(iw-out_w)/2:(ih-out_h)/2,scale={VIDEO_W}:{VIDEO_H}[vid]",
+        f"[0:v]{_crop_filter(crop)},scale={VIDEO_W}:{VIDEO_H}[vid]",
         f"[bg][vid]overlay={VIDEO_X}:{VIDEO_Y}[stage]",
     ]
     last_label = "stage"
@@ -329,14 +406,14 @@ def _build_stage_graph(source_path: str):
     return inputs, filters, last_label
 
 
-def render_staged(source_path: str, output_path: str, progress_cb=None):
+def render_staged(source_path: str, output_path: str, progress_cb=None, crop=None):
     """Composites the source video onto the canvas (crop/scale + logo +
     watermark) WITHOUT the on-screen caption, and encodes it to output_path.
     This is cached on disk by the caller (main.py keeps it alongside the
     source/final files, same lifetime) so a later caption-only change can
     call apply_caption() against this instead of redoing the crop/scale/
     logo/watermark work and re-decoding the original source every time."""
-    inputs, filters, last_label = _build_stage_graph(source_path)
+    inputs, filters, last_label = _build_stage_graph(source_path, crop)
     filter_complex = ";".join(filters)
     duration = _probe_duration(source_path) if progress_cb else None
 

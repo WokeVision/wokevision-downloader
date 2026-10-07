@@ -35,6 +35,7 @@
   <div class="card"><h3>Banned words</h3><p class="h">The AI will never use these in captions.</p><textarea id="banned"></textarea></div>
   <div class="card"><h3>Posting time slots</h3><p class="h">Your usual posting times (24h, your local time, comma separated). The editor's &ldquo;Next free slot&rdquo; button fills the next one nothing is scheduled in.</p><textarea id="slots" style="min-height:44px"></textarea></div>
   <div class="card"><h3>Closed captions</h3>
+    <label class="chk"><input type="checkbox" id="smart_crop" /> Smart crop: keep faces in frame when cropping wide videos to vertical</label>
     <label class="chk"><input type="checkbox" id="mask_profanity" /> Mask profanity on screen (f***)</label>
     <p class="h">Extra words to mask:</p><textarea id="mask_words" style="min-height:50px"></textarea>
     <p class="h" style="margin-top:12px">Default caption style</p>
@@ -47,12 +48,12 @@
 </div>
 <script>
 const F = ["slots","vocab","voice_notes","banned","mask_words","caption_style"], $ = (i) => document.getElementById(i);
-fetch("/api/settings").then(r => r.json()).then(s => { F.forEach(k => $(k).value = s[k] || (k === "caption_style" ? "classic" : "")); $("mask_profanity").checked = !!s.mask_profanity; }).catch(() => { $("msg").textContent = "Couldn't load settings."; });
+fetch("/api/settings").then(r => r.json()).then(s => { F.forEach(k => $(k).value = s[k] || (k === "caption_style" ? "classic" : "")); $("mask_profanity").checked = !!s.mask_profanity; $("smart_crop").checked = s.smart_crop !== false; }).catch(() => { $("msg").textContent = "Couldn't load settings."; });
 fetch("/api/ai-usage").then(r=>r.json()).then(d=>{const m=v=>"$"+(+v||0).toFixed(2);$("aiu").innerHTML="This month: <b>"+m(d.month_usd)+"</b> · last 7 days: <b>"+m(d.week_usd)+"</b><br>Videos this month: "+(d.videos_month||0)+" · about "+m(d.per_video_usd)+" per video"+((d.kinds||[]).length?"<br>"+d.kinds.map(k=>k.kind+" "+m(k.cost)+" ("+k.calls+")").join(" · "):"");}).catch(()=>{$("aiu").textContent="Couldn't load.";});
 fetch("/api/audit").then(r=>r.json()).then(d=>{$("aud").innerHTML=(d.items||[]).slice(0,12).map(i=>new Date(i.ts).toLocaleString([], {day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})+" · "+(i.event==="login"?"Signed in":"Failed sign-in")+" · "+(i.detail||"")).join("<br>")||"Nothing yet.";}).catch(()=>{$("aud").textContent="Couldn't load.";});
 $("ntest").onclick = async () => { $("nmsg").textContent = "Sending…"; try { const r = await fetch("/api/notify-test", { method: "POST" }); const d = await r.json(); $("nmsg").textContent = (d.ok ? "Sent ✓ " : "Problem: ") + (d.detail || ""); } catch (e) { $("nmsg").textContent = "Couldn't reach the server."; } };
 $("save").onclick = async () => {
-  const body = { mask_profanity: $("mask_profanity").checked }; F.forEach(k => body[k] = $(k).value);
+  const body = { mask_profanity: $("mask_profanity").checked, smart_crop: $("smart_crop").checked }; F.forEach(k => body[k] = $(k).value);
   try { const r = await fetch("/api/settings", { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) }); if (!r.ok) throw 0; $("msg").textContent = "Saved ✓"; } catch (e) { $("msg").textContent = "Couldn't save."; }
 };
 </script>

@@ -12,3 +12,4 @@ cryptography
 webauthn
 boto3
 sentry-sdk
+opencv-python-headless

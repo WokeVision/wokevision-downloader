@@ -35,7 +35,8 @@ REFRESH_URL = "https://graph.instagram.com/refresh_access_token"
 GRAPH_BASE = "https://graph.instagram.com/v23.0"
 
 SCOPES = ("instagram_business_basic,instagram_business_content_publish,"
-          "instagram_business_manage_insights,instagram_business_manage_messages")
+          "instagram_business_manage_insights,instagram_business_manage_messages,"
+          "instagram_business_manage_comments")
 
 PLATFORM = "instagram"
 
@@ -255,7 +256,19 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     )
     if publish_resp.status_code != 200:
         raise InstagramError(f"Could not publish: {publish_resp.text[:500]}")
-    return {"media_id": publish_resp.json().get("id")}
+    media_id = publish_resp.json().get("id")
+    out = {"media_id": media_id}
+    fc = ((post or {}).get("first_comment") or "").strip()
+    if fc and media_id:
+        # Best effort: needs the manage_comments permission (reconnect once to
+        # grant it). A failure here never fails the post itself.
+        try:
+            cr = requests.post(f"{GRAPH_BASE}/{media_id}/comments",
+                               data={"message": fc[:2200], "access_token": access_token}, timeout=30)
+            out["first_comment"] = "posted" if cr.status_code == 200 else f"failed: {cr.text[:200]}"
+        except Exception as ex:
+            out["first_comment"] = f"failed: {ex}"
+    return out
 
 
 # --- Direct messages + account insights (need the manage_messages /

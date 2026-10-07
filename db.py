@@ -864,3 +864,25 @@ def post_stats_by_url(urls):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SELECT url, views, likes, comments FROM post_stats WHERE url = ANY(%s)", (list(urls),))
             return {r["url"]: {"views": r["views"], "likes": r["likes"], "comments": r["comments"]} for r in cur.fetchall()}
+
+
+def audit(event: str, detail: str = ""):
+    """Best-effort security/event log (logins, failed logins, publishes)."""
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("CREATE TABLE IF NOT EXISTS audit_log (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ DEFAULT now(), event TEXT, detail TEXT)")
+                cur.execute("INSERT INTO audit_log (event, detail) VALUES (%s, %s)", (event[:60], (detail or "")[:300]))
+    except Exception as e:
+        print(f"AUDIT FAILED: {e}", flush=True)
+
+
+def audit_list(limit: int = 50):
+    try:
+        with _conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("CREATE TABLE IF NOT EXISTS audit_log (id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ DEFAULT now(), event TEXT, detail TEXT)")
+                cur.execute("SELECT ts, event, detail FROM audit_log ORDER BY id DESC LIMIT %s", (limit,))
+                return [{"ts": r["ts"].isoformat(), "event": r["event"], "detail": r["detail"]} for r in cur.fetchall()]
+    except Exception:
+        return []

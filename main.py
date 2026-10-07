@@ -875,6 +875,11 @@ def api_message_reply(platform: str, req: ReplyRequest):
     return {"ok": True}
 
 
+@app.get("/api/audit")
+def api_audit():
+    return {"items": db.audit_list()}
+
+
 @app.get("/api/ai-usage")
 def api_ai_usage():
     return db.ai_usage_summary()
@@ -968,8 +973,24 @@ def auth_register_verify(req: PasskeyRegisterFinish):
     return resp
 
 
+_LOGIN_FAILS = {}   # ip -> [timestamps]
+
+
+def _client_ip(request: Request) -> str:
+    return (request.headers.get("x-forwarded-for") or request.client.host or "?").split(",")[0].strip()
+
+
+def _login_blocked(ip: str) -> bool:
+    now = time.time()
+    recent = [t for t in _LOGIN_FAILS.get(ip, []) if now - t < 900]
+    _LOGIN_FAILS[ip] = recent
+    return len(recent) >= 8
+
+
 @app.post("/auth/login/options")
-def auth_login_options():
+def auth_login_options(request: Request):
+    if _login_blocked(_client_ip(request)):
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in 15 minutes.")
     try:
         return auth.start_login()
     except auth.AuthError as e:
@@ -977,11 +998,17 @@ def auth_login_options():
 
 
 @app.post("/auth/login/verify")
-def auth_login_verify(req: PasskeyLoginFinish):
+def auth_login_verify(req: PasskeyLoginFinish, request: Request):
+    ip = _client_ip(request)
+    if _login_blocked(ip):
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in 15 minutes.")
     try:
         session_token = auth.finish_login(req.token, req.credential)
     except auth.AuthError as e:
+        _LOGIN_FAILS.setdefault(ip, []).append(time.time())
+        db.audit("login_failed", ip)
         raise HTTPException(status_code=400, detail=str(e))
+    db.audit("login", ip)
     resp = JSONResponse({"ok": True})
     resp.set_cookie(
         auth.SESSION_COOKIE, session_token,

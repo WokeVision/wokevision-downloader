@@ -716,6 +716,9 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     ig = g("instagram", "caption")
     ig = base["instagram"]["caption"] if ig is None else str(ig)
     out["instagram"] = {"caption": _trim_to_chars(_limit_hashtags(ig, LIM["ig_tags"]).strip(), LIM["ig_caption"])}
+    _fc = g("instagram", "first_comment")
+    if _fc and str(_fc).strip():
+        out["instagram"]["first_comment"] = str(_fc).strip()[:2200]
 
     th = g("threads", "text")
     th = base["threads"]["text"] if th is None else str(th)

@@ -640,6 +640,12 @@
         <button type="button" data-pos="middle">Bottom middle</button>
         <button type="button" data-pos="right" class="active">Bottom right</button>
       </div>
+      <div class="wmApply" id="frApply" style="flex-wrap:wrap">
+        <select id="frMode" class="wmSel" title="How the video sits in the frame"><option value="crop">Fill the frame (crop)</option><option value="fit">Fit whole picture (blurred background)</option></select>
+        <label id="frXWrap" style="display:flex;gap:6px;align-items:center;font-size:12px;opacity:.85">Left<input type="range" id="frX" min="0" max="100" value="50" style="width:120px">Right</label>
+        <button type="button" class="secondary" id="frBtn">Apply framing</button>
+        <span class="wmMsg" id="frMsg"></span>
+      </div>
       <div class="wmApply" id="wmApply">
         <button type="button" class="secondary" id="wmApplyBtn">Apply to this edit</button>
         <span class="wmMsg" id="wmMsg"></span>
@@ -885,7 +891,7 @@
     document.getElementById("captionBox").value = data.caption || "";
     document.getElementById("angleBox").value = data.angle || document.getElementById("angleBox").value || "";
     updateCaptionCharCount();
-    fillCues(data.cues, data.captions_on); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; campSel.value = (data.campaign_id || ''); fillPolish(data.post, data.cover_ms); setJobWm(data.watermark); paidPromo.checked = !!data.paid_promo;
+    fillCues(data.cues, data.captions_on); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; campSel.value = (data.campaign_id || ''); fillPolish(data.post, data.cover_ms); setJobWm(data.watermark); setJobCrop(data.crop); paidPromo.checked = !!data.paid_promo;
     fillPosts(data.platform_posts);
     setSaveState("");
     setResult(true); autoGrowAll();
@@ -1201,6 +1207,25 @@
   wmInput.addEventListener("change", () => { wmFile = wmInput.files[0] || null; wmTokenCache = null; wmSavedToken = null; wmRefresh(); });
   wmClear.addEventListener("click", () => { wmFile = null; wmTokenCache = null; wmSavedToken = null; wmInput.value = ""; wmThumb.style.display = "none"; wmRefresh(); });
   document.getElementById("wmPos").addEventListener("click", (e) => { const b = e.target.closest("button[data-pos]"); if (b) { wmPos = b.dataset.pos; wmRefresh(); } });
+  function setJobCrop(c) {
+    document.getElementById("frMode").value = (c && c.mode === "fit") ? "fit" : "crop";
+    document.getElementById("frX").value = Math.round(((c && c.cx != null) ? c.cx : 0.5) * 100);
+    document.getElementById("frXWrap").style.display = document.getElementById("frMode").value === "fit" ? "none" : "flex";
+  }
+  document.getElementById("frMode").addEventListener("change", () => setJobCrop({ mode: document.getElementById("frMode").value, cx: document.getElementById("frX").value / 100 }));
+  document.getElementById("frBtn").addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const b = document.getElementById("frBtn"), m = document.getElementById("frMsg");
+    b.disabled = true; m.textContent = "Re-rendering...";
+    try {
+      const r = await fetch(`/jobs/${currentJobId}/reframe`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: document.getElementById("frMode").value, x: document.getElementById("frX").value / 100 }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || "Couldn't re-frame.");
+      await pollJob(currentJobId);
+      m.textContent = "";
+    } catch (err) { m.textContent = err.message; }
+    finally { b.disabled = false; }
+  });
   function setJobWm(w) { jobWm = w || null; if (jobWm) wmPos = jobWm.pos || wmPos; wmFile = null; wmTokenCache = null; wmSavedToken = null; wmInput.value = ""; wmRefresh(); }
   wmApplyBtn.addEventListener("click", async () => {
     if (!currentJobId) return;
@@ -2188,7 +2213,7 @@
       document.getElementById("captionBox").value = e.posting_caption || "";
       document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";
       updateCaptionCharCount();
-      fillCues(e.cues, e.captions_on); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; campSel.value = (e.campaign_id || ''); fillPolish(e.post, e.cover_ms); setJobWm(e.watermark); paidPromo.checked = !!e.paid_promo;
+      fillCues(e.cues, e.captions_on); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; campSel.value = (e.campaign_id || ''); fillPolish(e.post, e.cover_ms); setJobWm(e.watermark); setJobCrop(e.crop); paidPromo.checked = !!e.paid_promo;
       fillPosts(e.platform_posts);
       setSaveState("");
       setResult(true); autoGrowAll();

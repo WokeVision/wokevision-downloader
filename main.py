@@ -2282,6 +2282,43 @@ def _begin_rerender(job_id: str, label: str):
         return job
 
 
+class ReframeRequest(BaseModel):
+    mode: str = "crop"          # "crop" (fill the frame) or "fit" (whole picture on a blurred background)
+    x: float = 0.5              # 0 = left edge, 1 = right edge (crop mode)
+
+
+@app.post("/jobs/{job_id}/reframe")
+def reframe_job(job_id: str, req: ReframeRequest):
+    """Changes how the source sits in the frame, then re-renders from the kept source."""
+    if req.mode not in ("crop", "fit"):
+        raise HTTPException(status_code=400, detail="Unknown framing.")
+    x = max(0.0, min(1.0, req.x))
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        meta = dict((job or {}).get("meta") or {})
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job id")
+    meta["crop"] = {"mode": req.mode, "cx": round(x, 3), "cy": 0.5, "manual": True}
+    job = _begin_rerender(job_id, "Re-framing the video")
+    with JOBS_LOCK:
+        job["meta"] = meta
+        sp = job.get("staged_path")
+    # The cached composite has the old framing baked in: drop it so it is rebuilt from the source.
+    staged = sp or os.path.join(DOWNLOAD_DIR, f"{job_id}_staged.mp4")
+    try:
+        if os.path.exists(staged):
+            os.remove(staged)
+        storage.delete_key(os.path.basename(staged))
+    except Exception as e:
+        print(f"REFRAME: couldn't clear staged file: {e}", flush=True)
+    try:
+        db.update_history_meta(job_id, meta)
+    except Exception as e:
+        print(f"REFRAME META SAVE FAILED: {e}", flush=True)
+    threading.Thread(target=_run_set_on_screen_caption, args=(job_id, job.get("on_screen_caption", "")), daemon=True).start()
+    return {"ok": True}
+
+
 class CreditRequest(BaseModel):
     handle: str = ""
 

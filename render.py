@@ -354,6 +354,19 @@ def _crop_filter(crop):
             f"max(0\\,min(ih-out_h\\,{cy:.3f}*ih-0.38*out_h))")
 
 
+def _video_filters(crop):
+    """Filters that produce the [vid] label: either a 3:4 crop (optionally following a position),
+    or a 'fit' where the whole picture is shown over a blurred, zoomed copy of itself."""
+    if crop and crop.get("mode") == "fit":
+        return [
+            "[0:v]split[fa][fb]",
+            f"[fa]crop=min(iw\\,ih*3/4):min(ih\\,iw*4/3),scale={VIDEO_W}:{VIDEO_H},boxblur=28:6,eq=brightness=-0.08[fbg]",
+            f"[fb]scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=decrease[ffg]",
+            "[fbg][ffg]overlay=(W-w)/2:(H-h)/2[vid]",
+        ]
+    return [f"[0:v]{_crop_filter(crop)},scale={VIDEO_W}:{VIDEO_H}[vid]"]
+
+
 def _build_stage_graph(source_path: str, crop=None):
     """Builds the ffmpeg inputs/filters that composite the source video onto
     the canvas with the logo + watermark -- everything EXCEPT the on-screen
@@ -369,7 +382,7 @@ def _build_stage_graph(source_path: str, crop=None):
     inputs = ["-i", source_path]
     filters = [
         f"color=white:s={CANVAS_W}x{CANVAS_H}[bg]",
-        f"[0:v]{_crop_filter(crop)},scale={VIDEO_W}:{VIDEO_H}[vid]",
+        *_video_filters(crop),
         f"[bg][vid]overlay={VIDEO_X}:{VIDEO_Y}[stage]",
     ]
     last_label = "stage"

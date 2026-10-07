@@ -50,7 +50,13 @@ def _whisper_verbose(audio_path, prompt=""):
             timeout=300,
         )
     resp.raise_for_status()
-    return resp.json()
+    j = resp.json()
+    try:
+        import db
+        db.record_ai_usage("transcribe", "whisper-1", audio_seconds=float(j.get("duration") or 0))
+    except Exception:
+        pass
+    return j
 
 
 def transcribe_words(video_path, progress_cb=None, vocab=""):
@@ -277,7 +283,14 @@ def _chat_json(system, user, model="gpt-4o"):
         timeout=180,
     )
     resp.raise_for_status()
-    return json.loads(resp.json()["choices"][0]["message"]["content"])
+    j = resp.json()
+    try:
+        import db
+        u = j.get("usage") or {}
+        db.record_ai_usage("clipper", model, u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+    except Exception:
+        pass
+    return json.loads(j["choices"][0]["message"]["content"])
 
 
 def _fmt(t):

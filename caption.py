@@ -3,6 +3,7 @@ import re
 import json
 import random
 import requests
+import db
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 CHAT_URL = "https://api.openai.com/v1/chat/completions"
@@ -459,7 +460,7 @@ def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
 BRAND_NOTES = ""   # set from the Settings page (main.py refreshes it)
 
 
-def _call_openai(system_prompt: str, user_content: str) -> dict:
+def _call_openai(system_prompt: str, user_content: str, temperature: float = 0.95, kind: str = "caption") -> dict:
     if BRAND_NOTES:
         system_prompt = system_prompt + "\n\nADDITIONAL OWNER INSTRUCTIONS (follow these; they override the defaults above):\n" + BRAND_NOTES
     try:
@@ -480,12 +481,15 @@ def _call_openai(system_prompt: str, user_content: str) -> dict:
             "response_format": {"type": "json_object"},
             # A little temperature so "regenerate" calls actually come back
             # different rather than near-identical rewordings.
-            "temperature": 0.95,
+            "temperature": temperature,
         },
         timeout=60,
     )
     resp.raise_for_status()
-    return json.loads(resp.json()["choices"][0]["message"]["content"])
+    body = resp.json()
+    u = body.get("usage") or {}
+    db.record_ai_usage(kind, os.environ.get("CAPTION_MODEL", "gpt-4o"), u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+    return json.loads(body["choices"][0]["message"]["content"])
 
 
 def generate_captions(transcript: str, meta: dict) -> tuple:

@@ -566,7 +566,10 @@ def tag_pending(limit: int = 30) -> int:
                       {"role": "user", "content": listing}]},
             timeout=60)
         resp.raise_for_status()
-        items = json.loads(resp.json()["choices"][0]["message"]["content"]).get("items") or []
+        rj = resp.json()
+        u = rj.get("usage") or {}
+        db.record_ai_usage("tagging", os.environ.get("TAG_MODEL", "gpt-4o-mini"), u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+        items = json.loads(rj["choices"][0]["message"]["content"]).get("items") or []
     except Exception as e:
         print(f"POST TAGGING FAILED: {e}", flush=True)
         return 0

@@ -157,6 +157,15 @@ def init_db():
             cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS campaign_id TEXT")
             cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS approval TEXT")
             cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS approval_note TEXT")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ai_usage (
+                    id BIGSERIAL PRIMARY KEY,
+                    ts TIMESTAMPTZ DEFAULT now(),
+                    kind TEXT, model TEXT,
+                    in_tokens BIGINT DEFAULT 0, out_tokens BIGINT DEFAULT 0, audio_seconds DOUBLE PRECISION DEFAULT 0,
+                    cost_usd DOUBLE PRECISION DEFAULT 0
+                )
+            """)
             # Saved campaign watermarks (the image lives in storage as wm_<token>.png).
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS watermark_library (
@@ -805,3 +814,43 @@ def history_set_approval(entry_id: str, cid: str, status: str, note: str):
             cur.execute("UPDATE history SET approval = %s, approval_note = %s WHERE id = %s AND campaign_id = %s",
                         (status, note[:1000], entry_id, cid))
             return cur.rowcount
+
+
+# --- AI spend tracking -----------------------------------------------------------------
+# USD per 1M tokens (input, output); Whisper is per minute of audio. Estimates only.
+_PRICES = {"gpt-4o": (2.50, 10.00), "gpt-4o-mini": (0.15, 0.60)}
+_WHISPER_PER_MIN = 0.006
+
+
+def record_ai_usage(kind: str, model: str, in_tokens: int = 0, out_tokens: int = 0, audio_seconds: float = 0.0):
+    """Best-effort: never raises, never slows a request noticeably."""
+    try:
+        if not configured():
+            return
+        pin, pout = _PRICES.get(model, _PRICES["gpt-4o"])
+        cost = in_tokens / 1e6 * pin + out_tokens / 1e6 * pout + audio_seconds / 60 * _WHISPER_PER_MIN
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO ai_usage (kind, model, in_tokens, out_tokens, audio_seconds, cost_usd) VALUES (%s,%s,%s,%s,%s,%s)",
+                            (kind, model, int(in_tokens or 0), int(out_tokens or 0), float(audio_seconds or 0), cost))
+    except Exception as e:
+        print(f"AI USAGE LOG FAILED: {e}", flush=True)
+
+
+def ai_usage_summary():
+    if not configured():
+        return {}
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""SELECT coalesce(sum(cost_usd),0) AS c, count(*) AS n FROM ai_usage WHERE ts >= date_trunc('month', now())""")
+            month = dict(cur.fetchone())
+            cur.execute("""SELECT coalesce(sum(cost_usd),0) AS c FROM ai_usage WHERE ts >= now() - interval '7 days'""")
+            week = cur.fetchone()["c"]
+            cur.execute("""SELECT kind, round(sum(cost_usd)::numeric, 3) AS cost, count(*) AS calls FROM ai_usage
+                           WHERE ts >= now() - interval '30 days' GROUP BY kind ORDER BY sum(cost_usd) DESC""")
+            kinds = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT count(*) AS n FROM history WHERE created_at >= date_trunc('month', now())")
+            videos = cur.fetchone()["n"]
+    return {"month_usd": round(float(month["c"]), 2), "week_usd": round(float(week), 2), "videos_month": videos,
+            "per_video_usd": round(float(month["c"]) / videos, 3) if videos else None,
+            "kinds": [{"kind": k["kind"], "cost": float(k["cost"]), "calls": k["calls"]} for k in kinds]}

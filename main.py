@@ -871,6 +871,11 @@ def api_message_reply(platform: str, req: ReplyRequest):
     return {"ok": True}
 
 
+@app.get("/api/ai-usage")
+def api_ai_usage():
+    return db.ai_usage_summary()
+
+
 @app.get("/api/analytics/summary")
 def api_analytics_summary(tz: int = 0, days: int = 30):
     s = insights.summary(tz, max(7, min(days, 180)))

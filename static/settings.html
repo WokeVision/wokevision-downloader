@@ -41,11 +41,13 @@
     <select id="caption_style"><option value="classic">Classic (whole line)</option><option value="highlight">Highlight (active word lights up)</option></select>
   </div>
   <div class="card"><h3>Phone alerts</h3><p class="h">Sends a test notification through ntfy/Telegram and shows exactly what came back.</p><button id="ntest" style="background:rgba(255,255,255,.12)">Send test alert</button><div id="nmsg" style="font-size:13px;margin-top:8px;color:var(--faint)"></div></div>
+  <div class="card"><h3>AI spend</h3><p class="h">Estimated OpenAI cost from this tool (captions, transcription, clipper, tagging).</p><div id="aiu" style="font-size:14px;line-height:1.6;color:var(--faint)">Loading…</div></div>
   <button id="save">Save settings</button><div id="msg"></div>
 </div>
 <script>
 const F = ["slots","vocab","voice_notes","banned","mask_words","caption_style"], $ = (i) => document.getElementById(i);
 fetch("/api/settings").then(r => r.json()).then(s => { F.forEach(k => $(k).value = s[k] || (k === "caption_style" ? "classic" : "")); $("mask_profanity").checked = !!s.mask_profanity; }).catch(() => { $("msg").textContent = "Couldn't load settings."; });
+fetch("/api/ai-usage").then(r=>r.json()).then(d=>{const m=v=>"$"+(+v||0).toFixed(2);$("aiu").innerHTML="This month: <b>"+m(d.month_usd)+"</b> · last 7 days: <b>"+m(d.week_usd)+"</b><br>Videos this month: "+(d.videos_month||0)+" · about "+m(d.per_video_usd)+" per video"+((d.kinds||[]).length?"<br>"+d.kinds.map(k=>k.kind+" "+m(k.cost)+" ("+k.calls+")").join(" · "):"");}).catch(()=>{$("aiu").textContent="Couldn't load.";});
 $("ntest").onclick = async () => { $("nmsg").textContent = "Sending…"; try { const r = await fetch("/api/notify-test", { method: "POST" }); const d = await r.json(); $("nmsg").textContent = (d.ok ? "Sent ✓ " : "Problem: ") + (d.detail || ""); } catch (e) { $("nmsg").textContent = "Couldn't reach the server."; } };
 $("save").onclick = async () => {
   const body = { mask_profanity: $("mask_profanity").checked }; F.forEach(k => body[k] = $(k).value);

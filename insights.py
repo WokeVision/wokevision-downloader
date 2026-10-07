@@ -400,6 +400,7 @@ def get(platform: str, force: bool = False) -> dict:
         _CACHE[platform] = (now, data)
     try:
         _snapshot(data)
+        _save_posts(data)
     except Exception as e:
         print(f"INSIGHTS SNAPSHOT FAILED ({platform}): {e}", flush=True)
     return data
@@ -420,6 +421,7 @@ def init_snapshots():
                     followers BIGINT, posts BIGINT, views BIGINT, likes BIGINT, comments BIGINT,
                     PRIMARY KEY (platform, day)
                 )""")
+    init_post_stats()
 
 
 def _snapshot(data):
@@ -473,3 +475,201 @@ def range_views(platform: str, start: int, end: int) -> dict:
         total += v or 0
         cur = nxt
     return {"views": total, "clamped": clamped}
+
+
+# --- per-post history, tagging and analysis -----------------------------------------
+# Every time stats are fetched, each post's numbers are saved here so the
+# analysis keeps working for older posts and doesn't depend on a platform's
+# "last N posts" window.
+import os
+import json
+import csv
+import io
+
+
+def init_post_stats():
+    if not db.configured():
+        return
+    with db._conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS post_stats (
+                    platform TEXT NOT NULL, post_id TEXT NOT NULL,
+                    title TEXT, url TEXT, posted_at TIMESTAMPTZ,
+                    views BIGINT, likes BIGINT, comments BIGINT, shares BIGINT,
+                    topic TEXT, hook TEXT, tagged BOOLEAN DEFAULT false,
+                    updated_at TIMESTAMPTZ DEFAULT now(),
+                    PRIMARY KEY (platform, post_id)
+                )""")
+            cur.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
+
+
+def _parse_ts(v):
+    if v is None or v == "":
+        return None
+    try:
+        if isinstance(v, (int, float)) or str(v).isdigit():
+            return datetime.datetime.fromtimestamp(float(v), datetime.timezone.utc)
+        s = str(v).replace("Z", "+00:00")
+        if len(s) > 5 and s[-5] in "+-" and s[-3] != ":":
+            s = s[:-2] + ":" + s[-2:]
+        d = datetime.datetime.fromisoformat(s)
+        return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
+    except Exception:
+        return None
+
+
+def _save_posts(data):
+    if not db.configured() or data.get("state") not in ("ok", "limited"):
+        return
+    rows = []
+    for p in data.get("posts") or []:
+        ts = _parse_ts(p.get("ts"))
+        if not p.get("id") or ts is None:
+            continue
+        rows.append((data["platform"], str(p["id"]), (p.get("title") or "")[:600], p.get("url"), ts,
+                     p.get("views"), p.get("likes"), p.get("comments"), p.get("shares")))
+    if not rows:
+        return
+    with db._conn() as conn:
+        with conn.cursor() as cur:
+            for r in rows:
+                cur.execute("""
+                    INSERT INTO post_stats (platform, post_id, title, url, posted_at, views, likes, comments, shares)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (platform, post_id) DO UPDATE SET title=EXCLUDED.title, url=EXCLUDED.url,
+                      views=EXCLUDED.views, likes=EXCLUDED.likes, comments=EXCLUDED.comments, shares=EXCLUDED.shares,
+                      updated_at=now()
+                """, r)
+
+
+def tag_pending(limit: int = 30) -> int:
+    """Asks the model for a one-word topic and a hook style for posts that
+    haven't been tagged yet (cheap model, one batched call)."""
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key or not db.configured():
+        return 0
+    import psycopg2.extras
+    with db._conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT platform, post_id, title FROM post_stats WHERE tagged = false AND coalesce(title,'') <> '' ORDER BY posted_at DESC LIMIT %s", (limit,))
+            rows = cur.fetchall()
+    if not rows:
+        return 0
+    listing = "\n".join(f"{i}. {r['title'][:220]}" for i, r in enumerate(rows))
+    try:
+        resp = requests.post("https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"model": os.environ.get("TAG_MODEL", "gpt-4o-mini"), "response_format": {"type": "json_object"}, "temperature": 0,
+                  "messages": [
+                      {"role": "system", "content": "You label short-form video captions for a political/news meme page. For each numbered caption give: topic = ONE lowercase word or two-word phrase naming the subject (e.g. 'immigration', 'economy', 'media', 'elections'); hook = the opening style, exactly one of: question, claim, curiosity, quote, statement. Reply JSON: {\"items\": [{\"i\": 0, \"topic\": \"...\", \"hook\": \"...\"}]}"},
+                      {"role": "user", "content": listing}]},
+            timeout=60)
+        resp.raise_for_status()
+        items = json.loads(resp.json()["choices"][0]["message"]["content"]).get("items") or []
+    except Exception as e:
+        print(f"POST TAGGING FAILED: {e}", flush=True)
+        return 0
+    n = 0
+    with db._conn() as conn:
+        with conn.cursor() as cur:
+            for it in items:
+                try:
+                    r = rows[int(it["i"])]
+                except Exception:
+                    continue
+                hook = str(it.get("hook") or "statement").lower()
+                if hook not in ("question", "claim", "curiosity", "quote", "statement"):
+                    hook = "statement"
+                cur.execute("UPDATE post_stats SET topic=%s, hook=%s, tagged=true WHERE platform=%s AND post_id=%s",
+                            (str(it.get("topic") or "other").lower()[:40], hook, r["platform"], r["post_id"]))
+                n += 1
+    return n
+
+
+def _rows(days: int = None):
+    import psycopg2.extras
+    with db._conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM post_stats ORDER BY posted_at DESC")
+            rows = [dict(r) for r in cur.fetchall()]
+    return rows
+
+
+def _avg(xs):
+    xs = [x for x in xs if x is not None]
+    return round(sum(xs) / len(xs)) if xs else 0
+
+
+def summary(tz_offset_min: int = 0, days: int = 30) -> dict:
+    """tz_offset_min: minutes to ADD to UTC to get the viewer's local time."""
+    if not db.configured():
+        return {"posts": 0}
+    rows = [r for r in _rows() if r.get("posted_at")]
+    tzd = datetime.timedelta(minutes=tz_offset_min)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    grid = {}
+    by_hour, by_topic, by_hook = {}, {}, {}
+    for r in rows:
+        if r["views"] is None:
+            continue
+        loc = r["posted_at"] + tzd
+        grid.setdefault((loc.weekday(), loc.hour), []).append(r["views"])
+        by_hour.setdefault(loc.hour, []).append(r["views"])
+        if r.get("tagged"):
+            by_topic.setdefault(r["topic"] or "other", []).append(r["views"])
+            by_hook.setdefault(r["hook"] or "statement", []).append(r["views"])
+    hours = sorted(({"hour": h, "avg": _avg(v), "n": len(v)} for h, v in by_hour.items() if len(v) >= 2), key=lambda x: -x["avg"])
+    cur_start, prev_start = now - datetime.timedelta(days=days), now - datetime.timedelta(days=2 * days)
+    def agg(lo, hi):
+        rs = [r for r in rows if lo <= r["posted_at"] < hi]
+        return {"posts": len(rs), "views": sum(r["views"] or 0 for r in rs), "likes": sum(r["likes"] or 0 for r in rs),
+                "comments": sum(r["comments"] or 0 for r in rs), "avg_views": _avg([r["views"] for r in rs])}
+    top = sorted((r for r in rows if r["views"] is not None), key=lambda r: -r["views"])[:5]
+    last = max((r["updated_at"] for r in rows), default=None)
+    return {
+        "posts": len(rows), "tagged": sum(1 for r in rows if r.get("tagged")),
+        "heatmap": [{"d": d, "h": h, "avg": _avg(v), "n": len(v)} for (d, h), v in grid.items()],
+        "best_hours": hours[:4],
+        "topics": sorted(({"name": k, "avg": _avg(v), "n": len(v)} for k, v in by_topic.items()), key=lambda x: -x["avg"])[:12],
+        "hooks": sorted(({"name": k, "avg": _avg(v), "n": len(v)} for k, v in by_hook.items()), key=lambda x: -x["avg"]),
+        "current": agg(cur_start, now), "previous": agg(prev_start, cur_start), "days": days,
+        "top": [{"title": r["title"], "url": r["url"], "platform": r["platform"], "views": r["views"]} for r in top],
+        "updated_at": last.isoformat() if last else None,
+    }
+
+
+def export_csv() -> str:
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["platform", "posted_at", "title", "url", "views", "likes", "comments", "shares", "topic", "hook"])
+    for r in _rows():
+        w.writerow([r["platform"], r["posted_at"].isoformat() if r.get("posted_at") else "", r.get("title") or "", r.get("url") or "",
+                    r["views"], r["likes"], r["comments"], r["shares"], r.get("topic") or "", r.get("hook") or ""])
+    return buf.getvalue()
+
+
+def weekly_digest() -> str:
+    s = summary(0, 7)
+    cur, prev = s.get("current") or {}, s.get("previous") or {}
+    if not cur.get("posts") and not prev.get("posts"):
+        return ""
+    def pct(a, b):
+        return "n/a" if not b else f"{(a - b) / b * 100:+.0f}%"
+    best = (s.get("top") or [{}])[0]
+    return (f"Last 7 days: {cur['posts']} posts, {cur['views']:,} views ({pct(cur['views'], prev['views'])} vs the week before), "
+            f"{cur['likes']:,} likes. Best post overall: {(best.get('title') or '')[:70]} ({best.get('views', 0):,} views).")
+
+
+def kv_get(key):
+    with db._conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM kv WHERE key = %s", (key,))
+            r = cur.fetchone()
+    return r[0] if r else None
+
+
+def kv_set(key, value):
+    with db._conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO kv (key, value) VALUES (%s,%s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, value))

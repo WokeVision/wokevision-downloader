@@ -161,7 +161,7 @@
   .kpi .sub2.up { color: #30D158; } .kpi .sub2.down { color: #FF453A; }
   .skeleton { height: 90px; border-radius: var(--radius-md); background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.09), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: sh 1.3s linear infinite; }
   @keyframes sh { to { background-position: -200% 0; } }
-  .secSeg { display: flex; width: 100%; max-width: 440px; margin: 4px 0 14px; }
+  .secSeg { display: flex; width: 100%; max-width: 600px; margin: 4px 0 14px; }
   .secSeg button { flex: 1; padding: 11px 12px; font-size: 14.5px; }
   .cList { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
   .cList.grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -213,7 +213,7 @@
     <button class="btn2" id="refreshBtn">Refresh</button>
   </div>
 
-  <div class="seg secSeg" id="secSeg"><button data-sec="account">Account metrics</button><button data-sec="content">Content metrics</button></div>
+  <div class="seg secSeg" id="secSeg"><button data-sec="account">Account metrics</button><button data-sec="content">Content metrics</button><button data-sec="insights">Insights</button></div>
   <div class="tabs" id="tabs"></div>
   <div id="view"><div class="skeleton"></div></div>
 </div>
@@ -720,6 +720,7 @@
     }
     document.querySelectorAll("#secSeg button").forEach(function (b) { b.classList.toggle("active", b.dataset.sec === state.sec); });
     if (state.sec === "content") { $tabs.style.display = "none"; $view.innerHTML = rangeBar() + contentView(); return; }
+    if (state.sec === "insights") { $tabs.style.display = "none"; $view.innerHTML = insightsView(); if (!state.ins || state.insDays !== state.insFetched) loadInsights(); return; }
     $tabs.style.display = "";
     renderTabs();
     if (state.tab === "overview") $view.innerHTML = rangeBar() + overview();
@@ -727,6 +728,61 @@
     else if (BY_ID[state.tab]) $view.innerHTML = rangeBar() + platformView(state.tab);
     else { state.tab = "overview"; $view.innerHTML = rangeBar() + overview(); }
   }
+  state.insDays = 30;
+  function loadInsights() {
+    state.insFetched = state.insDays; state.ins = null;
+    var tz = -new Date().getTimezoneOffset();
+    fetch("/api/analytics/summary?tz=" + tz + "&days=" + state.insDays).then(function (r) { return r.json(); }).then(function (j) { state.ins = j; if (state.sec === "insights") $view.innerHTML = insightsView(); })
+      .catch(function () { state.ins = { posts: 0, error: true }; if (state.sec === "insights") $view.innerHTML = insightsView(); });
+  }
+  function fmtN(n) { n = n || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(n); }
+  function insightsView() {
+    var d = state.ins;
+    if (!d) return '<div class="skeleton"></div><div class="skeleton" style="margin-top:12px"></div>';
+    if (!d.posts) return '<div class="card"><div class="empty">' + (d.error ? "Couldn\u2019t load insights." : "No saved post history yet. Open the account tabs (or press Refresh) once \u2014 every post\u2019s numbers are saved from then on, and insights build up here.") + '</div></div>';
+    var DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], max = 1, cell = {};
+    d.heatmap.forEach(function (c) { cell[c.d + "_" + c.h] = c; if (c.avg > max) max = c.avg; });
+    var h = '<div class="card"><div class="seg" id="insDays" style="max-width:300px;margin-bottom:12px">' + [7, 30, 90].map(function (n) { return '<button data-d="' + n + '" class="' + (state.insDays === n ? "active" : "") + '">' + n + ' days</button>'; }).join("") + '</div>';
+    var c = d.current, p = d.previous;
+    function delta(a, b) { if (!b) return ""; var v = Math.round((a - b) / b * 100); return ' <span style="color:' + (v >= 0 ? "#4ade80" : "#FF7A85") + ';font-size:12px">' + (v >= 0 ? "+" : "") + v + '%</span>'; }
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">' +
+      [["Posts", c.posts, p.posts], ["Views", c.views, p.views], ["Likes", c.likes, p.likes], ["Comments", c.comments, p.comments], ["Avg views / post", c.avg_views, p.avg_views]].map(function (m) {
+        return '<div style="background:rgba(255,255,255,.05);border-radius:12px;padding:10px 12px"><div style="font-size:11.5px;color:var(--text-faint)">' + m[0] + '</div><div style="font-size:21px;font-weight:700">' + fmtN(m[1]) + delta(m[1], m[2]) + '</div></div>'; }).join("") +
+      '</div><div style="font-size:12px;color:var(--text-faint);margin-top:8px">Last ' + d.days + ' days vs the ' + d.days + ' before. ' + d.posts + ' posts saved' + (d.updated_at ? ' \u00b7 last updated ' + new Date(d.updated_at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "") + '.</div></div>';
+    h += '<div class="card"><h3 style="margin:0 0 4px;font-size:15px">Best time to post</h3><div style="font-size:12.5px;color:var(--text-faint);margin-bottom:10px">Average views by when a post went up (your local time). Brighter = more views.</div><div style="overflow-x:auto"><table style="border-collapse:separate;border-spacing:2px;font-size:10px"><tr><td></td>';
+    for (var hr = 0; hr < 24; hr++) h += '<td style="text-align:center;color:var(--text-faint)">' + (hr % 3 === 0 ? hr : "") + '</td>';
+    h += '</tr>';
+    DAYS.forEach(function (dn, di) {
+      h += '<tr><td style="color:var(--text-faint);padding-right:6px">' + dn + '</td>';
+      for (var hr2 = 0; hr2 < 24; hr2++) { var cc = cell[di + "_" + hr2]; h += '<td title="' + (cc ? fmtN(cc.avg) + ' avg views \u00b7 ' + cc.n + ' post' + (cc.n > 1 ? "s" : "") : "no posts") + '" style="width:20px;height:20px;border-radius:4px;background:' + (cc ? "rgba(255,43,60," + (0.15 + 0.85 * cc.avg / max).toFixed(2) + ")" : "rgba(255,255,255,.04)") + '"></td>'; }
+      h += '</tr>';
+    });
+    h += '</table></div>';
+    if (d.best_hours.length) {
+      h += '<div style="margin-top:12px;font-size:13.5px"><b>Best hours:</b> ' + d.best_hours.map(function (x) { return String(x.hour).padStart(2, "0") + ":00 (" + fmtN(x.avg) + " avg, " + x.n + " posts)"; }).join(" \u00b7 ") + '</div>' +
+        '<button class="btn2" id="useSlots" style="margin-top:10px">Use these as my posting slots</button> <span id="slotMsg" style="font-size:12.5px;color:var(--text-faint)"></span>';
+    } else h += '<div style="margin-top:10px;font-size:12.5px;color:var(--text-faint)">Needs at least 2 posts in the same hour to suggest times.</div>';
+    h += '</div>';
+    function table(title, rows, note) {
+      if (!rows.length) return '<div class="card"><h3 style="margin:0 0 4px;font-size:15px">' + title + '</h3><div style="font-size:12.5px;color:var(--text-faint)">' + note + '</div></div>';
+      var mx = Math.max.apply(null, rows.map(function (r) { return r.avg; })) || 1;
+      return '<div class="card"><h3 style="margin:0 0 8px;font-size:15px">' + title + '</h3>' + rows.map(function (r) {
+        return '<div style="display:flex;align-items:center;gap:10px;margin:5px 0;font-size:13.5px"><span style="width:120px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(r.name) + '</span><span style="flex:1;background:rgba(255,255,255,.06);border-radius:6px;height:14px"><i style="display:block;height:100%;width:' + Math.round(r.avg / mx * 100) + '%;background:var(--accent);border-radius:6px"></i></span><span style="width:110px;text-align:right;color:var(--text-dim)">' + fmtN(r.avg) + ' \u00b7 ' + r.n + ' post' + (r.n > 1 ? "s" : "") + '</span></div>'; }).join("") + '</div>';
+    }
+    var tagNote = d.tagged < d.posts ? 'Labelling your posts with AI\u2026 (' + d.tagged + '/' + d.posts + ' done) \u2014 reopen this tab in a minute.' : 'Not enough data yet.';
+    h += table("Average views by topic", d.topics, tagNote) + table("Average views by hook style", d.hooks, tagNote);
+    if (d.top.length) h += '<div class="card"><h3 style="margin:0 0 8px;font-size:15px">Top posts</h3>' + d.top.map(function (t) { return '<div style="font-size:13.5px;margin:6px 0"><b>' + fmtN(t.views) + '</b> \u00b7 ' + esc(t.platform) + ' \u00b7 ' + (t.url ? '<a href="' + esc(t.url) + '" target="_blank" rel="noopener" style="color:#ff6b78">' : "") + esc((t.title || "(no caption)").slice(0, 90)) + (t.url ? "</a>" : "") + '</div>'; }).join("") + '</div>';
+    h += '<a class="btn2" href="/api/analytics/export.csv" style="display:inline-block">Download all posts (CSV)</a>';
+    return h;
+  }
+  $view.addEventListener("click", function (e) {
+    var dd = e.target.closest("#insDays button"); if (dd) { state.insDays = +dd.dataset.d; render(); return; }
+    if (e.target.id === "useSlots" && state.ins) {
+      var slots = state.ins.best_hours.map(function (x) { return String(x.hour).padStart(2, "0") + ":00"; }).sort().join(",");
+      fetch("/api/settings").then(function (r) { return r.json(); }).then(function (st) { st.slots = slots; return fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(st) }); })
+        .then(function () { document.getElementById("slotMsg").textContent = "Saved: " + slots; }).catch(function () { document.getElementById("slotMsg").textContent = "Couldn\u2019t save."; });
+    }
+  });
   function loadIgViews() {
     var r = getRange(), key = rangeKey();
     if (!state.data.instagram || state.data.instagram.state === "not_connected" || state.data.instagram.state === "error") return;
@@ -753,7 +809,7 @@
     if (e.target.closest("#dirBtn")) { state.dir = state.dir === "desc" ? "asc" : "desc"; persistC(); render(); return; }
     var it = e.target.closest("[data-up]"); if (it && state.ups && state.ups[+it.dataset.up]) openDetail(state.ups[+it.dataset.up]);
   });
-  try { state.sec = localStorage.getItem("wvSec") === "content" ? "content" : "account"; } catch (x) {}
+  try { var _s = localStorage.getItem("wvSec"); state.sec = _s === "content" || _s === "insights" ? _s : "account"; } catch (x) {}
   $view.addEventListener("click", function (e) {
     var rg = e.target.closest("[data-range]");
     if (rg) {

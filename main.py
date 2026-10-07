@@ -10,7 +10,7 @@ import threading
 import traceback
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
-from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse, JSONResponse
+from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -844,6 +844,19 @@ def api_message_reply(platform: str, req: ReplyRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)[:300])
     return {"ok": True}
+
+
+@app.get("/api/analytics/summary")
+def api_analytics_summary(tz: int = 0, days: int = 30):
+    s = insights.summary(tz, max(7, min(days, 180)))
+    if s.get("posts") and s.get("posts") > s.get("tagged", 0):
+        threading.Thread(target=insights.tag_pending, daemon=True).start()
+    return s
+
+
+@app.get("/api/analytics/export.csv")
+def api_analytics_export():
+    return Response(insights.export_csv(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=wokevision-posts.csv"})
 
 
 @app.get("/api/insights/{platform}/views")
@@ -2236,6 +2249,23 @@ def schedule_post_now(sid: str):
 _LAST_TICK = {"at": None}
 
 
+def _maybe_weekly_digest():
+    """Mondays from 08:00 UTC, once a week: a short performance summary as a phone alert."""
+    try:
+        now = _dt.datetime.now(_dt.timezone.utc)
+        if now.weekday() != 0 or now.hour < 8 or not notify.configured() or not db.configured():
+            return
+        key = now.strftime("%G-W%V")
+        if insights.kv_get("digest_week") == key:
+            return
+        insights.kv_set("digest_week", key)
+        text = insights.weekly_digest()
+        if text:
+            notify.notify("WokeVision weekly summary", text)
+    except Exception as e:
+        print(f"DIGEST FAILED: {e}", flush=True)
+
+
 @app.get("/api/schedule-health")
 def schedule_health():
     """Lets the Schedule page warn when nothing is poking the app awake."""
@@ -2259,6 +2289,7 @@ def cron_tick(request: Request, key: str = ""):
     if not _hmac.compare_digest(given.encode(), secret.encode()):
         raise HTTPException(status_code=403, detail="Bad key.")
     _LAST_TICK["at"] = time.time()
+    _maybe_weekly_digest()
     threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
     return {"ok": True}
 

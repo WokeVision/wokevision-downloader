@@ -1757,10 +1757,22 @@
     return d;
   }
   const QUICK = [["In 1 hour", "hour"], ["Today 19:00", "today@19"], ["Tomorrow 08:00", "tomorrow@8"], ["Tomorrow 12:00", "tomorrow@12"], ["Tomorrow 18:00", "tomorrow@18"], ["Tomorrow 20:00", "tomorrow@20"]];
-  document.getElementById("quickPicks").innerHTML = QUICK.map(([t, k]) => `<button type="button" data-q="${k}">${t}</button>`).join("");
-  document.getElementById("quickPicks").addEventListener("click", (e) => {
+  document.getElementById("quickPicks").innerHTML = QUICK.map(([t, k]) => `<button type="button" data-q="${k}">${t}</button>`).join("") + `<button type="button" data-q="free">Next free slot</button>`;
+  async function nextFreeSlot() {
+    let slots = ["08:00", "12:00", "18:00", "20:00"], busy = [];
+    try { const st = await (await fetch("/api/settings")).json(); if (st.slots) slots = st.slots.split(","); } catch (e) {}
+    try { busy = ((await (await fetch("/api/schedule?past=false")).json()).items || []).filter((x) => x.status === "scheduled").map((x) => new Date(x.run_at).getTime()); } catch (e) {}
+    const now = Date.now();
+    for (let day = 0; day < 30; day++) for (const t of slots) {
+      const [h, m] = t.split(":").map(Number), d = new Date(); d.setDate(d.getDate() + day); d.setHours(h, m, 0, 0);
+      if (d.getTime() <= now + 5 * 60000) continue;
+      if (!busy.some((b) => Math.abs(b - d.getTime()) < 45 * 60000)) return d;
+    }
+    return quickDate("tomorrow@12");
+  }
+  document.getElementById("quickPicks").addEventListener("click", async (e) => {
     const k = e.target && e.target.dataset && e.target.dataset.q; if (!k) return;
-    const v = toLocalInput(quickDate(k));
+    const v = toLocalInput(k === "free" ? await nextFreeSlot() : quickDate(k));
     schedAll.value = v;
     schedPer.querySelectorAll("input").forEach((i) => { i.value = v; });
   });

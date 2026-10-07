@@ -33,6 +33,7 @@
   <div class="card"><h3>Custom vocabulary</h3><p class="h">Names, slang and brands the transcriber keeps getting wrong. Comma or line separated.</p><textarea id="vocab"></textarea></div>
   <div class="card"><h3>Voice notes</h3><p class="h">How your captions should sound. Added to every AI caption prompt.</p><textarea id="voice_notes"></textarea></div>
   <div class="card"><h3>Banned words</h3><p class="h">The AI will never use these in captions.</p><textarea id="banned"></textarea></div>
+  <div class="card"><h3>Posting time slots</h3><p class="h">Your usual posting times (24h, your local time, comma separated). The editor's &ldquo;Next free slot&rdquo; button fills the next one nothing is scheduled in.</p><textarea id="slots" style="min-height:44px"></textarea></div>
   <div class="card"><h3>Closed captions</h3>
     <label class="chk"><input type="checkbox" id="mask_profanity" /> Mask profanity on screen (f***)</label>
     <p class="h">Extra words to mask:</p><textarea id="mask_words" style="min-height:50px"></textarea>
@@ -43,7 +44,7 @@
   <button id="save">Save settings</button><div id="msg"></div>
 </div>
 <script>
-const F = ["vocab","voice_notes","banned","mask_words","caption_style"], $ = (i) => document.getElementById(i);
+const F = ["slots","vocab","voice_notes","banned","mask_words","caption_style"], $ = (i) => document.getElementById(i);
 fetch("/api/settings").then(r => r.json()).then(s => { F.forEach(k => $(k).value = s[k] || (k === "caption_style" ? "classic" : "")); $("mask_profanity").checked = !!s.mask_profanity; }).catch(() => { $("msg").textContent = "Couldn't load settings."; });
 $("ntest").onclick = async () => { $("nmsg").textContent = "Sending…"; try { const r = await fetch("/api/notify-test", { method: "POST" }); const d = await r.json(); $("nmsg").textContent = (d.ok ? "Sent ✓ " : "Problem: ") + (d.detail || ""); } catch (e) { $("nmsg").textContent = "Couldn't reach the server."; } };
 $("save").onclick = async () => {

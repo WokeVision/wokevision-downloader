@@ -74,6 +74,16 @@
   @media (min-width: 1320px) { .list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   @media (max-width: 460px) { .post { grid-template-columns: 72px minmax(0, 1fr); gap: 11px; } .thumb { width: 72px; } .row .pl { width: 100%; } }
   @media (pointer: coarse) { .btn2 { min-height: 40px; } .row input[type="datetime-local"], .allBar input { min-height: 44px; font-size: 16px; } }
+  .seg2 { display: inline-flex; gap: 4px; } .seg2 .btn2.active { background: var(--surface-strong); border-color: rgba(255,255,255,.3); }
+  .calHead { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 10px; font-weight: 700; font-size: 17px; }
+  .calGrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+  .calDow { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); text-align: center; padding: 2px; }
+  .calDay { min-height: 96px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 6px; overflow: hidden; }
+  .calDay.other { opacity: .35; } .calDay.today { border-color: var(--accent); } .calDay.over { background: var(--accent-dim); }
+  .calDay .n { font-size: 11.5px; color: var(--text-faint); margin-bottom: 4px; }
+  .chip { display: flex; align-items: center; gap: 5px; font-size: 11px; background: rgba(255,255,255,.08); border-radius: 7px; padding: 3px 5px; margin-bottom: 3px; cursor: grab; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip.done { opacity: .55; cursor: default; } .chip.err { background: rgba(255,43,60,.22); }
+  @media (max-width: 700px) { .calDay { min-height: 64px; padding: 3px; } .chip span.t { display: none; } }
 </style>
 </head>
 <body>
@@ -81,7 +91,7 @@
 <div class="wrap">
   <div class="titleRow">
     <div><h1>Schedule</h1><div class="sub" id="sub">Loading…</div></div>
-    <a class="btn2 accent" href="/editor">New post</a>
+    <div style="display:flex;gap:8px;align-items:center"><span class="seg2"><button class="btn2 active" id="vList">List</button><button class="btn2" id="vCal">Calendar</button></span><a class="btn2 accent" href="/editor">New post</a></div>
   </div>
   <div id="health"></div>
   <div id="view"></div>
@@ -151,7 +161,43 @@
     return h;
   }
 
+  var mode = "list", calMonth = new Date(); calMonth.setDate(1);
+  function chipHtml(s) {
+    var d = new Date(s.run_at), movable = s.status === "scheduled" || s.status === "error" || s.status === "missed";
+    return '<div class="chip' + (s.status === "done" ? " done" : "") + (s.status === "error" || s.status === "missed" ? " err" : "") + '" ' + (movable ? 'draggable="true" data-sid="' + s.id + '"' : "") +
+      ' title="' + esc((s.on_screen_caption || s.title || "") + " — " + s.label) + '"><i class="dot" style="background:' + (COLORS[s.platform] || "#888") + '"></i><span class="t">' + pad(d.getHours()) + ":" + pad(d.getMinutes()) + '</span> ' + esc(s.label) + '</div>';
+  }
+  function renderCal() {
+    var y = calMonth.getFullYear(), m = calMonth.getMonth(), first = new Date(y, m, 1), start = new Date(y, m, 1 - ((first.getDay() + 6) % 7));
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var h = '<div class="calHead"><button class="btn2" id="cPrev">&larr;</button><span>' + calMonth.toLocaleDateString([], { month: "long", year: "numeric" }) + '</span><button class="btn2" id="cNext">&rarr;</button></div><div class="calGrid">';
+    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach(function (d) { h += '<div class="calDow">' + d + '</div>'; });
+    for (var i = 0; i < 42; i++) {
+      var d = new Date(start); d.setDate(start.getDate() + i);
+      var key = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+      var day = items.filter(function (s) { var x = new Date(s.run_at); return x.getFullYear() === d.getFullYear() && x.getMonth() === d.getMonth() && x.getDate() === d.getDate(); }).sort(function (a, b) { return a.run_at < b.run_at ? -1 : 1; });
+      h += '<div class="calDay' + (d.getMonth() !== m ? " other" : "") + (d.getTime() === today.getTime() ? " today" : "") + '" data-day="' + key + '"><div class="n">' + d.getDate() + '</div>' + day.map(chipHtml).join("") + '</div>';
+    }
+    view.innerHTML = h + '</div><div class="sub" style="margin-top:10px">Drag a post to another day to reschedule it (the time of day stays the same).</div>';
+    document.getElementById("cPrev").onclick = function () { calMonth.setMonth(calMonth.getMonth() - 1); renderCal(); };
+    document.getElementById("cNext").onclick = function () { calMonth.setMonth(calMonth.getMonth() + 1); renderCal(); };
+    var drag = null;
+    view.querySelectorAll(".chip[draggable]").forEach(function (c) { c.addEventListener("dragstart", function (e) { drag = c.dataset.sid; e.dataTransfer.setData("text/plain", drag); }); });
+    view.querySelectorAll(".calDay").forEach(function (c) {
+      c.addEventListener("dragover", function (e) { e.preventDefault(); c.classList.add("over"); });
+      c.addEventListener("dragleave", function () { c.classList.remove("over"); });
+      c.addEventListener("drop", function (e) {
+        e.preventDefault(); c.classList.remove("over");
+        var it = items.filter(function (s) { return s.id === drag; })[0]; if (!it) return;
+        var p = c.dataset.day.split("-"), when = new Date(it.run_at); when.setFullYear(+p[0], +p[1] - 1, +p[2]);
+        if (when.getTime() < Date.now()) { toast("Pick a time in the future."); return; }
+        api("PUT", "/api/schedule/" + it.id, { run_at: when.toISOString() }).then(function () { toast("Moved"); return load(); }).catch(function (err) { toast(err.message); });
+      });
+    });
+  }
   function render() {
+    document.getElementById("vList").classList.toggle("active", mode === "list"); document.getElementById("vCal").classList.toggle("active", mode === "cal");
+    if (mode === "cal") { document.getElementById("sub").textContent = items.filter(function (s) { return s.status !== "done"; }).length + " queued"; return renderCal(); }
     var upcoming = items.filter(function (s) { return s.status !== "done"; });
     var past = items.filter(function (s) { return s.status === "done"; }).sort(function (a, b) { return a.run_at < b.run_at ? 1 : -1; });
     document.getElementById("sub").textContent = upcoming.length ? upcoming.length + " post" + (upcoming.length === 1 ? "" : "s") + " queued" : "Nothing queued";
@@ -175,6 +221,8 @@
     view.innerHTML = h;
   }
 
+  document.getElementById("vList").onclick = function () { mode = "list"; render(); };
+  document.getElementById("vCal").onclick = function () { mode = "cal"; render(); };
   function load() {
     return api("GET", "/api/schedule").then(function (j) { items = j.items || []; render(); })
       .catch(function (e) { view.innerHTML = '<div class="banner warn">Couldn\'t load the schedule: ' + esc(e.message) + '</div>'; });

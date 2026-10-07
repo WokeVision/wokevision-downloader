@@ -392,6 +392,7 @@ class SettingsModel(BaseModel):
     mask_profanity: bool = False
     mask_words: str = ""
     caption_style: str = "classic"
+    slots: str = "08:00,12:00,18:00,20:00"
 
 
 @app.get("/settings")
@@ -408,6 +409,8 @@ def settings_get():
 @app.put("/api/settings")
 def settings_put(req: SettingsModel):
     data = req.model_dump()
+    _t = re.findall(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", data.get("slots") or "")
+    data["slots"] = ",".join(f"{int(h):02d}:{m}" for h, m in _t) or "08:00,12:00,18:00,20:00"
     data["caption_style"] = data["caption_style"] if data["caption_style"] in ("classic", "highlight") else "classic"
     try:
         db.settings_save(data)

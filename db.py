@@ -543,7 +543,7 @@ def attention_items():
                             "text": f"Scheduled {r['platform']} post failed: {err}", "href": "/schedule"})
             cur.execute("""
                 SELECT platform, expires_at, last_check_ok, last_error FROM connections
-                WHERE last_check_ok = false OR (expires_at IS NOT NULL AND expires_at < now() + interval '5 days')
+                WHERE last_check_ok = false OR (refresh_token IS NULL AND expires_at IS NOT NULL AND expires_at < now() + interval '5 days')
             """)
             for r in cur.fetchall():
                 if r["last_check_ok"] is False:

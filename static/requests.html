@@ -75,7 +75,7 @@ function render(){
   q("data-dc",function(id){var why=prompt("Optional: a short reason to include in the email to the customer");if(why===null)return;var c=find(id);
     j("/api/requests/"+id+"/decline","POST",{note:why}).then(function(){sendMail(id,c.email,"About your post request","Hi "+c.name+",\n\nThanks for your request. Unfortunately we can't take this one on."+(why?"\n\n"+why:"")+"\n\nBest wishes");load();});});
   q("data-cf",function(id){var c=find(id),d=c.data;
-    sendMail(id,c.email,"Your "+(d.type==="reel"?"reel":"post")+" is booked","Hi "+c.name+",\n\nGood news — your "+(d.type==="reel"?"reel":"post")+" is approved and scheduled for "+(PL[d.platform]||d.platform)+" on "+fmt(c.run_at)+".\n\nWe'll let you know if anything changes.\n\nBest wishes");setTimeout(load,1500);});
+    sendMail(id,c.email,"Your "+(d.type==="reel"?"reel":"post")+" is booked","Hi "+c.name+",\n\nGood news — your "+(d.type==="reel"?"reel":"post")+" is approved and scheduled for "+(PL[d.platform]||d.platform)+" on "+fmt(c.run_at)+".\n\nPayment is required before it goes live, so please get in touch to arrange this.\n\nWe'll let you know if anything changes.\n\nBest wishes");setTimeout(load,1500);});
   q("data-inv",function(id,b){var v=document.getElementById("ct"+id).value,m=document.getElementById("im"+id);if(!v){m.textContent="Choose a time first.";return;}
     b.disabled=true;m.textContent="Sending…";
     j("/api/requests/"+id+"/invite","POST",{start_iso:new Date(v).toISOString(),minutes:parseInt(document.getElementById("cm"+id).value)||30}).then(load).catch(function(e){m.textContent=e.message;b.disabled=false;});});

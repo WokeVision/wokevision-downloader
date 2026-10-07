@@ -1201,7 +1201,7 @@ async def public_order(request: Request, kind: str = Form(...), platform: str = 
                                               "notes": notes.strip()[:500], "price": price, "currency": page["currency"]}, when)
     notify.notify("New post request", f"{name}: {kind} for {platform} ({page['currency']}{price}) — scheduled {when.strftime('%d %b %H:%M')} UTC",
                   f"{_base_url()}/requests" if _base_url() else None)
-    notify.send_email(email, "We got your request", f"Hi {name},\n\nThanks — we've received your {kind} request for {platform} and will confirm it by email shortly.\n\n{page['title']}", page["contact_email"])
+    notify.send_email(email, "We got your request", f"Hi {name},\n\nThanks — we've received your {kind} request for {platform} and will confirm it by email shortly.\n\nSubmitting a request is free — payment is required before your post goes live.\n\n{page['title']}", page["contact_email"])
     pay = page.get("pay_link_reel" if kind == "reel" else "pay_link_still") or ""
     return {"ok": True, "id": rid, "price": price, "currency": page["currency"], "pay_link": pay}
 

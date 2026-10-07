@@ -1828,6 +1828,8 @@ def _clip_ingest_and_analyze(cid: str, url: str, focus_text: str):
             _clip_set(cid, status="error", error=f"Could not download video: {e}. If it's YouTube, download it yourself and upload the file instead.")
             return
     _cleanup_later(c["source"], delay=CLIP_SOURCE_KEEP)
+    # Keep a durable copy so custom trims still work after the local file is cleaned up / redeploys.
+    storage.upload_many_async([(c["source"], os.path.basename(c["source"]))])
     _clip_analyze(cid, focus_text)
 
 
@@ -1845,6 +1847,8 @@ def _clip_pull_and_analyze(cid: str, key: str, focus_text: str):
         _clip_set(cid, status="error", error=f"Couldn't fetch the uploaded file: {e}")
         return
     _cleanup_later(c["source"], delay=CLIP_SOURCE_KEEP)
+    # Keep a durable copy so custom trims still work after the local file is cleaned up / redeploys.
+    storage.upload_many_async([(c["source"], os.path.basename(c["source"]))])
     _clip_analyze(cid, focus_text)
 
 
@@ -1990,6 +1994,14 @@ def _clip_public(cid, c):
     base["clips"] = [{**k, "video_url": (f"/files/{k['job_id']}_final.mp4" if k.get("job_id") else f"/files/{k['file']}")}
                      for k in (c.get("clips") or []) if k.get("file")]
     return base
+
+
+@app.post("/api/notify-test")
+def notify_test():
+    import notify as _n
+    if not _n.configured():
+        return {"ok": False, "detail": "No NTFY_TOPIC (or Telegram vars) set on the server. Add it in Render > Environment, then redeploy."}
+    return _n.send_sync("WokeVision test", "If you can read this, alerts work.")
 
 
 @app.get("/api/clip/{cid}/words")

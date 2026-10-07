@@ -35,11 +35,23 @@
   if (location.pathname === "/" || location.pathname.indexOf("/login") === 0) return;
   fetch("/api/attention").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
     if (!d || !d.items || !d.items.length) return;
+    var dis = []; try { dis = JSON.parse(localStorage.getItem("wvDismissed") || "[]"); } catch (e) {}
+    var items = d.items.filter(function (i) { return dis.indexOf(i.text) < 0; });
+    if (!items.length) return;
     var bar = document.createElement("div");
     bar.className = "wvAttn";
-    var first = d.items[0];
-    bar.innerHTML = '<a href="' + first.href + '"><b>' + d.items.length + ' thing' + (d.items.length > 1 ? "s" : "") + ' need attention</b> &mdash; ' +
-      String(first.text).replace(/</g, "&lt;") + '</a>';
+    function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+    bar.innerHTML = '<a href="#" class="wvAttnHead"><b>' + items.length + ' thing' + (items.length > 1 ? "s" : "") + ' need attention</b> &mdash; tap to see all</a>' +
+      '<div class="wvAttnList" style="display:none">' + items.map(function (i, n) {
+        return '<div class="wvAttnRow"><a href="' + i.href + '">' + esc(i.text) + '</a><button type="button" data-n="' + n + '" title="Dismiss">&times;</button></div>';
+      }).join("") + '</div>';
+    bar.querySelector(".wvAttnHead").onclick = function (e) { e.preventDefault(); var l = bar.querySelector(".wvAttnList"); l.style.display = l.style.display === "none" ? "block" : "none"; };
+    bar.querySelectorAll(".wvAttnRow button").forEach(function (b) {
+      b.onclick = function () {
+        dis.push(items[+b.dataset.n].text); try { localStorage.setItem("wvDismissed", JSON.stringify(dis)); } catch (e) {}
+        b.parentNode.remove(); if (!bar.querySelector(".wvAttnRow")) bar.remove();
+      };
+    });
     var nav = document.querySelector(".wvNav");
     if (nav && nav.parentNode) nav.parentNode.insertBefore(bar, nav.nextSibling);
   }).catch(function () {});

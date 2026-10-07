@@ -48,3 +48,7 @@
 .wvAttn { background: rgba(255,43,60,0.16); border-bottom: 1px solid rgba(255,43,60,0.35); font-size: 13px; }
 .wvAttn a { display: block; max-width: 1480px; margin: 0 auto; padding: 8px 18px; color: #ffb3ba; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wvAttn b { color: #fff; }
+.wvAttnList { max-width: 1480px; margin: 0 auto; padding: 0 18px 8px; }
+.wvAttnRow { display: flex; gap: 8px; align-items: center; }
+.wvAttnRow a { padding: 4px 0; white-space: normal; flex: 1; }
+.wvAttnRow button { background: none; border: 0; color: #ffb3ba; font-size: 20px; cursor: pointer; }

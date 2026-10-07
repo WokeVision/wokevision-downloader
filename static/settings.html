@@ -39,11 +39,13 @@
     <p class="h" style="margin-top:12px">Default caption style</p>
     <select id="caption_style"><option value="classic">Classic (whole line)</option><option value="highlight">Highlight (active word lights up)</option></select>
   </div>
+  <div class="card"><h3>Phone alerts</h3><p class="h">Sends a test notification through ntfy/Telegram and shows exactly what came back.</p><button id="ntest" style="background:rgba(255,255,255,.12)">Send test alert</button><div id="nmsg" style="font-size:13px;margin-top:8px;color:var(--faint)"></div></div>
   <button id="save">Save settings</button><div id="msg"></div>
 </div>
 <script>
 const F = ["vocab","voice_notes","banned","mask_words","caption_style"], $ = (i) => document.getElementById(i);
 fetch("/api/settings").then(r => r.json()).then(s => { F.forEach(k => $(k).value = s[k] || (k === "caption_style" ? "classic" : "")); $("mask_profanity").checked = !!s.mask_profanity; }).catch(() => { $("msg").textContent = "Couldn't load settings."; });
+$("ntest").onclick = async () => { $("nmsg").textContent = "Sending…"; try { const r = await fetch("/api/notify-test", { method: "POST" }); const d = await r.json(); $("nmsg").textContent = (d.ok ? "Sent ✓ " : "Problem: ") + (d.detail || ""); } catch (e) { $("nmsg").textContent = "Couldn't reach the server."; } };
 $("save").onclick = async () => {
   const body = { mask_profanity: $("mask_profanity").checked }; F.forEach(k => body[k] = $(k).value);
   try { const r = await fetch("/api/settings", { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) }); if (!r.ok) throw 0; $("msg").textContent = "Saved ✓"; } catch (e) { $("msg").textContent = "Couldn't save."; }

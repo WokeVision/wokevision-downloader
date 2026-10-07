@@ -1434,7 +1434,17 @@ def request_reopen(rid: str):
 def request_delete(rid: str):
     r = db.req_get(rid)
     if r and r["status"] in ("declined", "done", "error"):
-        db.req_update(rid, status="archived")
+        db.req_update(rid, status="archived", data={"prev_status_removed": r["status"]})
+    return {"ok": True}
+
+
+@app.post("/api/requests/{rid}/restore")
+def request_restore(rid: str):
+    """Undoes Remove — brings an archived request back with the status it had."""
+    r = db.req_get(rid)
+    if r and r["status"] == "archived":
+        prev = (r.get("data") or {}).get("prev_status_removed") or "done"
+        db.req_update(rid, status=prev)
     return {"ok": True}
 
 

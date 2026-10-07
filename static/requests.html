@@ -80,8 +80,13 @@ function render(){
     sendMail(id,c.email,"Your consultation","Hi "+c.name+",\n\nThanks for getting in touch. How does "+t+" work for a short call? Reply to confirm, or suggest another time.\n\nBest wishes");});
   q("data-done",function(id){j("/api/requests/"+id+"/done","POST").then(load);});
   q("data-ro",function(id){j("/api/requests/"+id+"/reopen","POST").then(load);});
-  q("data-ar",function(id){j("/api/requests/"+id,"DELETE").then(load);});
+  q("data-ar",function(id){j("/api/requests/"+id,"DELETE").then(function(){load();toast(id);});});
 }
+var tt;
+function toast(id){var t=document.getElementById("undoBar");if(!t){t=document.createElement("div");t.id="undoBar";t.style.cssText="position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#222;border:1px solid var(--border);border-radius:999px;padding:10px 16px;font-size:14px;z-index:50;display:flex;gap:14px;align-items:center";document.body.appendChild(t);}
+  t.innerHTML='Request removed <button class="btn" id="undoBtn">Undo</button>';t.style.display="flex";
+  document.getElementById("undoBtn").onclick=function(){t.style.display="none";j("/api/requests/"+id+"/restore","POST").then(load);};
+  clearTimeout(tt);tt=setTimeout(function(){t.style.display="none";},10000);}
 var timer;
 function load(){clearTimeout(timer);j("/api/requests").then(function(d){items=d.items;emailOK=d.email_configured;
   var open=document.activeElement&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);if(!open)render();

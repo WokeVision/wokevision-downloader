@@ -715,6 +715,11 @@
           <button type="button" class="secondary" id="setS">Start = now</button><button type="button" class="secondary" id="setE">End = now</button></div>
         <label class="polChk"><input type="checkbox" id="polSil" /> Cut the silences / dead air</label>
         <label class="polChk"><input type="checkbox" id="polLoud" /> Even out the loudness (social-media level)</label>
+        <div style="margin-top:10px"><div style="font-size:13px;margin-bottom:6px">Background music <small style="opacity:.6">(your own track; mixed under the speech)</small></div>
+          <input type="file" id="musicFile" accept="audio/*" />
+          <div id="musicInfo" style="font-size:12.5px;opacity:.75;margin-top:6px"></div>
+          <div id="musicVolRow" style="display:none;margin-top:6px;font-size:13px">Volume <input type="range" id="musicVol" min="5" max="100" value="25" style="width:55%;vertical-align:middle" /> <button type="button" class="secondary" id="musicClear">Remove</button></div>
+        </div>
         <div class="polNote" id="polNote">Trim times are measured on the untrimmed video. Captions follow the cuts automatically.</div>
         <div class="actionRow"><button type="button" class="secondary" id="polApply">Apply trim &amp; polish</button><button type="button" class="secondary" id="coverBtn">Use this frame as cover</button><span class="saveState" id="polMsg"></span></div>
       </details>
@@ -1365,8 +1370,27 @@
     } catch (e) { alert("Couldn't set campaign: " + e.message); }
   });
   const trimS = document.getElementById("trimS"), trimE = document.getElementById("trimE"), polSil = document.getElementById("polSil"), polLoud = document.getElementById("polLoud"), polMsg = document.getElementById("polMsg");
+  let musicTok = "";
+  const musicInfo = document.getElementById("musicInfo"), musicVol = document.getElementById("musicVol"), musicVolRow = document.getElementById("musicVolRow");
+  function setMusic(tok, name, vol) {
+    musicTok = tok || ""; musicVolRow.style.display = musicTok ? "" : "none";
+    musicInfo.textContent = musicTok ? "Track: " + (name || "added") : ""; if (vol) musicVol.value = Math.round(vol * 100);
+  }
+  document.getElementById("musicFile").addEventListener("change", async (ev) => {
+    const f = ev.target.files[0]; if (!f) return;
+    musicInfo.textContent = "Uploading…";
+    try {
+      const fd = new FormData(); fd.append("file", f);
+      const r = await fetch("/api/music", { method: "POST", body: fd }); const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "failed");
+      setMusic(d.token, d.name); musicInfo.textContent += " — press “Apply trim & polish” to add it.";
+    } catch (e) { musicInfo.textContent = "Couldn't upload: " + e.message; }
+    ev.target.value = "";
+  });
+  document.getElementById("musicClear").addEventListener("click", () => setMusic("", ""));
   function fillPolish(post, cover) {
     post = post || {};
+    setMusic(post.music, post.music_name || "added", post.music_vol);
     trimS.value = post.trim_start || ""; trimE.value = post.trim_end || ""; polSil.checked = !!post.silence; polLoud.checked = !!post.loudness;
     polMsg.textContent = cover != null ? "Cover set at " + (cover / 1000).toFixed(1) + "s" : "";
   }
@@ -1378,7 +1402,7 @@
     if (!currentJobId) return;
     const b = document.getElementById("polApply"); b.disabled = true; polMsg.textContent = "";
     try {
-      const r = await fetch(`/jobs/${currentJobId}/finish`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trim_start: +trimS.value || 0, trim_end: +trimE.value || 0, silence: polSil.checked, loudness: polLoud.checked }) });
+      const r = await fetch(`/jobs/${currentJobId}/finish`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trim_start: +trimS.value || 0, trim_end: +trimE.value || 0, silence: polSil.checked, loudness: polLoud.checked, music: musicTok, music_vol: (+musicVol.value || 25) / 100 }) });
       const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.detail || "Couldn't apply that.");
       await pollJob(currentJobId);
     } catch (e) { alert("Error: " + e.message); } finally { b.disabled = false; }

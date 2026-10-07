@@ -509,7 +509,10 @@ def post_process(path: str, opts: dict) -> None:
     if ts and te and te <= ts + 0.5:
         raise RuntimeError("The trim end has to be after the start.")
     silence, loud = bool(opts.get("silence")), bool(opts.get("loudness"))
+    music = opts.get("music_path") if opts.get("music_path") and os.path.exists(opts.get("music_path")) else None
     if not (ts or te or silence or loud):
+        if music:
+            _mix_music(path, music, float(opts.get("music_vol") or 0.25))
         return
     audio = _has_audio(path)
     silence = silence and audio
@@ -538,4 +541,26 @@ def post_process(path: str, opts: dict) -> None:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise RuntimeError("Couldn't apply the trim/polish: " + (r.stderr or "")[-300:])
+    os.replace(tmp, path)
+    if music:
+        _mix_music(path, music, float(opts.get("music_vol") or 0.25))
+
+
+def _mix_music(path: str, music: str, vol: float) -> None:
+    """Loops `music` under the video's own audio at `vol` (0.05-1) of its level,
+    ending with the video. Rewrites `path` in place."""
+    vol = max(0.05, min(1.0, vol))
+    tmp = path + ".mx.mp4"
+    if _has_audio(path):
+        fc = f"[1:a]volume={vol:.2f}[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]"
+    else:
+        fc = f"[1:a]volume={vol:.2f}[a]"
+    cmd = ["ffmpeg", "-y", "-i", path, "-stream_loop", "-1", "-i", music, "-filter_complex", fc,
+           "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest",
+           "-movflags", "+faststart", tmp]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    if r.returncode != 0 or not os.path.exists(tmp) or os.path.getsize(tmp) == 0:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise RuntimeError("Couldn't add the music: " + (r.stderr or "")[-300:])
     os.replace(tmp, path)

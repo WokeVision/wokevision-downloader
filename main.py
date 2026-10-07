@@ -451,6 +451,19 @@ def _cues_args(meta: dict):
     return (meta.get("cues") or None) if meta.get("captions_on") else None
 
 
+def _post_process(path: str, post: dict):
+    """render.post_process with the saved music track (if any) resolved to a local file."""
+    opts = dict(post or {})
+    tok = (opts.get("music") or "").lower()
+    if tok and _HEX.match(tok):
+        mp = os.path.join(DOWNLOAD_DIR, f"music_{tok}.mp3")
+        if not os.path.exists(mp):
+            storage.fetch_to(mp, os.path.basename(mp))
+        if os.path.exists(mp):
+            opts["music_path"] = mp
+    render.post_process(path, opts)
+
+
 def _claim_watermark(job_id: str, token: str, pos: str, meta: dict) -> dict:
     """Attaches an uploaded-ahead watermark (token from /api/watermark) to
     this job's meta under a job-specific filename."""
@@ -542,7 +555,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
             progress_cb=lambda frac: _set_stage(job_id, "rendering", 0.5 + frac * 0.5),
             cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
         )
-        render.post_process(output_path, (meta or {}).get("post"))
+        _post_process(output_path, (meta or {}).get("post"))
         with JOBS_LOCK:
             _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
 
@@ -639,7 +652,7 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
         progress_cb=lambda frac: _set_stage(job_id, "rendering", progress_base + frac * (1 - progress_base)),
         cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
     )
-    render.post_process(output_path, (meta or {}).get("post"))
+    _post_process(output_path, (meta or {}).get("post"))
     with JOBS_LOCK:
         _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
 
@@ -1762,6 +1775,32 @@ class FinishRequest(BaseModel):
     trim_end: float = 0
     silence: bool = False
     loudness: bool = False
+    music: str = ""
+    music_vol: float = 0.25
+
+
+@app.post("/api/music")
+async def upload_music(file: UploadFile = File(...)):
+    """Background track for the finish step; normalised to mp3 and kept in storage."""
+    raw = await file.read()
+    await file.close()
+    if not raw or len(raw) > 30 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Music must be an audio file under 30MB.")
+    token = uuid.uuid4().hex
+    src = os.path.join(DOWNLOAD_DIR, f"music_{token}.src")
+    out = os.path.join(DOWNLOAD_DIR, f"music_{token}.mp3")
+    with open(src, "wb") as f:
+        f.write(raw)
+    try:
+        r = subprocess.run(["ffmpeg", "-y", "-i", src, "-vn", "-t", "600", "-c:a", "libmp3lame", "-b:a", "128k", out],
+                           capture_output=True, text=True, timeout=180)
+        if r.returncode != 0 or not os.path.exists(out):
+            raise HTTPException(status_code=400, detail="That doesn't look like an audio file (try MP3, M4A or WAV).")
+    finally:
+        if os.path.exists(src):
+            os.remove(src)
+    storage.upload_many_async([(out, os.path.basename(out))])
+    return {"token": token, "name": os.path.splitext(file.filename or "track")[0][:60]}
 
 
 @app.put("/jobs/{job_id}/finish")
@@ -1770,7 +1809,9 @@ def set_finish(job_id: str, req: FinishRequest):
     Saved on the job so later caption edits keep it, then re-rendered."""
     if req.trim_end and req.trim_start and req.trim_end <= req.trim_start + 0.5:
         raise HTTPException(status_code=400, detail="The trim end has to be after the start.")
-    post = {"trim_start": max(0.0, req.trim_start), "trim_end": max(0.0, req.trim_end), "silence": req.silence, "loudness": req.loudness}
+    post = {"trim_start": max(0.0, req.trim_start), "trim_end": max(0.0, req.trim_end), "silence": req.silence, "loudness": req.loudness,
+            "music": req.music if _HEX.match((req.music or "").lower()) else "", "music_vol": max(0.05, min(1.0, req.music_vol)),
+            "music_name": ""}
     job = _begin_rerender(job_id, "Applying trim & polish")
     with JOBS_LOCK:
         job["meta"] = {**(job.get("meta") or {}), "post": post}

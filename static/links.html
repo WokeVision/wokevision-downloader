@@ -40,7 +40,8 @@
   .caps { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }
   .caps li { font-size: 14px; line-height: 1.4; padding-left: 26px; position: relative; } .caps li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 800; }
   .caps b { color: var(--text); } .caps li { color: var(--faint); }
-  .shots { display: none; gap: 8px; margin-bottom: 14px; overflow-x: auto; } .shots img { height: 220px; border-radius: 12px; border: 1px solid var(--line); }
+  .shots { display: none; flex-direction: column; gap: 14px; margin-bottom: 16px; } .shots figure { margin: 0; } .shots img { width: 100%; display: block; border-radius: 12px; border: 1px solid var(--line); } .shots figcaption { font-size: 12.5px; color: var(--faint); margin-top: 6px; }
+  .demo { font-size: 11.5px; color: var(--faint); text-align: center; margin: -6px 0 16px; }
   footer { text-align: center; color: var(--faint); font-size: 12px; margin-top: 26px; }
 </style></head><body>
 <main>
@@ -66,7 +67,7 @@
   <section class="sec" id="tool" style="display:none">
     <h2>Want a tool like this for your brand?</h2>
     <p id="toolBlurb">This page is run by a custom social media management tool built in-house, with automatic video editing in our own style. We can build one tailored to your brand.</p>
-    <div class="shots" id="shots"></div>
+    <div class="shots" id="shots"></div><div class="demo" id="demoNote" style="display:none">Tap a screenshot to enlarge. Screenshots show sample data only.</div>
     <div class="mock" id="mock" aria-hidden="true">
       <div class="phone"><div class="cap">The take everyone is thinking but nobody is saying 👀</div><div class="face"></div><div class="sub">and that's <i>exactly</i> the point</div></div>
       <div class="side">
@@ -105,6 +106,7 @@ fetch("/api/public/bio").then(function(r){return r.json();}).then(function(d){
     if(!em) document.getElementById("dealBtn").style.display="none";}
   if(d.show_tool){document.getElementById("tool").style.display=""; if(d.consult_blurb) document.getElementById("toolBlurb").textContent=d.consult_blurb;}
 });
-// Real screenshots replace the illustration when present: /static/assets/preview/1.png, 2.png, 3.png
-(function(){var box=document.getElementById("shots"),n=0;[1,2,3].forEach(function(i){var im=new Image();im.alt="App preview "+i;im.onload=function(){box.appendChild(im);box.style.display="flex";document.getElementById("mock").style.display="none";};im.src="/static/assets/preview/"+i+".png";});})();
+// Real screenshots (made with sample data) replace the illustration when present.
+(function(){var box=document.getElementById("shots"),caps=["Edit a video: branded layout, captions, a version for every platform","Plan everything on a calendar and post automatically","See what works: best times, topics and hooks"],slots=[];
+  [1,2,3].forEach(function(i){var im=new Image();im.alt=caps[i-1];im.onload=function(){slots[i]=im;box.innerHTML="";slots.forEach(function(x,n){if(!x)return;var f=document.createElement("figure");var a=document.createElement("a");a.href=x.src;a.target="_blank";a.rel="noopener";a.appendChild(x);f.appendChild(a);var c=document.createElement("figcaption");c.textContent=caps[n-1];f.appendChild(c);box.appendChild(f);});box.style.display="flex";document.getElementById("demoNote").style.display="";document.getElementById("mock").style.display="none";};im.src="/static/assets/preview/"+i+".jpg";});})();
 </script></body></html>

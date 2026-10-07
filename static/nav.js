@@ -12,6 +12,7 @@
   function active(p) { return p === "/" ? path === "/" : path === p || path.indexOf(p + "/") === 0; }
   var nav = document.createElement("nav");
   nav.className = "wvNav";
+  nav.setAttribute("role", "navigation"); nav.setAttribute("aria-label", "Main");
   nav.innerHTML =
     '<div class="wvNavInner">' +
       '<a class="wvNavLogo' + (active("/") ? " active" : "") + '" href="/" aria-label="WokeVision home">' +
@@ -31,6 +32,7 @@
       '<a class="wvNavAuth" id="wvNavAuth" href="/login?next=' + encodeURIComponent(path) + '" style="visibility:hidden">Sign in</a>' +
     '</div>';
   document.body.insertBefore(nav, document.body.firstChild);
+  nav.querySelectorAll("a.active").forEach(function (a) { a.setAttribute("aria-current", "page"); });
   // Numbered bubble on "Requests" for requests waiting for review.
   function badge() {
     fetch("/api/requests/count").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
@@ -84,7 +86,7 @@
   var p = location.pathname;
   if (p === "/" || p.indexOf("/login") === 0 || p === "/links" || p.indexOf("/links/") === 0 || p.indexOf("/c/") === 0 || p === "/terms" || p === "/privacy") return;
   var box = document.createElement("div");
-  box.id = "wvTray"; box.style.display = "none";
+  box.id = "wvTray"; box.style.display = "none"; box.setAttribute("aria-live", "polite");
   document.body.appendChild(box);
   var open = false, timer = null, seenRunning = {};
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
@@ -106,7 +108,8 @@
     }).join("");
     box.innerHTML = '<div id="wvTl" style="display:' + (open ? "block" : "none") + '">' + rows + '</div>' +
       '<button id="wvTt">' + (run.length ? '<i class="wvTd"></i>' : (fin.some(function (i) { return i.status === "error"; }) ? "⚠️ " : "✓ ")) + head + '</button>';
-    document.getElementById("wvTt").onclick = function () { open = !open; document.getElementById("wvTl").style.display = open ? "block" : "none"; };
+    document.getElementById("wvTt").setAttribute("aria-expanded", open ? "true" : "false");
+    document.getElementById("wvTt").onclick = function () { open = !open; this.setAttribute("aria-expanded", open ? "true" : "false"); document.getElementById("wvTl").style.display = open ? "block" : "none"; };
   }
   function poll() {
     fetch("/api/jobs/active").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
@@ -116,4 +119,30 @@
     }).catch(function () { timer = setTimeout(poll, 30000); });
   }
   poll();
+})();
+
+// Keyboard shortcuts: press ? for the list; "g" then a letter jumps to a page.
+(function () {
+  if (location.pathname.indexOf("/login") === 0 || location.pathname === "/" || location.pathname.indexOf("/links") === 0) return;
+  var MAP = { e: ["/editor", "Video Editor"], c: ["/clipping", "Clipping"], r: ["/requests", "Requests"], b: ["/bio", "Bio link"], s: ["/schedule", "Schedule"], a: ["/dashboards", "Analytics Hub"], i: ["/ideas", "Ideas"], p: ["/campaigns", "Campaigns"], o: ["/sources", "Sources"], t: ["/settings", "Settings"] };
+  var armed = 0, ov = null;
+  function typing(e) { var t = e.target, n = t && t.tagName; return n === "INPUT" || n === "TEXTAREA" || n === "SELECT" || (t && t.isContentEditable); }
+  function help() {
+    if (ov) { ov.remove(); ov = null; return; }
+    ov = document.createElement("div");
+    ov.setAttribute("role", "dialog"); ov.setAttribute("aria-label", "Keyboard shortcuts");
+    ov.style.cssText = "position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:18px";
+    ov.innerHTML = '<div style="background:#16161a;border:1px solid rgba(255,255,255,.14);border-radius:18px;padding:20px 24px;max-width:420px;width:100%;color:#F5F5F7;font:14px/1.9 -apple-system,BlinkMacSystemFont,sans-serif"><b style="font-size:16px">Keyboard shortcuts</b><div style="opacity:.6;font-size:12.5px;margin-bottom:8px">Press <kbd>g</kbd> then a letter. <kbd>?</kbd> toggles this, <kbd>Esc</kbd> closes it.</div>' +
+      Object.keys(MAP).map(function (k) { return '<div><kbd style="background:rgba(255,255,255,.12);border-radius:6px;padding:1px 8px;margin-right:8px">g ' + k + '</kbd>' + MAP[k][1] + '</div>'; }).join("") + '</div>';
+    ov.addEventListener("click", function (e) { if (e.target === ov) help(); });
+    document.body.appendChild(ov);
+  }
+  document.addEventListener("keydown", function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "Escape" && ov) { help(); return; }
+    if (typing(e)) return;
+    if (e.key === "?") { e.preventDefault(); help(); return; }
+    if (armed && Date.now() - armed < 1500 && MAP[e.key.toLowerCase()]) { e.preventDefault(); location.href = MAP[e.key.toLowerCase()][0]; return; }
+    armed = e.key === "g" ? Date.now() : 0;
+  });
 })();

@@ -188,6 +188,16 @@ def check_status() -> dict:
         return {"connected": True, "ok": False, "label": "Connection error", "error": str(e)}
 
 
+def _visibility(post) -> str:
+    v = (post or {}).get("visibility")
+    if v not in ("public", "unlisted", "private"):
+        try:
+            v = (db.settings_get() or {}).get("yt_visibility")
+        except Exception:
+            v = None
+    return v if v in ("public", "unlisted", "private") else "public"
+
+
 def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     """Streams the rendered video from video_url into a YouTube resumable
     upload session and publishes it as public. video_url must be a public
@@ -241,7 +251,7 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
         json={
             "snippet": {"title": title, "description": description, "categoryId": category_id,
                         **({"tags": tags} if tags else {})},
-            "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False,
+            "status": {"privacyStatus": _visibility(post), "selfDeclaredMadeForKids": False,
                        **({"paidProductPlacementDetails": {"hasPaidProductPlacement": True}} if post.get("paid_promo") else {})},
         },
         timeout=30,

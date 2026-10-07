@@ -18,7 +18,7 @@
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 16px; margin-bottom: 14px; }
   h3 { margin: 0 0 4px; font-size: 16px; }
   p.h { margin: 0 0 10px; font-size: 12.5px; color: var(--faint); line-height: 1.4; }
-  textarea, select { width: 100%; background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 11px; font: inherit; font-size: 14.5px; }
+  textarea, select, input:not([type=checkbox]) { width: 100%; background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 11px; font: inherit; font-size: 14.5px; }
   textarea { min-height: 70px; resize: vertical; }
   .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-bottom: 10px; }
   #save, #ntest { padding: 13px; width: 100%; border: 0; border-radius: 14px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; font-size: 15px; cursor: pointer; }
@@ -41,6 +41,12 @@
     <p class="h" style="margin-top:12px">Default caption style</p>
     <select id="caption_style"><option value="classic">Classic (whole line)</option><option value="highlight">Highlight (active word lights up)</option></select>
   </div>
+  <div class="card"><h3>Posting defaults</h3>
+    <p class="h">YouTube privacy for new uploads</p>
+    <select id="yt_visibility"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private (only you)</option></select>
+    <p class="h" style="margin-top:12px">Instagram collaborators on Reels (up to 3 usernames, comma separated &mdash; they get an invite to co-author)</p>
+    <input id="ig_collaborators" placeholder="e.g. friendaccount, partnerpage" />
+  </div>
   <div class="card"><h3>Phone alerts</h3><p class="h">Sends a test notification through ntfy/Telegram and shows exactly what came back.</p><button id="ntest" style="background:rgba(255,255,255,.12)">Send test alert</button><div id="nmsg" style="font-size:13px;margin-top:8px;color:var(--faint)"></div></div>
   <div class="card"><h3>AI spend</h3><p class="h">Estimated OpenAI cost from this tool (captions, transcription, clipper, tagging).</p><div id="aiu" style="font-size:14px;line-height:1.6;color:var(--faint)">Loading…</div></div>
   <div class="card"><h3>Database backups</h3><p class="h">A copy of everything in the database (posts, history, requests, settings, logins) is saved to your R2 storage once a day, keeping the latest 14. It contains your connected-account tokens, so keep downloads private.</p><button id="bk" style="background:rgba(255,255,255,.12)">Back up now</button><div id="bkm" style="font-size:13px;margin:8px 0;color:var(--faint)"></div><div id="bkl" style="font-size:13px;line-height:1.7;color:var(--faint)">Loading…</div></div>
@@ -48,8 +54,8 @@
   <button id="save">Save settings</button><div id="msg"></div>
 </div>
 <script>
-const F = ["slots","vocab","voice_notes","banned","mask_words","caption_style"], $ = (i) => document.getElementById(i);
-fetch("/api/settings").then(r => r.json()).then(s => { F.forEach(k => $(k).value = s[k] || (k === "caption_style" ? "classic" : "")); $("mask_profanity").checked = !!s.mask_profanity; $("smart_crop").checked = s.smart_crop !== false; }).catch(() => { $("msg").textContent = "Couldn't load settings."; });
+const F = ["slots","vocab","voice_notes","banned","mask_words","caption_style","yt_visibility","ig_collaborators"], $ = (i) => document.getElementById(i);
+fetch("/api/settings").then(r => r.json()).then(s => { F.forEach(k => $(k).value = s[k] || (k === "caption_style" ? "classic" : k === "yt_visibility" ? "public" : "")); $("mask_profanity").checked = !!s.mask_profanity; $("smart_crop").checked = s.smart_crop !== false; }).catch(() => { $("msg").textContent = "Couldn't load settings."; });
 fetch("/api/ai-usage").then(r=>r.json()).then(d=>{const m=v=>"$"+(+v||0).toFixed(2);$("aiu").innerHTML="This month: <b>"+m(d.month_usd)+"</b> · last 7 days: <b>"+m(d.week_usd)+"</b><br>Videos this month: "+(d.videos_month||0)+" · about "+m(d.per_video_usd)+" per video"+((d.kinds||[]).length?"<br>"+d.kinds.map(k=>k.kind+" "+m(k.cost)+" ("+k.calls+")").join(" · "):"");}).catch(()=>{$("aiu").textContent="Couldn't load.";});
 fetch("/api/audit").then(r=>r.json()).then(d=>{$("aud").innerHTML=(d.items||[]).slice(0,12).map(i=>new Date(i.ts).toLocaleString([], {day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})+" · "+({login:"Signed in",login_failed:"Failed sign-in",backup:"Backup made",backup_download:"Backup downloaded",request_purged:"Request deleted permanently"}[i.event]||i.event)+" · "+(i.detail||"")).join("<br>")||"Nothing yet.";}).catch(()=>{$("aud").textContent="Couldn't load.";});
 function loadBk(){fetch("/api/backups").then(r=>r.json()).then(d=>{$("bkl").innerHTML=(d.items||[]).map(i=>new Date(i.modified).toLocaleString([],{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})+" · "+(i.size/1024/1024).toFixed(1)+" MB · <a style='color:#ff6b78' href='/api/backups/"+i.name+"'>Download</a>").join("<br>")||"No backups yet (the first one is made by the next daily check, or press Back up now).";}).catch(()=>{$("bkl").textContent="Couldn't load.";});}

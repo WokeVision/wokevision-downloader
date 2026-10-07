@@ -720,7 +720,7 @@
     }
     document.querySelectorAll("#secSeg button").forEach(function (b) { b.classList.toggle("active", b.dataset.sec === state.sec); });
     if (state.sec === "content") { $tabs.style.display = "none"; $view.innerHTML = rangeBar() + contentView(); return; }
-    if (state.sec === "insights") { $tabs.style.display = "none"; $view.innerHTML = insightsView(); if (!state.ins || state.insDays !== state.insFetched) loadInsights(); return; }
+    if (state.sec === "insights") { $tabs.style.display = "none"; $view.innerHTML = insightsView(); if (!state.ins || state.insDays !== state.insFetched) loadInsights(); if (!state.goals) loadGoals(); return; }
     $tabs.style.display = "";
     renderTabs();
     if (state.tab === "overview") $view.innerHTML = rangeBar() + overview();
@@ -736,13 +736,29 @@
       .catch(function () { state.ins = { posts: 0, error: true }; if (state.sec === "insights") $view.innerHTML = insightsView(); });
   }
   function fmtN(n) { n = n || 0; return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(n); }
+  function goalsHtml() {
+    var g = state.goals;
+    if (!g) return "";
+    var G = g.goals || {};
+    function bar(v, goal, label, extra) {
+      if (!goal) return '<div style="font-size:13px;color:var(--text-faint);margin:6px 0">' + label + ': <b style="color:var(--text)">' + fmtN(v) + '</b> \u00b7 no goal set</div>';
+      var pct = Math.min(100, Math.round(v / goal * 100));
+      return '<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;font-size:13px"><span>' + label + '</span><span><b>' + fmtN(v) + '</b> / ' + fmtN(goal) + ' (' + pct + '%)</span></div><div style="background:rgba(255,255,255,.07);border-radius:6px;height:10px;margin-top:5px"><i style="display:block;height:100%;width:' + pct + '%;background:' + (pct >= 100 ? "#4ade80" : "var(--accent)") + ';border-radius:6px"></i></div>' + (extra ? '<div style="font-size:12px;color:var(--text-faint);margin-top:4px">' + extra + '</div>' : "") + '</div>';
+    }
+    var proj = G.views_month ? "On pace for about " + fmtN(g.projected_views) + " by month end" + (g.projected_views >= G.views_month ? " \u2014 on track" : " \u2014 behind goal") + " (last month: " + fmtN(g.views_prev_month) + ")" : "";
+    return '<div class="card"><h3 style="margin:0 0 4px;font-size:15px">Goals</h3>' + bar(g.views_month, G.views_month, "Views this month", proj) + bar(g.posts_week, G.posts_week, "Posts this week", "") +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;font-size:12.5px"><label>Monthly views goal <input id="gV" type="number" min="0" value="' + (G.views_month || "") + '" style="width:110px;background:rgba(0,0,0,.35);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px"></label><label>Posts per week <input id="gP" type="number" min="0" value="' + (G.posts_week || "") + '" style="width:70px;background:rgba(0,0,0,.35);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px"></label><button class="btn2" id="gSave">Save goals</button><span id="gMsg"></span></div></div>';
+  }
+  function loadGoals() {
+    fetch("/api/goals?tz=" + (-new Date().getTimezoneOffset())).then(function (r) { return r.json(); }).then(function (j) { state.goals = j; if (state.sec === "insights") $view.innerHTML = insightsView(); }).catch(function () {});
+  }
   function insightsView() {
     var d = state.ins;
     if (!d) return '<div class="skeleton"></div><div class="skeleton" style="margin-top:12px"></div>';
     if (!d.posts) return '<div class="card"><div class="empty">' + (d.error ? "Couldn\u2019t load insights." : "No saved post history yet. Open the account tabs (or press Refresh) once \u2014 every post\u2019s numbers are saved from then on, and insights build up here.") + '</div></div>';
     var DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], max = 1, cell = {};
     d.heatmap.forEach(function (c) { cell[c.d + "_" + c.h] = c; if (c.avg > max) max = c.avg; });
-    var h = '<div class="card"><div class="seg" id="insDays" style="max-width:300px;margin-bottom:12px">' + [7, 30, 90].map(function (n) { return '<button data-d="' + n + '" class="' + (state.insDays === n ? "active" : "") + '">' + n + ' days</button>'; }).join("") + '</div>';
+    var h = goalsHtml() + '<div class="card"><div class="seg" id="insDays" style="max-width:300px;margin-bottom:12px">' + [7, 30, 90].map(function (n) { return '<button data-d="' + n + '" class="' + (state.insDays === n ? "active" : "") + '">' + n + ' days</button>'; }).join("") + '</div>';
     var c = d.current, p = d.previous;
     function delta(a, b) { if (!b) return ""; var v = Math.round((a - b) / b * 100); return ' <span style="color:' + (v >= 0 ? "#4ade80" : "#FF7A85") + ';font-size:12px">' + (v >= 0 ? "+" : "") + v + '%</span>'; }
     h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">' +
@@ -776,6 +792,11 @@
     return h;
   }
   $view.addEventListener("click", function (e) {
+    if (e.target.id === "gSave") {
+      fetch("/api/goals", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ views_month: +document.getElementById("gV").value || 0, posts_week: +document.getElementById("gP").value || 0 }) })
+        .then(function () { loadGoals(); }).catch(function () { document.getElementById("gMsg").textContent = "Couldn\u2019t save."; });
+      return;
+    }
     var dd = e.target.closest("#insDays button"); if (dd) { state.insDays = +dd.dataset.d; render(); return; }
     if (e.target.id === "useSlots" && state.ins) {
       var slots = state.ins.best_hours.map(function (x) { return String(x.hour).padStart(2, "0") + ":00"; }).sort().join(",");

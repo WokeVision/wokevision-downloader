@@ -18,6 +18,7 @@ Flow:
   5. Publishing: create a media container from the rendered video's public
      URL, poll until Instagram finishes processing it, then publish it.
 """
+import json
 import os
 import time
 import requests
@@ -194,6 +195,18 @@ def check_status() -> dict:
         return {"connected": True, "ok": False, "label": "Connection error", "error": str(e)}
 
 
+def _collaborators(post):
+    names = (post or {}).get("collaborators")
+    if names is None:
+        try:
+            names = (db.settings_get() or {}).get("ig_collaborators") or ""
+        except Exception:
+            names = ""
+    if isinstance(names, str):
+        names = [n for n in names.replace("@", "").split(",")]
+    return [n.strip() for n in names if n and n.strip()][:3]
+
+
 def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     """Uploads+publishes a video as a Reel. video_url must be a public URL
     (this app's own /files/<name>.mp4 route). Returns {"media_id": ...}.
@@ -211,17 +224,20 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     if not ig_user_id:
         raise InstagramError("No Instagram account id on file -- try reconnecting.")
 
-    create_resp = requests.post(
-        f"{GRAPH_BASE}/{ig_user_id}/media",
-        data={
-            "video_url": video_url,
-            "media_type": "REELS",
-            "caption": caption or "",
-            "access_token": access_token,
-            **({"thumb_offset": int((post or {}).get("cover_ms"))} if (post or {}).get("cover_ms") is not None else {}),
-        },
-        timeout=60,
-    )
+    collabs = _collaborators(post)
+    form = {
+        "video_url": video_url,
+        "media_type": "REELS",
+        "caption": caption or "",
+        "access_token": access_token,
+        **({"thumb_offset": int((post or {}).get("cover_ms"))} if (post or {}).get("cover_ms") is not None else {}),
+    }
+    create_resp = requests.post(f"{GRAPH_BASE}/{ig_user_id}/media",
+                                data={**form, **({"collaborators": json.dumps(collabs)} if collabs else {})}, timeout=60)
+    if create_resp.status_code != 200 and collabs:
+        # An invalid collaborator handle shouldn't stop the post: retry without them.
+        print(f"INSTAGRAM: collaborators rejected ({create_resp.text[:200]}); posting without them", flush=True)
+        create_resp = requests.post(f"{GRAPH_BASE}/{ig_user_id}/media", data=form, timeout=60)
     if create_resp.status_code != 200:
         raise InstagramError(f"Could not start the upload: {create_resp.text[:500]}")
     container_id = create_resp.json().get("id")

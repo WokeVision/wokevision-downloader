@@ -405,6 +405,8 @@ class SettingsModel(BaseModel):
     caption_style: str = "classic"
     slots: str = "08:00,12:00,18:00,20:00"
     smart_crop: bool = True
+    yt_visibility: str = "public"
+    ig_collaborators: str = ""
 
 
 @app.get("/settings")
@@ -423,6 +425,8 @@ def settings_put(req: SettingsModel):
     data = req.model_dump()
     _t = re.findall(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", data.get("slots") or "")
     data["slots"] = ",".join(f"{int(h):02d}:{m}" for h, m in _t) or "08:00,12:00,18:00,20:00"
+    data["yt_visibility"] = data["yt_visibility"] if data["yt_visibility"] in ("public", "unlisted", "private") else "public"
+    data["ig_collaborators"] = ",".join([h for h in re.findall(r"[A-Za-z0-9._]{1,30}", data.get("ig_collaborators") or "")][:3])
     data["caption_style"] = data["caption_style"] if data["caption_style"] in ("classic", "highlight") else "classic"
     try:
         db.settings_save(data)
@@ -1474,6 +1478,22 @@ def request_restore(rid: str):
 @app.get("/api/audit")
 def api_audit():
     return {"items": db.audit_list()}
+
+
+class GoalsModel(BaseModel):
+    views_month: int = 0
+    posts_week: int = 0
+
+
+@app.get("/api/goals")
+def api_goals(tz: int = 0):
+    return insights.goals_progress(tz)
+
+
+@app.put("/api/goals")
+def api_goals_put(req: GoalsModel):
+    insights.save_goals(req.views_month, req.posts_week)
+    return {"ok": True}
 
 
 @app.get("/api/ai-usage")

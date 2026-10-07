@@ -652,6 +652,37 @@ def export_csv() -> str:
     return buf.getvalue()
 
 
+def goals_progress(tz_offset_min: int = 0) -> dict:
+    """This month's views and this week's post count against the saved goals."""
+    import calendar
+    try:
+        goals = json.loads(kv_get("goals") or "{}")
+    except Exception:
+        goals = {}
+    now = datetime.datetime.now(datetime.timezone.utc)
+    tzd = datetime.timedelta(minutes=tz_offset_min)
+    loc = now + tzd
+    m0 = loc.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    prev_m0 = (m0 - datetime.timedelta(days=1)).replace(day=1)
+    w0 = (loc - datetime.timedelta(days=loc.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = [r for r in _rows() if r.get("posted_at")]
+    def loc_t(r):
+        return r["posted_at"] + tzd
+    month = [r for r in rows if loc_t(r) >= m0]
+    prev = [r for r in rows if prev_m0 <= loc_t(r) < m0]
+    week = [r for r in rows if loc_t(r) >= w0]
+    dim = calendar.monthrange(loc.year, loc.month)[1]
+    elapsed = max(1.0, (loc - m0).total_seconds() / 86400)
+    views = sum(r["views"] or 0 for r in month)
+    return {"goals": goals, "views_month": views, "posts_month": len(month), "posts_week": len(week),
+            "views_prev_month": sum(r["views"] or 0 for r in prev),
+            "projected_views": int(views / elapsed * dim), "day": int(elapsed), "days_in_month": dim}
+
+
+def save_goals(views_month, posts_week):
+    kv_set("goals", json.dumps({"views_month": max(0, int(views_month or 0)), "posts_week": max(0, int(posts_week or 0))}))
+
+
 def top_titles(n: int = 8):
     """[(title, views)] of the page's best-performing recent posts (for the clip picker's prompt)."""
     try:

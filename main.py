@@ -283,6 +283,8 @@ def _set_stage(job_id, stage, within_stage=0.0):
             prev_started = job.get("_stage_started_at")
             if prev_stage in STAGE_ORDER and prev_started:
                 _record_stage_duration(prev_stage, now - prev_started)
+                job.setdefault("timings", {})[prev_stage] = round(job.get("timings", {}).get(prev_stage, 0) + now - prev_started, 1)
+                print(f"TIMING job={job_id[:8]} stage={prev_stage} secs={now - prev_started:.1f}", flush=True)
             job["_stage_started_at"] = now
 
         lo, hi = STAGE_WEIGHTS.get(stage, (0.0, 1.0))

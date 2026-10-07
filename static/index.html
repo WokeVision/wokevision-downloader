@@ -2184,6 +2184,17 @@
 
   loadConnections();
 
+  // Deep link from the Ideas page: /editor#src=<url>&angle=<note> pre-fills the link box.
+  (function () {
+    const m = (location.hash || "").match(/^#src=([^&]+)(?:&angle=(.*))?/);
+    if (!m) return;
+    try {
+      document.getElementById("url").value = decodeURIComponent(m[1]);
+      const a = document.getElementById("angleBox");
+      if (a && m[2]) a.value = decodeURIComponent(m[2]);
+      history.replaceState(null, "", location.pathname);
+    } catch (e) {}
+  })();
   // Deep link from the Schedule page: /editor#entry=<id> opens that edit.
   (function () {
     const m = (location.hash || "").match(/^#entry=([0-9a-f-]{36})/i);

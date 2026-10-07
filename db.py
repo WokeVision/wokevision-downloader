@@ -886,3 +886,27 @@ def audit_list(limit: int = 50):
                 return [{"ts": r["ts"].isoformat(), "event": r["event"], "detail": r["detail"]} for r in cur.fetchall()]
     except Exception:
         return []
+
+
+_IDEAS_DDL = "CREATE TABLE IF NOT EXISTS ideas (id BIGSERIAL PRIMARY KEY, url TEXT, note TEXT, created_at TIMESTAMPTZ DEFAULT now())"
+
+
+def ideas_list():
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(_IDEAS_DDL)
+            cur.execute("SELECT id, url, note FROM ideas ORDER BY id DESC LIMIT 200")
+            return [dict(r) for r in cur.fetchall()]
+
+
+def ideas_add(url, note):
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_IDEAS_DDL)
+            cur.execute("INSERT INTO ideas (url, note) VALUES (%s, %s)", (url, note))
+
+
+def ideas_delete(iid):
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM ideas WHERE id = %s", (iid,))

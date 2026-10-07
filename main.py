@@ -875,6 +875,35 @@ def api_message_reply(platform: str, req: ReplyRequest):
     return {"ok": True}
 
 
+@app.get("/ideas")
+def ideas_page():
+    return FileResponse("static/ideas.html")
+
+
+class IdeaModel(BaseModel):
+    url: str
+    note: str = ""
+
+
+@app.get("/api/ideas")
+def ideas_list():
+    return {"items": db.ideas_list()}
+
+
+@app.post("/api/ideas")
+def ideas_add(req: IdeaModel):
+    if not req.url.strip():
+        raise HTTPException(status_code=400, detail="Add a link.")
+    db.ideas_add(req.url.strip()[:1000], req.note.strip()[:500])
+    return {"ok": True}
+
+
+@app.delete("/api/ideas/{iid}")
+def ideas_delete(iid: int):
+    db.ideas_delete(iid)
+    return {"ok": True}
+
+
 @app.get("/api/audit")
 def api_audit():
     return {"items": db.audit_list()}

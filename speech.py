@@ -324,7 +324,7 @@ def parse_focus(text):
 
 
 def pick_clips(transcript, duration, focus_ranges=None, notes="", max_clips=6,
-               min_len=30, max_len=120):
+               min_len=30, max_len=120, examples=""):
     """Asks the LLM for the strongest self-contained, shareable moments.
     Returns [{start,end,title,reason,score}] snapped to segment boundaries;
     anything shorter than min_len is extended forward through the following
@@ -351,6 +351,7 @@ def pick_clips(transcript, duration, focus_ranges=None, notes="", max_clips=6,
         f"{min_len}s -- extend it to include the lead-in or the payoff instead. Start on the first word of a "
         "sentence and end on the last word of one. No overlaps. Rate honestly: score 90+ only for genuinely "
         "viral material. "
+        f"{examples}"
         f"{focus}Return JSON: {{\"clips\":[{{\"start\":sec,\"end\":sec,\"title\":\"<=8 word headline\","
         "\"reason\":\"one sentence on why it will travel\",\"score\":1-100}]}. Best first."
     )
@@ -388,6 +389,66 @@ def pick_clips(transcript, duration, focus_ranges=None, notes="", max_clips=6,
                     "score": int(c.get("score") or 0)})
     out.sort(key=lambda o: -o["score"])
     return out[:max_clips]
+
+
+def audio_energy(video_path):
+    """Loudness per second of the whole video (list of floats), via a small mono 8kHz decode.
+    None if it can't be computed."""
+    try:
+        import numpy as np
+        r = subprocess.run(["nice", "-n", "15", "ffmpeg", "-v", "error", "-i", video_path, "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"],
+                           capture_output=True, timeout=900)
+        if r.returncode != 0 or len(r.stdout) < 16000:
+            return None
+        a = np.frombuffer(r.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+        n = len(a) // 8000
+        return np.sqrt((a[:n * 8000].reshape(n, 8000) ** 2).mean(axis=1)).tolist()
+    except Exception as e:
+        print(f"AUDIO ENERGY FAILED: {e}", flush=True)
+        return None
+
+
+def rank_with_audio(clips, rms, weight=0.2):
+    """Blends the model's score with how loud / dynamic each clip is compared with the rest of the
+    video (raised voices, applause, laughter and heated exchanges all show up as energy).
+    Adds clip['energy'] (0-100) and re-sorts. Leaves clips alone if there's no audio data."""
+    if not rms or not clips:
+        return clips
+    import numpy as np
+    r = np.asarray(rms, dtype=np.float32)
+
+    def stats(a, b):
+        w = r[int(a):max(int(b), int(a) + 1)]
+        if len(w) == 0:
+            return 0.0, 0.0
+        return float(w.mean()), float(np.percentile(w, 90) - np.percentile(w, 50))
+
+    span = 45
+    base = [stats(i, i + span) for i in range(0, max(1, len(r) - span), 15)] or [(0.0, 0.0)]
+    means = np.array([m for m, _ in base]); dyns = np.array([d for _, d in base])
+    for c in clips:
+        m, d = stats(c["start"], c["end"])
+        pm = float((means <= m).mean()) * 100
+        pd = float((dyns <= d).mean()) * 100
+        c["energy"] = int(round(0.6 * pm + 0.4 * pd))
+        c["llm_score"] = c.get("score", 0)
+        c["score"] = int(round((1 - weight) * c["llm_score"] + weight * c["energy"]))
+    clips.sort(key=lambda o: -o["score"])
+    return clips
+
+
+def cut_clip_with_hook(video_path, start, end, hook_start, hook_end, out_path):
+    """Cold-open edit: the hook moment first, then the whole clip."""
+    hl, l = hook_end - hook_start, end - start
+    cmd = ["nice", "-n", "15", "ffmpeg", "-y", "-threads", "2",
+           "-ss", f"{hook_start:.2f}", "-t", f"{hl:.2f}", "-i", video_path,
+           "-ss", f"{start:.2f}", "-t", f"{l:.2f}", "-i", video_path,
+           "-filter_complex", "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[v][a]",
+           "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "21", "-c:a", "aac",
+           "-movflags", "+faststart", out_path]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr[-1500:])
 
 
 def cut_clip(video_path, start, end, out_path):

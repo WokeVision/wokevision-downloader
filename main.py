@@ -2592,7 +2592,21 @@ def _clip_analyze(cid: str, focus_text: str):
             _clip_set(cid, speech=sp, duration=sp.get("duration") or 0)
         _clip_set(cid, stage_label="Finding the best moments")
         ranges, notes = speech.parse_focus(focus_text or "")
-        clips = speech.pick_clips(sp, sp.get("duration") or 0, ranges or None, notes)
+        examples = ""
+        try:
+            tt = insights.top_titles(8)
+            if tt:
+                examples = ("This page's best-performing past posts (headline - views): "
+                            + "; ".join(f"\"{t}\" - {v:,}" for t, v in tt)
+                            + ". Favour moments with the same kind of topic, tension and hook, but don't copy them. ")
+        except Exception:
+            pass
+        clips = speech.pick_clips(sp, sp.get("duration") or 0, ranges or None, notes, examples=examples)
+        try:
+            _clip_set(cid, stage_label="Measuring how animated each moment is")
+            clips = speech.rank_with_audio(clips, speech.audio_energy(c["source"]))
+        except Exception as ae:
+            print(f"CLIP AUDIO RANK SKIPPED: {ae}", flush=True)
         if not clips:
             raise RuntimeError("The clipper couldn't find a clean moment" + (" in those timestamps." if ranges else "."))
         for i, k in enumerate(clips):
@@ -2885,6 +2899,29 @@ class ClipPick(BaseModel):
     start: float = 0
     end: float = 0
     title: str = ""
+    hook_start: float | None = None     # optional "cold open": this moment is played first
+    hook_end: float | None = None
+
+
+class ClipFlag(BaseModel):
+    index: int
+    flag: str = ""      # "keep", "reject" or "" (clear)
+
+
+@app.post("/api/clip/{cid}/flag")
+def clip_flag(cid: str, req: ClipFlag):
+    c = _clip_load(cid)
+    if not c:
+        raise HTTPException(status_code=404, detail="Unknown clipping session.")
+    if req.flag not in ("keep", "reject", ""):
+        raise HTTPException(status_code=400, detail="Bad flag.")
+    clips = c.get("clips") or []
+    hit = [k for k in clips if k.get("id") == req.index]
+    if not hit:
+        raise HTTPException(status_code=404, detail="Unknown clip.")
+    hit[0]["flag"] = req.flag
+    _clip_set(cid, clips=clips)
+    return {"ok": True}
 
 
 def _run_clip_to_editor(job_id: str, cid: str, pick: dict):
@@ -2892,7 +2929,9 @@ def _run_clip_to_editor(job_id: str, cid: str, pick: dict):
         c = _clip_load(cid)
         out = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
         words_all = c["speech"]["words"]
-        if pick.get("file"):
+        hs, he = pick.get("hook_start"), pick.get("hook_end")
+        hooked = hs is not None and he is not None and he - hs >= 1
+        if pick.get("file") and not hooked:
             _set_job(job_id, stage="downloading", stage_label="Loading the clip", progress=0.1)
             src = os.path.join(DOWNLOAD_DIR, pick["file"])
             if not os.path.exists(src):
@@ -2906,9 +2945,15 @@ def _run_clip_to_editor(job_id: str, cid: str, pick: dict):
             if not os.path.exists(c["source"]):
                 raise RuntimeError("The original video has been cleared from the server, so a custom range can't be cut. Pick one of the suggested clips, or upload the video again.")
             _set_job(job_id, stage="downloading", stage_label="Cutting the clip", progress=0.1)
-            speech.cut_clip(c["source"], pick["start"], pick["end"], out)
+            if hooked:
+                speech.cut_clip_with_hook(c["source"], pick["start"], pick["end"], hs, he, out)
+            else:
+                speech.cut_clip(c["source"], pick["start"], pick["end"], out)
         start, end = pick["start"], pick["end"]
         words = speech.clip_words(words_all, start, end)
+        if hooked:
+            hl = he - hs
+            words = speech.clip_words(words_all, hs, he) + [{**w, "start": w["start"] + hl, "end": w["end"] + hl} for w in words]
         pre = {"text": " ".join(w["w"] for w in words), "words": words}
         meta = {"title": pick.get("title") or "Clip", "description": "", "method": f"clipped {int(start)}s-{int(end)}s"}
         _run_pipeline(job_id, out, meta, pre_speech=pre)
@@ -2927,12 +2972,13 @@ def clip_to_editor(cid: str, req: ClipPick):
     if req.index is not None and 0 <= req.index < len(clips):
         k = clips[req.index]
         pick.update(start=k["start"], end=k["end"], file=k.get("file"), title=req.title or k.get("title", ""))
+        pick.update(hook_start=req.hook_start, hook_end=req.hook_end)
     else:
         dur = c.get("duration") or 0
         start, end = max(0.0, req.start), min(req.end, dur or req.end)
         if end - start < 3:
             raise HTTPException(status_code=400, detail="Clip is too short.")
-        pick.update(start=start, end=end)
+        pick.update(start=start, end=end, hook_start=req.hook_start, hook_end=req.hook_end)
     job_id = str(uuid.uuid4())
     with JOBS_LOCK:
         JOBS[job_id] = {"stage": "downloading", "stage_label": "Preparing the clip", "progress": 0.05, "status": "running", "angle": ""}
@@ -3083,6 +3129,107 @@ def schedule_post_now(sid: str):
     if not r:
         raise HTTPException(status_code=409, detail="That post can't be changed right now (it may be posting).")
     threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
+    return {"ok": True}
+
+
+# --- Watched channels / podcasts ------------------------------------------------
+def _latest_videos(url: str, n: int = 4):
+    """Newest-first [{id, url, title, duration}] for a channel/playlist/podcast feed (no downloading)."""
+    import yt_dlp
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "playlistend": n, "skip_download": True}
+    with yt_dlp.YoutubeDL(opts) as y:
+        info = y.extract_info(url, download=False)
+    entries = info.get("entries") if info else None
+    if entries is None and info:
+        entries = [info]
+    out = []
+    for e in entries or []:
+        if not e:
+            continue
+        vid = str(e.get("id") or "")
+        link = e.get("url") or e.get("webpage_url") or ""
+        if link and not link.startswith("http") and vid:
+            link = f"https://www.youtube.com/watch?v={vid}"
+        if vid and link:
+            out.append({"id": vid, "url": link, "title": (e.get("title") or "")[:200], "duration": e.get("duration")})
+    return out
+
+
+def _start_clip_session(url: str, title: str, focus: str = "") -> str:
+    cid = uuid.uuid4().hex
+    source = os.path.join(DOWNLOAD_DIR, f"clip_{cid}_source.mp4")
+    _clip_set(cid, status="running", stage_label="Starting", source=source, clips=[], title=(title or url)[:200])
+    threading.Thread(target=_clip_ingest_and_analyze, args=(cid, url, focus), daemon=True).start()
+    return cid
+
+
+def _check_watched():
+    """Every ~6 hours: looks for new uploads on watched channels and clips each (max 2 per run)."""
+    try:
+        if not db.configured():
+            return
+        last = insights.kv_get("watch_last")
+        if last and time.time() - float(last) < 6 * 3600:
+            return
+        insights.kv_set("watch_last", str(time.time()))
+        started = 0
+        for w in db.watch_list():
+            if started >= 2:
+                break
+            try:
+                vids = _latest_videos(w["url"], 4)
+            except Exception as e:
+                print(f"WATCH LIST FAILED ({w['url']}): {e}", flush=True)
+                continue
+            if not vids:
+                continue
+            fresh = []
+            for v in vids:
+                if v["id"] == w.get("last_seen"):
+                    break
+                fresh.append(v)
+            if not w.get("last_seen"):
+                fresh = fresh[:1]
+            fresh = [v for v in fresh if not v.get("duration") or v["duration"] <= 3 * 3600][:1]
+            db.watch_set_seen(w["id"], vids[0]["id"])
+            for v in fresh:
+                _start_clip_session(v["url"], v["title"], w.get("focus") or "")
+                started += 1
+                db.audit("watch_clip", v["title"][:120])
+                notify.notify("New episode found", f"Clipping: {v['title'][:100]}")
+    except Exception as e:
+        print(f"WATCH CHECK FAILED: {e}", flush=True)
+
+
+class WatchAdd(BaseModel):
+    url: str
+    focus: str = ""
+
+
+@app.get("/api/clip-watch")
+def clip_watch_list():
+    return {"items": db.watch_list()}
+
+
+@app.post("/api/clip-watch")
+def clip_watch_add(req: WatchAdd):
+    url = req.url.strip()
+    if not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Paste the channel, playlist or podcast link.")
+    try:
+        vids = _latest_videos(url, 1)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Couldn't read that link: {str(e)[:200]}")
+    if not vids:
+        raise HTTPException(status_code=400, detail="No videos found at that link.")
+    # Start from the newest upload that already exists: only NEW uploads get clipped.
+    db.watch_add(uuid.uuid4().hex, url, vids[0]["title"][:120] or url, req.focus[:300], vids[0]["id"])
+    return {"ok": True}
+
+
+@app.delete("/api/clip-watch/{wid}")
+def clip_watch_remove(wid: str):
+    db.watch_remove(wid)
     return {"ok": True}
 
 
@@ -3303,6 +3450,7 @@ def cron_tick(request: Request, key: str = ""):
     _LAST_TICK["at"] = time.time()
     _maybe_weekly_digest()
     threading.Thread(target=_maybe_daily_backup, daemon=True).start()
+    threading.Thread(target=_check_watched, daemon=True).start()
     threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
     return {"ok": True}
 

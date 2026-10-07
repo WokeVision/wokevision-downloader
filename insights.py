@@ -652,6 +652,25 @@ def export_csv() -> str:
     return buf.getvalue()
 
 
+def top_titles(n: int = 8):
+    """[(title, views)] of the page's best-performing recent posts (for the clip picker's prompt)."""
+    try:
+        rows = sorted([r for r in _rows() if (r.get("title") or "").strip() and (r.get("views") or 0) > 0],
+                      key=lambda r: -(r.get("views") or 0))
+        seen, out = set(), []
+        for r in rows:
+            t = r["title"].strip().replace("\n", " ")[:140]
+            if t.lower() in seen:
+                continue
+            seen.add(t.lower())
+            out.append((t, int(r["views"])))
+            if len(out) >= n:
+                break
+        return out
+    except Exception:
+        return []
+
+
 def weekly_digest() -> str:
     s = summary(0, 7)
     cur, prev = s.get("current") or {}, s.get("previous") or {}

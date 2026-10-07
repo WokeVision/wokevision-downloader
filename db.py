@@ -1077,6 +1077,45 @@ def dump_all():
     return out
 
 
+def _watch_init(cur):
+    cur.execute("""CREATE TABLE IF NOT EXISTS clip_watch (
+        id TEXT PRIMARY KEY, url TEXT NOT NULL, title TEXT, focus TEXT DEFAULT '', last_seen TEXT,
+        created_at TIMESTAMPTZ DEFAULT now())""")
+
+
+def watch_list():
+    with _conn() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        _watch_init(cur)
+        cur.execute("SELECT * FROM clip_watch ORDER BY created_at")
+        out = []
+        for r in cur.fetchall():
+            r = dict(r)
+            r["created_at"] = r["created_at"].isoformat() if r.get("created_at") else None
+            out.append(r)
+        return out
+
+
+def watch_add(wid, url, title, focus, last_seen):
+    with _conn() as conn:
+        cur = conn.cursor()
+        _watch_init(cur)
+        cur.execute("INSERT INTO clip_watch (id, url, title, focus, last_seen) VALUES (%s,%s,%s,%s,%s)", (wid, url, title, focus, last_seen))
+
+
+def watch_remove(wid):
+    with _conn() as conn:
+        cur = conn.cursor()
+        _watch_init(cur)
+        cur.execute("DELETE FROM clip_watch WHERE id = %s", (wid,))
+
+
+def watch_set_seen(wid, last_seen):
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE clip_watch SET last_seen = %s WHERE id = %s", (last_seen, wid))
+
+
 def req_list_removed(limit=200):
     with _conn() as conn:
         cur = _req_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)

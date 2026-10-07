@@ -43,6 +43,10 @@
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .row input[type=text] { width: 76px; margin: 0; padding: 7px 9px; font-size: 13px; }
   .hidden { display: none; }
+  .clip.rej { opacity: .38; } .clip.kept { border-color: #FFD60A; }
+  .flagRow { display: flex; gap: 6px; margin-top: 8px; } .flagRow .sec { padding: 6px 11px; font-size: 12.5px; } .flagRow .sec.on { background: rgba(255,214,10,.2); border-color: #FFD60A; } .flagRow .sec.on.rj { background: rgba(255,69,58,.2); border-color: #ff8a93; }
+  .trim .wds span.hk { background: rgba(255,214,10,.4); }
+  .bulk { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; } .bulk label { font-size: 13px; display: inline-flex; align-items: center; gap: 5px; margin: 0; } .bulk input[type=checkbox] { width: auto; margin: 0; }
   .hRow { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 10px 4px; border-top: 1px solid var(--border); cursor: pointer; }
   .hRow:first-child { border-top: 0; }
   .hRow:hover { background: rgba(255,255,255,.04); }
@@ -68,6 +72,10 @@
   <div class="card hidden" id="busy"><b id="busyLabel">Working</b><div class="bar" id="bar"><i id="barI"></i></div><div class="hint" style="margin:10px 0 0" id="busyHint">Once a link is submitted or an upload has finished, this runs on the server &mdash; you can close this page and find it under History later.</div></div>
   <div class="card err hidden" id="errCard"></div>
 
+  <div class="card" id="watchCard"><b style="font-size:14px">Watch a channel or podcast</b>
+    <div class="hint" style="margin:6px 0 10px">New uploads are found and clipped automatically (checked every few hours). Each new episode is transcribed with OpenAI &mdash; roughly 36&cent; per hour of video &mdash; and you get a phone alert when it starts.</div>
+    <div class="row"><input type="text" id="wurl" style="flex:1;width:auto;margin:0" placeholder="Channel, playlist or podcast link" /><button class="sec" id="wadd">Watch</button></div>
+    <div id="wlist" style="margin-top:8px"></div><div class="err" id="werr" style="font-size:13px"></div></div>
   <div class="card" id="histCard"><b style="font-size:14px">History</b><div id="histList" style="margin-top:8px"></div></div>
 
   <div id="results" class="hidden">
@@ -75,6 +83,7 @@
       <label class="f" for="focus2">Not what you wanted? Re-run with a focus</label>
       <div class="row"><input type="text" id="focus2" style="flex:1;width:auto;margin:0" placeholder="12:30-18:00 or a note" /><button class="sec" id="redo">Re-run clipper</button></div>
     </div>
+    <div class="card bulk hidden" id="bulk"><b style="font-size:14px"><span id="keptN">0</span> kept</b><span id="bulkPl" style="display:flex;gap:10px;flex-wrap:wrap"></span><button class="primary" id="bulkGo" style="width:auto;padding:9px 16px">Schedule kept clips in my posting slots</button><span class="hint" id="bulkMsg" style="margin:0"></span></div>
     <div class="grid" id="grid"></div>
     <div class="card" style="margin-top:14px">
       <b style="font-size:14px">Custom clip</b>
@@ -98,7 +107,23 @@
   const parse = (s) => { const p = String(s).trim().split(":").map(Number); if (!p.length || p.some(isNaN)) return null; return p.reduce((a, v) => a * 60 + v, 0); };
   function busy(label) { $("busy").classList.remove("hidden"); $("busyLabel").textContent = label; $("errCard").classList.add("hidden"); }
   function fail(msg) { $("busy").classList.add("hidden"); $("errCard").textContent = msg; $("errCard").classList.remove("hidden"); $("go").disabled = false; }
+  // Elapsed time, plus a time-left estimate once per-clip steps ("Cutting clip 2 of 5") are running.
+  let t0 = 0, stepT = {}, lastKey = "";
+  function progressText(label) {
+    if (!t0) t0 = Date.now();
+    const el = Math.round((Date.now() - t0) / 1000), m = label.match(/(\d+) of (\d+)/);
+    let extra = " · " + Math.floor(el / 60) + ":" + String(el % 60).padStart(2, "0") + " elapsed";
+    if (m) {
+      const i = +m[1], n = +m[2], key = label.replace(/\d+ of \d+/, "");
+      if (key !== lastKey) { stepT = {}; lastKey = key; }
+      if (!stepT[i]) stepT[i] = Date.now();
+      const first = Math.min.apply(null, Object.keys(stepT).map(Number));
+      if (i > first) { const per = (Date.now() - stepT[first]) / (i - first); const left = Math.round(per * (n - i + 1) / 60000); extra += " · about " + Math.max(1, left) + " min left"; }
+    }
+    return label + extra;
+  }
   async function poll() {
+    t0 = 0;
     let misses = 0, lastEdited = -1;
     for (;;) {
       let d;
@@ -118,7 +143,7 @@
       }
       if (d.status === "error") { $("busy").classList.add("hidden"); $("go").disabled = false; loadHistory(); if (d.clips && d.clips.length) show(d); return fail(d.error); }
       if (d.status === "done") { $("busy").classList.add("hidden"); $("go").disabled = false; loadHistory(); return show(d); }
-      $("busyLabel").textContent = d.stage_label || "Working";
+      $("busyLabel").textContent = progressText(d.stage_label || "Working");
       const edited = (d.clips || []).filter((c) => c.job_id).length;
       if (edited !== lastEdited) { lastEdited = edited; show(d); }
       await new Promise((r) => setTimeout(r, 3000));
@@ -127,15 +152,22 @@
   function show(d) {
     $("results").classList.remove("hidden");
     const g = $("grid"); g.innerHTML = "";
-    window._src = d.video_url;
+    window._src = d.video_url; window._clips = d.clips || [];
+    const kept = (d.clips || []).filter((c) => c.flag === "keep" && c.job_id);
+    $("bulk").classList.toggle("hidden", !(d.clips || []).some((c) => c.job_id)); $("keptN").textContent = (d.clips || []).filter((c) => c.flag === "keep").length;
     (d.clips || []).forEach((c) => {
       const el = document.createElement("div"); el.className = "card clip";
-      el.innerHTML = '<video controls preload="metadata" playsinline></video><h3></h3><div class="meta"></div><div class="txt"></div><div class="row"><button class="primary" style="width:auto;padding:10px 16px">Edit this clip</button><button class="sec trimBtn" type="button">Trim</button></div><div class="trim hidden"></div>';
+      el.innerHTML = '<video controls preload="metadata" playsinline></video><h3></h3><div class="meta"></div><div class="txt"></div><div class="row"><button class="primary" style="width:auto;padding:10px 16px">Edit this clip</button><button class="sec trimBtn" type="button">Trim</button></div><div class="flagRow"><button class="sec keepBtn" type="button">⭐ Keep</button><button class="sec rj rejBtn" type="button">✕ Reject</button></div><div class="trim hidden"></div>';
       el.querySelector("video").src = c.video_url;
       el.querySelector("h3").textContent = c.title || "Clip";
-      el.querySelector(".meta").innerHTML = '<span class="score">' + c.score + '</span>' + fmt(c.start) + " – " + fmt(c.end) + " · " + Math.round(c.end - c.start) + "s<br>";
+      el.querySelector(".meta").innerHTML = '<span class="score">' + c.score + '</span>' + (c.energy != null ? '<span class="score" style="background:rgba(255,214,10,.15);color:#FFD60A" title="How loud and animated this moment is compared with the rest of the video">🔊 ' + c.energy + '</span>' : "") + fmt(c.start) + " – " + fmt(c.end) + " · " + Math.round(c.end - c.start) + "s<br>";
       el.querySelector(".meta").appendChild(document.createTextNode(c.reason || ""));
       el.querySelector(".txt").textContent = c.text || "";
+      el.classList.toggle("rej", c.flag === "reject"); el.classList.toggle("kept", c.flag === "keep");
+      const kb = el.querySelector(".keepBtn"), rb = el.querySelector(".rejBtn");
+      kb.classList.toggle("on", c.flag === "keep"); rb.classList.toggle("on", c.flag === "reject");
+      const setFlag = (f) => { c.flag = c.flag === f ? "" : f; fetch("/api/clip/" + cid + "/flag", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ index: c.id, flag: c.flag }) }); show({ clips: window._clips, video_url: window._src }); };
+      kb.onclick = () => setFlag("keep"); rb.onclick = () => setFlag("reject");
       el.querySelector("button").onclick = c.job_id ? () => { location.href = "/editor#entry=" + c.job_id; } : () => edit({ index: c.id, title: c.title });
       if (c.job_id) el.querySelector("button").textContent = "Open in editor";
       el.querySelector(".trimBtn").onclick = () => openTrim(el, c);
@@ -150,13 +182,15 @@
     try {
       const r = await fetch("/api/clip/" + cid + "/words?start=" + Math.max(0, c.start - 25) + "&end=" + (c.end + 25));
       const d = await r.json(); if (!r.ok) throw new Error(d.detail || "failed");
-      box.innerHTML = '<div style="opacity:.6;font-size:12px">Click a word to set the start, then a word to set the end.</div><div class="wds"></div><div class="tr">Start <input type="number" step="0.5" class="ts"> End <input type="number" step="0.5" class="te"> <span class="len"></span></div><button class="primary" style="width:auto;padding:9px 14px">Edit this range</button>';
+      box.innerHTML = '<div style="opacity:.6;font-size:12px">Click a word to set the start, then a word to set the end.</div><div class="wds"></div><div class="tr">Start <input type="number" step="0.5" class="ts"> End <input type="number" step="0.5" class="te"> <span class="len"></span></div><div class="tr"><button class="sec hkBtn" type="button">Open with a punchline…</button><span class="hkInfo" style="opacity:.7"></span></div><button class="primary edBtn" style="width:auto;padding:9px 14px">Edit this range</button>';
       const wd = box.querySelector(".wds"), ts = box.querySelector(".ts"), te = box.querySelector(".te");
-      const spans = d.words.map((w) => { const sp = document.createElement("span"); sp.textContent = w.w + " "; sp.onclick = () => { if (pick === 0) { st = w.start; if (en <= st) en = w.end; pick = 1; } else { en = Math.max(w.end, st + 3); pick = 0; } paint(); }; wd.appendChild(sp); return [sp, w]; });
-      function paint() { ts.value = st.toFixed(1); te.value = en.toFixed(1); box.querySelector(".len").textContent = Math.round(en - st) + "s"; spans.forEach(([sp, w]) => sp.classList.toggle("in", w.start >= st - 0.05 && w.end <= en + 0.05)); }
+      let hookMode = false, hk = null, hkPick = 0;
+      const spans = d.words.map((w) => { const sp = document.createElement("span"); sp.textContent = w.w + " "; sp.onclick = () => { if (hookMode) { if (hkPick === 0) { hk = { s: w.start, e: w.end }; hkPick = 1; } else { hk = { s: Math.min(hk.s, w.start), e: Math.max(w.end, hk.s + 2) }; hkPick = 0; hookMode = false; } paint(); return; } if (pick === 0) { st = w.start; if (en <= st) en = w.end; pick = 1; } else { en = Math.max(w.end, st + 3); pick = 0; } paint(); }; wd.appendChild(sp); return [sp, w]; });
+      function paint() { ts.value = st.toFixed(1); te.value = en.toFixed(1); box.querySelector(".len").textContent = Math.round(en - st) + "s"; spans.forEach(([sp, w]) => { sp.classList.toggle("in", w.start >= st - 0.05 && w.end <= en + 0.05); sp.classList.toggle("hk", !!hk && w.start >= hk.s - 0.05 && w.end <= hk.e + 0.05); }); box.querySelector(".hkInfo").textContent = hookMode ? "Click the first word, then the last word of the moment to play first." : (hk ? "Plays first: " + Math.round(hk.e - hk.s) + "s, then the full clip" : ""); box.querySelector(".hkBtn").textContent = hk ? "Change the punchline" : "Open with a punchline…"; }
       ts.onchange = () => { st = +ts.value; paint(); }; te.onchange = () => { en = +te.value; paint(); };
+      box.querySelector(".hkBtn").onclick = () => { hookMode = true; hkPick = 0; hk = null; paint(); };
       paint();
-      box.querySelector("button").onclick = () => edit({ start: st, end: en, title: c.title });
+      box.querySelector(".edBtn").onclick = () => edit({ start: st, end: en, title: c.title, hook_start: hk ? hk.s : null, hook_end: hk ? hk.e : null });
     } catch (e) { box.textContent = "Couldn't load the transcript: " + e.message; }
   }
   async function edit(body) {
@@ -238,6 +272,63 @@
     } catch (_) {}
   }
   loadHistory();
+  // --- bulk scheduling of kept clips
+  let conns = [];
+  fetch("/connections").then((r) => r.json()).then((d) => {
+    conns = (Array.isArray(d) ? d : d.connections || []).filter((c) => c.ok);
+    $("bulkPl").innerHTML = conns.map((c) => '<label><input type="checkbox" checked data-pl="' + c.platform + '">' + (c.label || c.platform) + '</label>').join("") || '<span class="hint" style="margin:0">No connected accounts yet.</span>';
+  }).catch(() => {});
+  const pad = (n) => String(n).padStart(2, "0");
+  $("bulkGo").onclick = async () => {
+    const kept = (window._clips || []).filter((c) => c.flag === "keep" && c.job_id);
+    const pls = [...document.querySelectorAll("#bulkPl input:checked")].map((x) => x.dataset.pl);
+    if (!kept.length) { $("bulkMsg").textContent = "Mark some clips as Keep first (clips that are still being edited can't be scheduled yet)."; return; }
+    if (!pls.length) { $("bulkMsg").textContent = "Pick at least one platform."; return; }
+    $("bulkGo").disabled = true; $("bulkMsg").textContent = "Scheduling…";
+    let slots = ["08:00", "12:00", "18:00", "20:00"], busy = [];
+    try { const st = await (await fetch("/api/settings")).json(); if (st.slots) slots = st.slots.split(","); } catch (e) {}
+    try { busy = ((await (await fetch("/api/schedule?past=false")).json()).items || []).filter((x) => x.status === "scheduled").map((x) => new Date(x.run_at).getTime()); } catch (e) {}
+    function nextSlot() {
+      const now = Date.now();
+      for (let day = 0; day < 60; day++) for (const t of slots) {
+        const [h, m] = t.split(":").map(Number), d = new Date(); d.setDate(d.getDate() + day); d.setHours(h, m, 0, 0);
+        if (d.getTime() <= now + 5 * 60000) continue;
+        if (!busy.some((b) => Math.abs(b - d.getTime()) < 45 * 60000)) { busy.push(d.getTime()); return d; }
+      }
+      return new Date(now + 86400000);
+    }
+    let ok = 0, last = null;
+    for (const c of kept) {
+      const when = nextSlot();
+      try {
+        const r = await fetch("/api/schedule", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ history_id: c.job_id, items: pls.map((p) => ({ platform: p, run_at: when.toISOString() })) }) });
+        if (r.ok) { ok++; last = when; }
+      } catch (e) {}
+    }
+    $("bulkGo").disabled = false;
+    $("bulkMsg").innerHTML = ok ? "Scheduled " + ok + " clip" + (ok === 1 ? "" : "s") + " (last one " + last.toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + "). <a href='/schedule' style='color:#ff6b78'>View schedule</a>" : "Couldn't schedule them — open each in the editor to check.";
+  };
+  // --- watch list
+  function loadWatch() {
+    fetch("/api/clip-watch").then((r) => r.json()).then((d) => {
+      $("wlist").innerHTML = "";
+      (d.items || []).forEach((w) => {
+        const row = document.createElement("div"); row.className = "hRow"; row.style.cursor = "default";
+        row.innerHTML = '<span class="n"></span><button class="sec" type="button">Stop</button>';
+        row.querySelector(".n").textContent = w.url + "  (latest seen: " + (w.title || "—") + ")";
+        row.querySelector("button").onclick = () => fetch("/api/clip-watch/" + w.id, { method: "DELETE" }).then(loadWatch);
+        $("wlist").appendChild(row);
+      });
+    }).catch(() => {});
+  }
+  loadWatch();
+  $("wadd").onclick = async () => {
+    $("werr").textContent = ""; const u = $("wurl").value.trim(); if (!u) return;
+    $("wadd").disabled = true;
+    try { const r = await fetch("/api/clip-watch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: u }) }); const d = await r.json(); if (!r.ok) throw new Error(d.detail || "Failed."); $("wurl").value = ""; loadWatch(); }
+    catch (e) { $("werr").textContent = e.message; }
+    $("wadd").disabled = false;
+  };
   // coming back to the page: resume the last finished/running session
   try { const last = localStorage.getItem("wvClip"); if (last) { fetch("/api/clip/" + last).then((r) => { if (!r.ok) { localStorage.removeItem("wvClip"); return; } cid = last; busy("Reconnecting"); poll(); }).catch(() => {}); } } catch (_) {}
   $("redo").onclick = async () => {

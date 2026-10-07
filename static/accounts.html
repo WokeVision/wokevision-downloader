@@ -96,6 +96,7 @@
 <script src="/static/nav.js"></script>
 <div class="wrap">
   <div class="titleRow"><div><h1>Accounts</h1><div class="sub">Your bio and profile details for every platform, in one place</div></div><button class="btn2" id="reload">Refresh</button></div>
+  <div class="banner" id="connections"><b>Logins</b> &mdash; reconnect any platform here to refresh its login (do this when you see an &ldquo;expires soon&rdquo; warning).<div id="connRows" style="margin-top:10px;display:flex;flex-direction:column;gap:8px">Checking&hellip;</div></div>
   <div class="banner">Instagram, Threads, TikTok, X and YouTube don&rsquo;t let apps change a bio, so for those you write it here, tap <b>Copy</b>, then <b>Open on platform</b> to paste it in. Facebook can be updated straight from here.</div>
   <div class="grid" id="grid"><div class="banner">Loading&hellip;</div></div>
 </div>
@@ -148,6 +149,16 @@
       .catch(function (er) { say(el, (act === "push" ? "Facebook refused it: " : "Not saved: ") + er.message, false); })
       .finally(function () { b.disabled = false; });
   });
+  fetch("/connections").then(function (r) { return r.json(); }).then(function (d) {
+    var box = document.getElementById("connRows"); box.innerHTML = "";
+    d.connections.filter(function (c) { return c.available; }).forEach(function (c) {
+      var row = document.createElement("div"); row.style.cssText = "display:flex;align-items:center;gap:10px";
+      var st = !c.connected ? "Not connected" : (c.ok ? "Connected" : "Needs reconnecting");
+      row.innerHTML = '<b style="min-width:110px">' + esc(c.label) + '</b><span style="opacity:.65;flex:1;font-size:13px">' + esc(st) + (c.ok && c.status_label ? " · " + esc(c.status_label) : "") + '</span>';
+      var a = document.createElement("a"); a.className = "btn2" + (c.ok ? "" : " accent"); a.href = "/connections/" + c.platform + "/start"; a.textContent = c.connected ? "Reconnect" : "Connect";
+      row.appendChild(a); box.appendChild(row);
+    });
+  }).catch(function () { document.getElementById("connRows").textContent = "Couldn't load logins."; });
   document.getElementById("reload").addEventListener("click", load);
   load();
 })();

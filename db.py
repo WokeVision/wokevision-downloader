@@ -548,10 +548,10 @@ def attention_items():
             for r in cur.fetchall():
                 if r["last_check_ok"] is False:
                     out.append({"kind": "connection", "platform": r["platform"],
-                                "text": f"{r['platform']} connection is failing: {(r.get('last_error') or '')[:120]}", "href": "/accounts"})
+                                "text": f"{r['platform']} connection is failing: {(r.get('last_error') or '')[:120]}", "href": "/accounts#connections"})
                 else:
                     out.append({"kind": "expiry", "platform": r["platform"],
-                                "text": f"{r['platform']} login expires soon -- reconnect it", "href": "/accounts"})
+                                "text": f"{r['platform']} login expires soon -- reconnect it", "href": "/accounts#connections"})
     return out
 
 

@@ -33,7 +33,7 @@ fetch("/api/campaigns/" + id + "/report").then(function (r) { return r.json(); }
     return '<div class="card"><div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:14px">' + (i.video_url ? '<video src="' + esc(i.video_url) + '#t=0.4" preload="metadata" muted playsinline></video>' : "") +
       '<div style="min-width:0"><b>' + esc(i.title) + '</b>' + (i.approval ? ' <span class="pill ' + (i.approval === "approved" ? "ok" : "chg") + '">' + (i.approval === "approved" ? "Approved" : "Changes requested") + '</span>' : "") +
       (i.approval_note ? '<div class="sub">“' + esc(i.approval_note) + '”</div>' : "") + '<div class="sub" style="white-space:pre-wrap">' + esc(i.caption) + '</div>' +
-      i.posts.map(function (p) { return '<div style="font-size:13.5px;margin:3px 0">' + esc(p.platform) + ' — ' + esc(p.status) + ' · ' + new Date(p.run_at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + (p.url ? ' · <a href="' + esc(p.url) + '" style="color:#ff6b78">view</a>' : "") + '</div>'; }).join("") + '</div></div></div>';
+      i.posts.map(function (p) { return '<div style="font-size:13.5px;margin:3px 0">' + esc(p.platform) + ' — ' + esc(p.status) + ' · ' + new Date(p.run_at).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + (p.views != null ? ' · ' + Number(p.views).toLocaleString() + ' views' + (p.likes != null ? ', ' + Number(p.likes).toLocaleString() + ' likes' : '') : '') + (p.url ? ' · <a href="' + esc(p.url) + '" style="color:#ff6b78">view</a>' : "") + '</div>'; }).join("") + '</div></div></div>';
   }).join("") || '<div class="sub">No posts filed under this campaign yet. Open a video in the editor and choose this campaign.</div>';
 });
 </script>

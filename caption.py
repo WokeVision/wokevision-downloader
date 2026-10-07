@@ -441,6 +441,9 @@ def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
     parts = []
     if angle:
         parts.append(f"OPERATOR NOTE FROM THE PAGE OWNER (authoritative -- this is what the clip is about and how to treat it; it overrides your own reading):\n{angle}")
+    brief = ((meta or {}).get("campaign_brief") or "").strip()
+    if brief:
+        parts.append(f"SPONSORED CAMPAIGN BRIEF (follow its key messages, required wording and do/don't rules; keep the house voice):\n{brief}")
     if uploader:
         parts.append(f"Source account/channel: {uploader}")
     if handle:
@@ -454,7 +457,7 @@ def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
     context = "\n\n".join(parts)
     if extra_note:
         context += f"\n\n{extra_note}"
-    return context[:5000]
+    return context[:6500]
 
 
 BRAND_NOTES = ""   # set from the Settings page (main.py refreshes it)

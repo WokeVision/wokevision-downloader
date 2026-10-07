@@ -497,6 +497,8 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
             if not _wm_token and _camp.get("wm_token"):
                 _wm_token, _wm_pos = _camp["wm_token"], _camp.get("wm_pos") or "right"
             meta = {**meta, "campaign_id": _cid}
+            if (_camp.get("brief") or "").strip():
+                meta["campaign_brief"] = _camp["brief"].strip()[:1500]
         meta = _claim_watermark(job_id, _wm_token, _wm_pos, meta)
         _set_stage(job_id, "transcribing")
         _st = app_settings()
@@ -1570,7 +1572,7 @@ def get_history(entry_id: str):
         "publish_results": e.get("publish_results") or {},
         "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
         **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
-           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms")},
+           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief")},
     }
 
 
@@ -2540,7 +2542,8 @@ def job_set_campaign(job_id: str, req: JobCampaign):
         job = JOBS.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Unknown job id")
-        job["meta"] = {**(job.get("meta") or {}), "campaign_id": req.campaign_id}
+        job["meta"] = {**(job.get("meta") or {}), "campaign_id": req.campaign_id,
+                       "campaign_brief": ((c or {}).get("brief") or "").strip()[:1500]}
         meta = job["meta"]
         posts = job.get("platform_posts") or {}
         if c:
@@ -2568,13 +2571,21 @@ def job_set_campaign(job_id: str, req: JobCampaign):
 def _camp_report(c):
     base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
     out = []
-    for it in db.camp_items(c["id"]):
+    items = db.camp_items(c["id"])
+    stats = {}
+    try:
+        urls = [_post_url(p["platform"], p.get("result") or {}) for it in items for p in it["posts"] if p["status"] == "done"]
+        stats = db.post_stats_by_url([u for u in urls if u])
+    except Exception:
+        stats = {}
+    for it in items:
         fn = it.get("video_filename")
         out.append({
             "id": it["id"], "title": it.get("title") or "", "caption": it.get("posting_caption") or "",
             "video_url": f"{base}/files/{fn}" if fn else None, "approval": it.get("approval"), "approval_note": it.get("approval_note"),
             "posts": [{"platform": PLATFORM_LABELS.get(p["platform"], p["platform"]), "run_at": p["run_at"], "status": p["status"],
-                       "url": _post_url(p["platform"], p.get("result") or {}) if p["status"] == "done" else None} for p in it["posts"]],
+                       "url": _post_url(p["platform"], p.get("result") or {}) if p["status"] == "done" else None,
+                       **(stats.get(_post_url(p["platform"], p.get("result") or {}) if p["status"] == "done" else None) or {})} for p in it["posts"]],
         })
     return out
 

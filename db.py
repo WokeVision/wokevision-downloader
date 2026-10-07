@@ -854,3 +854,13 @@ def ai_usage_summary():
     return {"month_usd": round(float(month["c"]), 2), "week_usd": round(float(week), 2), "videos_month": videos,
             "per_video_usd": round(float(month["c"]) / videos, 3) if videos else None,
             "kinds": [{"kind": k["kind"], "cost": float(k["cost"]), "calls": k["calls"]} for k in kinds]}
+
+
+def post_stats_by_url(urls):
+    """{url: {views, likes, comments}} from the analytics cache."""
+    if not urls:
+        return {}
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT url, views, likes, comments FROM post_stats WHERE url = ANY(%s)", (list(urls),))
+            return {r["url"]: {"views": r["views"], "likes": r["likes"], "comments": r["comments"]} for r in cur.fetchall()}

@@ -50,5 +50,5 @@
 .wvAttn b { color: #fff; }
 .wvAttnList { max-width: 1480px; margin: 0 auto; padding: 0 18px 8px; }
 .wvAttnRow { display: flex; gap: 8px; align-items: center; }
-.wvAttnRow a { padding: 4px 0; white-space: normal; flex: 1; }
+.wvAttn .wvAttnRow a { display: block; margin: 0; max-width: none; padding: 5px 0; white-space: normal; overflow: visible; text-overflow: clip; flex: 1; min-width: 0; color: #ffd0d4; }
 .wvAttnRow button { background: none; border: 0; color: #ffb3ba; font-size: 20px; cursor: pointer; }

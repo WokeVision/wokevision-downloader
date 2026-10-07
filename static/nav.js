@@ -10,6 +10,19 @@
   } catch (e) {}
   var path = location.pathname.replace(/\/+$/, "") || "/";
   function active(p) { return p === "/" ? path === "/" : path === p || path.indexOf(p + "/") === 0; }
+  // Five top-level sections; pages inside a section show as a second row of tabs.
+  var GROUPS = [
+    { id: "create", label: "Create", pages: [["/editor", "Editor"], ["/clipping", "Clipper"], ["/ideas", "Ideas"]] },
+    { id: "schedule", label: "Schedule", pages: [["/schedule", "Schedule"]] },
+    { id: "inbox", label: "Inbox", pages: [["/requests", "Requests"], ["/comments", "Comments"]] },
+    { id: "analytics", label: "Analytics", pages: [["/dashboards", "Analytics"], ["/campaigns", "Campaigns"]] },
+    { id: "manage", label: "Manage", pages: [["/settings", "Settings"], ["/accounts", "Accounts"], ["/bio", "Bio link"], ["/sources", "Sources"]] }
+  ];
+  var curGroup = null;
+  GROUPS.forEach(function (g) { g.pages.forEach(function (p) { if (active(p[0])) curGroup = g; }); });
+  var groupsHtml = GROUPS.map(function (g) {
+    return '<a class="wvNavLink' + (g === curGroup ? " active" : "") + '" data-g="' + g.id + '" href="' + g.pages[0][0] + '">' + g.label + '</a>';
+  }).join("");
   var nav = document.createElement("nav");
   nav.className = "wvNav";
   nav.setAttribute("role", "navigation"); nav.setAttribute("aria-label", "Main");
@@ -17,31 +30,30 @@
     '<div class="wvNavInner">' +
       '<a class="wvNavLogo' + (active("/") ? " active" : "") + '" href="/" aria-label="WokeVision home">' +
         '<img src="/static/assets/logo-mark.png" alt="WokeVision" /></a>' +
-      '<a class="wvNavLink' + (active("/editor") ? " active" : "") + '" href="/editor">Video Editor</a>' +
-      '<a class="wvNavLink' + (active("/clipping") ? " active" : "") + '" href="/clipping">Clipping</a>' +
-      '<a class="wvNavLink' + (active("/requests") ? " active" : "") + '" href="/requests">Requests</a>' +
-      '<a class="wvNavLink' + (active("/bio") ? " active" : "") + '" href="/bio">Bio link</a>' +
-      '<a class="wvNavLink' + (active("/sources") ? " active" : "") + '" href="/sources">Sources</a>' +
-      '<a class="wvNavLink' + (active("/comments") ? " active" : "") + '" href="/comments">Comments</a>' +
-      '<a class="wvNavLink' + (active("/ideas") ? " active" : "") + '" href="/ideas">Ideas</a>' +
-      '<a class="wvNavLink' + (active("/campaigns") ? " active" : "") + '" href="/campaigns">Campaigns</a>' +
-      '<a class="wvNavLink' + (active("/schedule") ? " active" : "") + '" href="/schedule">Schedule</a>' +
-      '<a class="wvNavLink' + (active("/accounts") ? " active" : "") + '" href="/accounts">Accounts</a>' +
-      '<a class="wvNavLink' + (active("/dashboards") ? " active" : "") + '" href="/dashboards">Analytics Hub</a>' +
-      '<a class="wvNavLink' + (active("/settings") ? " active" : "") + '" href="/settings">Settings</a>' +
+      groupsHtml +
       '<span class="wvNavSpacer"></span>' +
       '<a class="wvNavAuth" id="wvNavAuth" href="/login?next=' + encodeURIComponent(path) + '" style="visibility:hidden">Sign in</a>' +
     '</div>';
   document.body.insertBefore(nav, document.body.firstChild);
-  nav.querySelectorAll("a.active").forEach(function (a) { a.setAttribute("aria-current", "page"); });
+  if (curGroup && curGroup.pages.length > 1) {
+    var sub = document.createElement("div");
+    sub.className = "wvSub"; sub.setAttribute("role", "navigation"); sub.setAttribute("aria-label", curGroup.label);
+    sub.innerHTML = '<div class="wvSubInner">' + curGroup.pages.map(function (p) {
+      return '<a class="wvSubLink' + (active(p[0]) ? " active" : "") + '" href="' + p[0] + '">' + p[1] + '</a>';
+    }).join("") + '</div>';
+    nav.parentNode.insertBefore(sub, nav.nextSibling);
+  }
+  document.querySelectorAll(".wvNav a.active, .wvSub a.active").forEach(function (a) { a.setAttribute("aria-current", "page"); });
   // Numbered bubble on "Requests" for requests waiting for review.
   function badge() {
     fetch("/api/requests/count").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-      var a = document.querySelector('.wvNavLink[href="/requests"]'); if (!a || !d) return;
-      var b = a.querySelector(".wvBadge");
-      if (!d.pending) { if (b) b.remove(); return; }
-      if (!b) { b = document.createElement("span"); b.className = "wvBadge"; a.appendChild(b); }
-      b.textContent = d.pending > 99 ? "99+" : d.pending;
+      if (!d) return;
+      document.querySelectorAll('.wvNavLink[data-g="inbox"], .wvSubLink[href="/requests"]').forEach(function (a) {
+        var b = a.querySelector(".wvBadge");
+        if (!d.pending) { if (b) b.remove(); return; }
+        if (!b) { b = document.createElement("span"); b.className = "wvBadge"; a.appendChild(b); }
+        b.textContent = d.pending > 99 ? "99+" : d.pending;
+      });
     }).catch(function () {});
   }
   if (location.pathname.indexOf("/login") !== 0) { badge(); setInterval(badge, 60000); }
@@ -125,7 +137,7 @@
 // Keyboard shortcuts: press ? for the list; "g" then a letter jumps to a page.
 (function () {
   if (location.pathname.indexOf("/login") === 0 || location.pathname === "/" || location.pathname.indexOf("/links") === 0) return;
-  var MAP = { e: ["/editor", "Video Editor"], c: ["/clipping", "Clipping"], r: ["/requests", "Requests"], b: ["/bio", "Bio link"], s: ["/schedule", "Schedule"], a: ["/dashboards", "Analytics Hub"], i: ["/ideas", "Ideas"], p: ["/campaigns", "Campaigns"], o: ["/sources", "Sources"], m: ["/comments", "Comments"], t: ["/settings", "Settings"] };
+  var MAP = { e: ["/editor", "Editor"], c: ["/clipping", "Clipper"], r: ["/requests", "Requests"], b: ["/bio", "Bio link"], s: ["/schedule", "Schedule"], a: ["/dashboards", "Analytics"], i: ["/ideas", "Ideas"], p: ["/campaigns", "Campaigns"], o: ["/sources", "Sources"], m: ["/comments", "Comments"], t: ["/settings", "Settings"] };
   var armed = 0, ov = null;
   function typing(e) { var t = e.target, n = t && t.tagName; return n === "INPUT" || n === "TEXTAREA" || n === "SELECT" || (t && t.isContentEditable); }
   function help() {

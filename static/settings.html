@@ -13,7 +13,7 @@
   html, body { background: var(--bg); color: var(--text); margin: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; padding-bottom: 48px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,0.10), transparent 55%), var(--bg); }
   .wrap { max-width: 760px; margin: 0 auto; padding: 22px 18px 0; }
-  h1 { font-size: 26px; letter-spacing: -0.02em; margin: 0 0 4px; }
+  h1 { font-size: 26px; letter-spacing: -0.02em; margin: 0 0 14px; }
   .sub { color: var(--faint); font-size: 13px; margin-bottom: 16px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 16px; margin-bottom: 14px; }
   h3 { margin: 0 0 4px; font-size: 16px; }
@@ -23,34 +23,43 @@
   .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-bottom: 10px; }
   #save, #ntest { padding: 13px; width: 100%; border: 0; border-radius: 14px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; font-size: 15px; cursor: pointer; }
   #msg { text-align: center; font-size: 13px; margin-top: 10px; color: var(--faint); min-height: 18px; }
+  details.sec > summary { cursor: pointer; font-weight: 700; font-size: 16px; }
+  details.sec[open] > summary { margin-bottom: 4px; }
+  .fld h4 { margin: 16px 0 4px; font-size: 14px; }
 </style>
 </head>
 <body>
 <script src="/static/nav.js"></script>
 <div class="wrap">
   <h1>Settings</h1>
-  <div class="sub">Teach WokeVision your world. These apply to every new video.</div>
-  <div class="card"><h3>Custom vocabulary</h3><p class="h">Names, slang and brands the transcriber keeps getting wrong. Comma or line separated.</p><textarea id="vocab"></textarea></div>
-  <div class="card"><h3>Voice notes</h3><p class="h">How your captions should sound. Added to every AI caption prompt.</p><textarea id="voice_notes"></textarea></div>
-  <div class="card"><h3>Banned words</h3><p class="h">The AI will never use these in captions.</p><textarea id="banned"></textarea></div>
-  <div class="card"><h3>Posting time slots</h3><p class="h">Your usual posting times (24h, your local time, comma separated). The editor's &ldquo;Next free slot&rdquo; button fills the next one nothing is scheduled in.</p><textarea id="slots" style="min-height:44px"></textarea></div>
-  <div class="card"><h3>Closed captions</h3>
+  
+  <details class="card sec" open><summary>Captions &amp; writing</summary>
+  <div class="fld"><h4>Custom vocabulary</h4><p class="h">Names, slang and brands the transcriber keeps getting wrong. Comma or line separated.</p><textarea id="vocab"></textarea></div>
+  <div class="fld"><h4>Voice notes</h4><p class="h">How your captions should sound. Added to every AI caption prompt.</p><textarea id="voice_notes"></textarea></div>
+  <div class="fld"><h4>Banned words</h4><p class="h">The AI will never use these in captions.</p><textarea id="banned"></textarea></div>
+  <div class="fld"><h4>Caption look</h4>
     <label class="chk"><input type="checkbox" id="smart_crop" /> Smart crop: keep faces in frame when cropping wide videos to vertical</label>
     <label class="chk"><input type="checkbox" id="mask_profanity" /> Mask profanity on screen (f***)</label>
     <p class="h">Extra words to mask:</p><textarea id="mask_words" style="min-height:50px"></textarea>
     <p class="h" style="margin-top:12px">Default caption style</p>
     <select id="caption_style"><option value="classic">Classic (whole line)</option><option value="highlight">Highlight (active word lights up)</option></select>
   </div>
-  <div class="card"><h3>Posting defaults</h3>
+  </details>
+  <details class="card sec" open><summary>Posting</summary>
+  <div class="fld"><h4>Posting time slots</h4><p class="h">Your usual posting times (24h, your local time, comma separated). The editor's &ldquo;Next free slot&rdquo; button fills the next one nothing is scheduled in.</p><textarea id="slots" style="min-height:44px"></textarea></div>
+  <div class="fld"><h4>Posting defaults</h4>
     <p class="h">YouTube privacy for new uploads</p>
     <select id="yt_visibility"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private (only you)</option></select>
     <p class="h" style="margin-top:12px">Instagram collaborators on Reels (up to 3 usernames, comma separated &mdash; they get an invite to co-author)</p>
     <input id="ig_collaborators" placeholder="e.g. friendaccount, partnerpage" />
   </div>
-  <div class="card"><h3>Phone alerts</h3><p class="h">Sends a test notification through ntfy/Telegram and shows exactly what came back.</p><button id="ntest" style="background:rgba(255,255,255,.12)">Send test alert</button><div id="nmsg" style="font-size:13px;margin-top:8px;color:var(--faint)"></div></div>
-  <div class="card"><h3>AI spend</h3><p class="h">Estimated OpenAI cost from this tool (captions, transcription, clipper, tagging).</p><div id="aiu" style="font-size:14px;line-height:1.6;color:var(--faint)">Loading…</div></div>
-  <div class="card"><h3>Database backups</h3><p class="h">A copy of everything in the database (posts, history, requests, settings, logins) is saved to your R2 storage once a day, keeping the latest 14. It contains your connected-account tokens, so keep downloads private.</p><button id="bk" style="background:rgba(255,255,255,.12)">Back up now</button><div id="bkm" style="font-size:13px;margin:8px 0;color:var(--faint)"></div><div id="bkl" style="font-size:13px;line-height:1.7;color:var(--faint)">Loading…</div></div>
-  <div class="card"><h3>Security log</h3><p class="h">Recent sign-ins and failed attempts. Logins lock for 15 minutes after 8 failures.</p><div id="aud" style="font-size:13px;line-height:1.6;color:var(--faint)">Loading…</div></div>
+  </details>
+  <details class="card sec"><summary>System &middot; alerts, AI spend, backups, security</summary>
+  <div class="fld"><h4>Phone alerts</h4><p class="h">Sends a test notification through ntfy/Telegram and shows exactly what came back.</p><button id="ntest" style="background:rgba(255,255,255,.12)">Send test alert</button><div id="nmsg" style="font-size:13px;margin-top:8px;color:var(--faint)"></div></div>
+  <div class="fld"><h4>AI spend</h4><p class="h">Estimated OpenAI cost from this tool (captions, transcription, clipper, tagging).</p><div id="aiu" style="font-size:14px;line-height:1.6;color:var(--faint)">Loading…</div></div>
+  <div class="fld"><h4>Database backups</h4><p class="h">A copy of everything in the database (posts, history, requests, settings, logins) is saved to your R2 storage once a day, keeping the latest 14. It contains your connected-account tokens, so keep downloads private.</p><button id="bk" style="background:rgba(255,255,255,.12)">Back up now</button><div id="bkm" style="font-size:13px;margin:8px 0;color:var(--faint)"></div><div id="bkl" style="font-size:13px;line-height:1.7;color:var(--faint)">Loading…</div></div>
+  <div class="fld"><h4>Security log</h4><p class="h">Recent sign-ins and failed attempts. Logins lock for 15 minutes after 8 failures.</p><div id="aud" style="font-size:13px;line-height:1.6;color:var(--faint)">Loading…</div></div>
+  </details>
   <button id="save">Save settings</button><div id="msg"></div>
 </div>
 <script>

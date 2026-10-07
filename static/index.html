@@ -725,6 +725,12 @@
       <div class="platTabs" id="platTabs"></div>
       <div id="platPanels"></div>
     <div class="optRow" style="padding-top:12px;display:block">
+      <span>Campaign <small style="opacity:.6;font-weight:400">(adds its required hashtags to every platform)</small></span>
+      <select id="campSel" class="ccSel" style="width:100%;margin-top:6px"><option value="">None</option></select>
+      <div id="campBrief" style="font-size:12px;opacity:.65;margin-top:6px;white-space:pre-wrap"></div>
+    </div>
+
+    <div class="optRow" style="padding-top:12px;display:block">
       <span>Credit original creator <small style="opacity:.6;font-weight:400">(@handle, blank = auto)</small></span>
       <div style="display:flex;gap:8px;margin-top:6px"><input type="text" id="creditHandle" placeholder="@handle" style="flex:1;margin:0" /><button type="button" class="secondary" id="creditBtn">Update</button></div>
     </div>
@@ -850,7 +856,7 @@
     document.getElementById("captionBox").value = data.caption || "";
     document.getElementById("angleBox").value = data.angle || document.getElementById("angleBox").value || "";
     updateCaptionCharCount();
-    fillCues(data.cues, data.captions_on); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; setJobWm(data.watermark); paidPromo.checked = !!data.paid_promo;
+    fillCues(data.cues, data.captions_on); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; campSel.value = (data.campaign_id || ''); setJobWm(data.watermark); paidPromo.checked = !!data.paid_promo;
     fillPosts(data.platform_posts);
     setSaveState("");
     setResult(true); autoGrowAll();
@@ -1258,6 +1264,25 @@
         box.appendChild(x);
       });
     } catch (e) { alert("Couldn't get hooks: " + e.message); } finally { b.disabled = false; b.textContent = "3 hook options"; }
+  });
+  const campSel = document.getElementById("campSel"); let campaigns = [];
+  fetch("/api/campaigns").then((r) => r.json()).then((d) => {
+    campaigns = d.items || [];
+    campSel.innerHTML = '<option value="">None</option>' + campaigns.map((c) => '<option value="' + c.id + '">' + c.name.replace(/</g, "&lt;") + '</option>').join("");
+  }).catch(() => {});
+  campSel.addEventListener("change", async () => {
+    if (!currentJobId) return;
+    const c = campaigns.find((x) => x.id === campSel.value);
+    document.getElementById("campBrief").textContent = c ? ((c.sponsor ? c.sponsor + " — " : "") + (c.brief || "")) : "";
+    try {
+      const r = await fetch(`/jobs/${currentJobId}/campaign`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ campaign_id: campSel.value }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.detail || "failed");
+      if (c) fillPosts(d.platform_posts);
+      if (c && c.wm_token && confirm("Apply this campaign's watermark to the video now?")) {
+        const w = wmLib.find((x) => x.token === c.wm_token);
+        if (w) { wmSaved.value = w.token; wmSaved.dispatchEvent(new Event("change")); wmApplyBtn.click(); }
+      }
+    } catch (e) { alert("Couldn't set campaign: " + e.message); }
   });
   const paidPromo = document.getElementById("paidPromo");
   document.getElementById("creditBtn").addEventListener("click", async () => {

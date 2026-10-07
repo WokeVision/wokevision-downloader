@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0A0A0C" /><link rel="icon" href="/static/assets/logo-mark.png" />
+<title>Campaigns · WokeVision</title>
+<link rel="stylesheet" href="/static/nav.css" />
+<style>
+  :root { color-scheme: dark; --bg:#0A0A0C; --surface:rgba(255,255,255,0.055); --border:rgba(255,255,255,0.10); --text:#F5F5F7; --faint:rgba(245,245,247,0.5); --accent:#FF2B3C; }
+  * { box-sizing: border-box; } html, body { background: var(--bg); color: var(--text); margin: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; padding-bottom: 48px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,0.10), transparent 55%), var(--bg); }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 22px 18px 0; } h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.02em; } .sub { color: var(--faint); font-size: 13px; margin-bottom: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 16px; margin-bottom: 14px; }
+  input, textarea, select { width: 100%; background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px; font: inherit; font-size: 14.5px; margin-bottom: 10px; }
+  label { display: block; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); margin-bottom: 5px; }
+  .btn { border: 1px solid var(--border); background: rgba(255,255,255,.06); color: var(--text); font: inherit; font-weight: 600; font-size: 13.5px; padding: 9px 14px; border-radius: 999px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.accent { background: var(--accent); border-color: transparent; } .btn.danger { color: #FFB4B4; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.1); }
+  .ok { background: rgba(48,209,88,.2); color: #6ee79a; } .chg { background: rgba(255,214,10,.18); color: #FFD60A; }
+  video { width: 100%; max-width: 260px; border-radius: 12px; background: #000; aspect-ratio: 9/16; object-fit: cover; }
+</style></head><body>
+<script src="/static/nav.js"></script>
+<div class="wrap">
+  <h1>Campaigns</h1><div class="sub">Group posts for a sponsor or series, keep the brief and required hashtags together, and send a review link.</div>
+  <div class="card"><div class="row" style="justify-content:space-between"><b id="formTitle">New campaign</b><button class="btn" id="cancelEdit" style="display:none">Cancel edit</button></div><div style="height:10px"></div>
+    <label>Name</label><input id="name" placeholder="e.g. Acme launch" />
+    <label>Sponsor / client</label><input id="sponsor" />
+    <label>Brief / notes</label><textarea id="brief" rows="3" placeholder="Talking points, dos and don'ts…"></textarea>
+    <label>Required hashtags</label><input id="hashtags" placeholder="#acme #ad" />
+    <label>Watermark (from your saved ones)</label><select id="wm"><option value="">None</option></select>
+    <button class="btn accent" id="save">Save campaign</button> <span id="msg" class="sub"></span></div>
+  <div id="list"></div></div>
+<script>
+var $ = function (i) { return document.getElementById(i); }, items = [], editing = null, wms = [];
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+function load() {
+  Promise.all([fetch("/api/campaigns").then(function (r) { return r.json(); }), fetch("/api/watermarks").then(function (r) { return r.json(); })]).then(function (a) {
+    items = a[0].items || []; wms = a[1].items || [];
+    $("wm").innerHTML = '<option value="">None</option>' + wms.map(function (w) { return '<option value="' + w.token + '" data-pos="' + esc(w.pos) + '">' + esc(w.name) + '</option>'; }).join("");
+    $("list").innerHTML = items.map(function (c) {
+      return '<div class="card"><div class="row" style="justify-content:space-between"><div><b>' + esc(c.name) + '</b> <span class="pill">' + c.posts + ' post' + (c.posts == 1 ? "" : "s") + '</span><div class="sub" style="margin:2px 0 0">' + esc(c.sponsor) + ' ' + esc(c.hashtags) + '</div></div>' +
+        '<div class="row"><a class="btn" href="/campaigns/' + c.id + '/report">Report</a><button class="btn" data-copy="' + c.share_token + '">Copy review link</button><button class="btn" data-edit="' + c.id + '">Edit</button><button class="btn danger" data-del="' + c.id + '">Delete</button></div></div></div>';
+    }).join("") || '<div class="sub">No campaigns yet.</div>';
+  });
+}
+$("list").onclick = function (e) {
+  var t = e.target;
+  if (t.dataset.copy) { var u = location.origin + "/c/" + t.dataset.copy; (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(function () { t.textContent = "Copied ✓"; }, function () { prompt("Copy this link:", u); }); }
+  if (t.dataset.edit) { var c = items.filter(function (x) { return x.id === t.dataset.edit; })[0]; editing = c.id; $("formTitle").textContent = "Edit campaign"; $("cancelEdit").style.display = ""; ["name", "sponsor", "brief", "hashtags"].forEach(function (k) { $(k).value = c[k] || ""; }); $("wm").value = c.wm_token || ""; scrollTo(0, 0); }
+  if (t.dataset.del && confirm("Delete this campaign? Posts stay, they just become unfiled.")) fetch("/api/campaigns/" + t.dataset.del, { method: "DELETE" }).then(load);
+};
+function reset() { editing = null; $("formTitle").textContent = "New campaign"; $("cancelEdit").style.display = "none"; ["name", "sponsor", "brief", "hashtags"].forEach(function (k) { $(k).value = ""; }); $("wm").value = ""; }
+$("cancelEdit").onclick = reset;
+$("save").onclick = function () {
+  var opt = $("wm").selectedOptions[0], body = { name: $("name").value, sponsor: $("sponsor").value, brief: $("brief").value, hashtags: $("hashtags").value, wm_token: $("wm").value, wm_pos: (opt && opt.dataset.pos) || "right" };
+  fetch(editing ? "/api/campaigns/" + editing : "/api/campaigns", { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || "failed"); }); }).then(function () { $("msg").textContent = "Saved ✓"; reset(); load(); }).catch(function (e) { $("msg").textContent = e.message; });
+};
+load();
+</script>
+</body></html>

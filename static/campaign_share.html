@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0A0A0C" /><link rel="icon" href="/static/assets/logo-mark.png" />
+<title>Review · WokeVision</title>
+<style>
+  :root { color-scheme: dark; --bg:#0A0A0C; --surface:rgba(255,255,255,0.055); --border:rgba(255,255,255,0.10); --text:#F5F5F7; --faint:rgba(245,245,247,0.5); --accent:#FF2B3C; }
+  * { box-sizing: border-box; } html, body { background: var(--bg); color: var(--text); margin: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; padding-bottom: 48px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,0.10), transparent 55%), var(--bg); }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 22px 18px 0; } h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.02em; } .sub { color: var(--faint); font-size: 13px; margin-bottom: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 16px; margin-bottom: 14px; }
+  input, textarea, select { width: 100%; background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px; font: inherit; font-size: 14.5px; margin-bottom: 10px; }
+  label { display: block; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); margin-bottom: 5px; }
+  .btn { border: 1px solid var(--border); background: rgba(255,255,255,.06); color: var(--text); font: inherit; font-weight: 600; font-size: 13.5px; padding: 9px 14px; border-radius: 999px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.accent { background: var(--accent); border-color: transparent; } .btn.danger { color: #FFB4B4; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.1); }
+  .ok { background: rgba(48,209,88,.2); color: #6ee79a; } .chg { background: rgba(255,214,10,.18); color: #FFD60A; }
+  video { width: 100%; max-width: 260px; border-radius: 12px; background: #000; aspect-ratio: 9/16; object-fit: cover; }
+</style></head><body>
+<div class="wrap"><img src="/static/assets/logo-mark.png" width="40" height="40" alt="" style="border-radius:10px" /><h1 id="t" style="margin-top:10px">Review</h1><div class="sub" id="s">Watch each video, then approve it or ask for changes.</div><div id="items"></div></div>
+<script>
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+var token = location.pathname.split("/")[2];
+function paint(d) {
+  document.getElementById("t").textContent = d.name;
+  document.getElementById("items").innerHTML = d.items.map(function (i) {
+    return '<div class="card" data-id="' + i.id + '"><div class="row" style="align-items:flex-start;flex-wrap:wrap;gap:14px">' + (i.video_url ? '<video src="' + esc(i.video_url) + '" controls playsinline preload="metadata"></video>' : "") +
+      '<div style="flex:1;min-width:220px"><b>' + esc(i.title) + '</b>' + (i.approval ? ' <span class="pill ' + (i.approval === "approved" ? "ok" : "chg") + '">' + (i.approval === "approved" ? "Approved" : "Changes requested") + '</span>' : "") +
+      '<div class="sub" style="white-space:pre-wrap;margin-top:6px">' + esc(i.caption) + '</div><textarea rows="2" placeholder="Notes (optional)">' + esc(i.approval_note || "") + '</textarea>' +
+      '<div class="row"><button class="btn accent" data-s="approved">Approve</button><button class="btn" data-s="changes">Request changes</button></div></div></div></div>';
+  }).join("") || '<div class="sub">Nothing to review yet.</div>';
+}
+function load() { fetch("/api/public/campaign/" + token).then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(paint).catch(function () { document.getElementById("items").innerHTML = '<div class="card">This link is not valid any more.</div>'; }); }
+document.getElementById("items").onclick = function (e) {
+  var s = e.target.dataset && e.target.dataset.s; if (!s) return; var card = e.target.closest(".card");
+  fetch("/api/public/campaign/" + token + "/review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ history_id: card.dataset.id, status: s, note: card.querySelector("textarea").value }) }).then(load);
+};
+load();
+</script>
+</body></html>

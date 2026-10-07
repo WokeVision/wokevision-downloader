@@ -141,6 +141,22 @@ def init_db():
                     data JSONB NOT NULL DEFAULT '{}'::jsonb
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS campaigns (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    sponsor TEXT DEFAULT '',
+                    brief TEXT DEFAULT '',
+                    hashtags TEXT DEFAULT '',
+                    wm_token TEXT DEFAULT '',
+                    wm_pos TEXT DEFAULT 'right',
+                    share_token TEXT UNIQUE,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )
+            """)
+            cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS campaign_id TEXT")
+            cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS approval TEXT")
+            cur.execute("ALTER TABLE history ADD COLUMN IF NOT EXISTS approval_note TEXT")
             # Saved campaign watermarks (the image lives in storage as wm_<token>.png).
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS watermark_library (
@@ -717,3 +733,75 @@ def profile_save(platform: str, data: dict):
             cur.execute("""INSERT INTO account_profiles (platform, data, updated_at) VALUES (%s, %s, now())
                            ON CONFLICT (platform) DO UPDATE SET data = EXCLUDED.data, updated_at = now()""",
                         (platform, psycopg2.extras.Json(data)))
+
+
+# --- Campaigns -------------------------------------------------------------------
+
+_CAMP_COLS = ("name", "sponsor", "brief", "hashtags", "wm_token", "wm_pos")
+
+
+def camp_list():
+    if not configured():
+        return []
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""SELECT c.*, (SELECT count(*) FROM history h WHERE h.campaign_id = c.id) AS posts
+                           FROM campaigns c ORDER BY c.created_at DESC LIMIT 200""")
+            return [dict(r) for r in cur.fetchall()]
+
+
+def camp_get(cid: str = None, share_token: str = None):
+    if not configured():
+        return None
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            if share_token:
+                cur.execute("SELECT * FROM campaigns WHERE share_token = %s", (share_token,))
+            else:
+                cur.execute("SELECT * FROM campaigns WHERE id = %s", (cid,))
+            r = cur.fetchone()
+    return dict(r) if r else None
+
+
+def camp_save(cid: str, share_token: str, **f):
+    f = {k: v for k, v in f.items() if k in _CAMP_COLS}
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cols = ["id", "share_token"] + list(f)
+            cur.execute(f"""INSERT INTO campaigns ({",".join(cols)}) VALUES ({",".join(["%s"] * len(cols))})
+                            ON CONFLICT (id) DO UPDATE SET {",".join(f"{k} = EXCLUDED.{k}" for k in f)}""",
+                        [cid, share_token] + list(f.values()))
+
+
+def camp_delete(cid: str):
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE history SET campaign_id = NULL WHERE campaign_id = %s", (cid,))
+            cur.execute("DELETE FROM campaigns WHERE id = %s", (cid,))
+
+
+def history_set_campaign(entry_id: str, cid):
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE history SET campaign_id = %s, approval = NULL, approval_note = NULL WHERE id = %s", (cid or None, entry_id))
+
+
+def camp_items(cid: str):
+    """History entries in a campaign plus their scheduled/posted rows."""
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""SELECT id, created_at, title, on_screen_caption, posting_caption, video_filename, approval, approval_note
+                           FROM history WHERE campaign_id = %s ORDER BY created_at ASC""", (cid,))
+            items = [_titled(r) for r in cur.fetchall()]
+            for it in items:
+                cur.execute("SELECT id, platform, run_at, status, result FROM scheduled_posts WHERE history_id = %s ORDER BY run_at", (it["id"],))
+                it["posts"] = [dict(r) for r in cur.fetchall()]
+    return items
+
+
+def history_set_approval(entry_id: str, cid: str, status: str, note: str):
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE history SET approval = %s, approval_note = %s WHERE id = %s AND campaign_id = %s",
+                        (status, note[:1000], entry_id, cid))
+            return cur.rowcount

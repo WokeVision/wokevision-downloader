@@ -1,5 +1,6 @@
 import os
 import re
+import secrets
 import render
 import uuid
 import time
@@ -71,7 +72,7 @@ def _startup():
 # half-configured deploy (missing SETUP_CODE/SESSION_SECRET) would lock
 # everyone out including the owner, so auth.configured() gates the whole
 # thing -- if it's not set up yet, the app behaves exactly as before.
-PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/")
+PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/", "/c/", "/api/public/")
 PUBLIC_PATHS = {
     "/",                    # public homepage
     "/api/home/popular",    # public: top Instagram posts for the homepage carousel
@@ -324,6 +325,7 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
         "paid_promo": bool(meta.get("paid_promo", False)),
         "captions_style": meta.get("captions_style", "classic"),
         "credit": caption_credit_handle(meta),
+        "campaign_id": (meta or {}).get("campaign_id", ""),
         "watermark": ({"pos": (meta.get("wm") or {}).get("pos", "right"),
                        "url": f"{base_url}/files/{(meta.get('wm') or {}).get('file')}"}
                       if (meta.get("wm") or {}).get("file") else None),
@@ -2258,6 +2260,173 @@ def cron_tick(request: Request, key: str = ""):
         raise HTTPException(status_code=403, detail="Bad key.")
     _LAST_TICK["at"] = time.time()
     threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
+    return {"ok": True}
+
+
+# --- Campaigns -------------------------------------------------------------------
+
+class CampaignModel(BaseModel):
+    name: str
+    sponsor: str = ""
+    brief: str = ""
+    hashtags: str = ""
+    wm_token: str = ""
+    wm_pos: str = "right"
+
+
+def _camp_public(c, with_share=True):
+    out = {k: c.get(k) for k in ("id", "name", "sponsor", "brief", "hashtags", "wm_token", "wm_pos", "posts")}
+    if with_share:
+        out["share_token"] = c.get("share_token")
+    return out
+
+
+@app.get("/campaigns")
+def campaigns_page():
+    return FileResponse("static/campaigns.html")
+
+
+@app.get("/campaigns/{cid}/report")
+def campaign_report_page(cid: str):
+    return FileResponse("static/campaign_report.html")
+
+
+@app.get("/c/{token}")
+def campaign_share_page(token: str):
+    return FileResponse("static/campaign_share.html")
+
+
+@app.get("/api/campaigns")
+def campaigns_list():
+    return {"items": [_camp_public(c) for c in db.camp_list()]}
+
+
+def _camp_fields(req: CampaignModel) -> dict:
+    return dict(name=req.name.strip()[:100], sponsor=req.sponsor[:100], brief=req.brief[:4000], hashtags=req.hashtags[:500],
+                wm_token=req.wm_token if _HEX.match(req.wm_token or "") else "",
+                wm_pos=req.wm_pos if req.wm_pos in render.WM_POSITIONS else "right")
+
+
+@app.post("/api/campaigns")
+def campaigns_create(req: CampaignModel):
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="Give the campaign a name.")
+    cid = uuid.uuid4().hex[:12]
+    db.camp_save(cid, secrets.token_urlsafe(16), **_camp_fields(req))
+    return {"id": cid}
+
+
+@app.put("/api/campaigns/{cid}")
+def campaigns_update(cid: str, req: CampaignModel):
+    if not db.camp_get(cid):
+        raise HTTPException(status_code=404, detail="Unknown campaign.")
+    db.camp_save(cid, "", **_camp_fields(req))
+    return {"ok": True}
+
+
+@app.delete("/api/campaigns/{cid}")
+def campaigns_delete(cid: str):
+    db.camp_delete(cid)
+    return {"ok": True}
+
+
+def _camp_hashtags(c) -> list:
+    return [t if t.startswith("#") else "#" + t for t in re.split(r"[\s,]+", c.get("hashtags") or "") if t.strip("#")]
+
+
+def _with_hashtags(text: str, tags: list) -> str:
+    missing = [t for t in tags if t.lower() not in (text or "").lower()]
+    return (text or "").rstrip() + ("\n\n" + " ".join(missing) if missing else "")
+
+
+class JobCampaign(BaseModel):
+    campaign_id: str = ""
+
+
+@app.put("/jobs/{job_id}/campaign")
+def job_set_campaign(job_id: str, req: JobCampaign):
+    """Files this edit under a campaign and makes sure the campaign's required
+    hashtags are on every platform caption."""
+    c = db.camp_get(req.campaign_id) if req.campaign_id else None
+    if req.campaign_id and not c:
+        raise HTTPException(status_code=404, detail="Unknown campaign.")
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job id")
+        job["meta"] = {**(job.get("meta") or {}), "campaign_id": req.campaign_id}
+        meta = job["meta"]
+        posts = job.get("platform_posts") or {}
+        if c:
+            tags = _camp_hashtags(c)
+            if tags:
+                posts = normalize_platform_posts(posts, job.get("posting_caption") or "")
+                for v in posts.values():
+                    if isinstance(v, dict):
+                        for fld in ("caption", "text", "description"):
+                            if isinstance(v.get(fld), str) and v[fld].strip():
+                                v[fld] = _with_hashtags(v[fld], tags)
+                                break
+                posts = normalize_platform_posts(posts, job.get("posting_caption") or "")
+                job["platform_posts"] = posts
+    try:
+        db.update_history_meta(job_id, meta)
+        db.history_set_campaign(job_id, req.campaign_id)
+        if c and posts:
+            _save_platform_posts(job_id, posts)
+    except Exception as e:
+        print(f"CAMPAIGN SAVE FAILED: {e}", flush=True)
+    return {"platform_posts": posts, "campaign": _camp_public(c) if c else None}
+
+
+def _camp_report(c):
+    base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    out = []
+    for it in db.camp_items(c["id"]):
+        fn = it.get("video_filename")
+        out.append({
+            "id": it["id"], "title": it.get("title") or "", "caption": it.get("posting_caption") or "",
+            "video_url": f"{base}/files/{fn}" if fn else None, "approval": it.get("approval"), "approval_note": it.get("approval_note"),
+            "posts": [{"platform": PLATFORM_LABELS.get(p["platform"], p["platform"]), "run_at": p["run_at"], "status": p["status"],
+                       "url": _post_url(p["platform"], p.get("result") or {}) if p["status"] == "done" else None} for p in it["posts"]],
+        })
+    return out
+
+
+@app.get("/api/campaigns/{cid}/report")
+def campaign_report(cid: str):
+    c = db.camp_get(cid)
+    if not c:
+        raise HTTPException(status_code=404, detail="Unknown campaign.")
+    return {"campaign": _camp_public(c), "items": _camp_report(c)}
+
+
+@app.get("/api/public/campaign/{token}")
+def campaign_public(token: str):
+    """What a sponsor sees: the videos and captions, nothing internal."""
+    c = db.camp_get(share_token=token)
+    if not c:
+        raise HTTPException(status_code=404, detail="This link isn't valid.")
+    keep = ("id", "title", "caption", "video_url", "approval", "approval_note")
+    return {"name": c["name"], "sponsor": c.get("sponsor") or "", "items": [{k: i[k] for k in keep} for i in _camp_report(c)]}
+
+
+class ReviewModel(BaseModel):
+    history_id: str
+    status: str
+    note: str = ""
+
+
+@app.post("/api/public/campaign/{token}/review")
+def campaign_review(token: str, req: ReviewModel):
+    c = db.camp_get(share_token=token)
+    if not c:
+        raise HTTPException(status_code=404, detail="This link isn't valid.")
+    if req.status not in ("approved", "changes"):
+        raise HTTPException(status_code=400, detail="Bad status.")
+    if not db.history_set_approval(req.history_id, c["id"], req.status, req.note or ""):
+        raise HTTPException(status_code=404, detail="Unknown video.")
+    notify.notify(f"{c['name']}: {'approved' if req.status == 'approved' else 'changes requested'}", (req.note or "")[:150])
     return {"ok": True}
 
 

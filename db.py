@@ -1054,6 +1054,19 @@ def req_list(limit=200):
         return [_req_row(r) for r in cur.fetchall()]
 
 
+def dump_all():
+    """Every table in the public schema as {table: [row, ...]} (JSON-safe) — used for backups."""
+    out = {}
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY 1")
+        tables = [r[0] for r in cur.fetchall()]
+        for t in tables:
+            cur.execute(f'SELECT row_to_json(x) FROM "{t}" x')
+            out[t] = [r[0] for r in cur.fetchall()]
+    return out
+
+
 def req_list_removed(limit=200):
     with _conn() as conn:
         cur = _req_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)

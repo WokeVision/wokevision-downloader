@@ -20,6 +20,7 @@
       '<a class="wvNavLink' + (active("/clipping") ? " active" : "") + '" href="/clipping">Clipping</a>' +
       '<a class="wvNavLink' + (active("/requests") ? " active" : "") + '" href="/requests">Requests</a>' +
       '<a class="wvNavLink' + (active("/bio") ? " active" : "") + '" href="/bio">Bio link</a>' +
+      '<a class="wvNavLink' + (active("/sources") ? " active" : "") + '" href="/sources">Sources</a>' +
       '<a class="wvNavLink' + (active("/ideas") ? " active" : "") + '" href="/ideas">Ideas</a>' +
       '<a class="wvNavLink' + (active("/campaigns") ? " active" : "") + '" href="/campaigns">Campaigns</a>' +
       '<a class="wvNavLink' + (active("/schedule") ? " active" : "") + '" href="/schedule">Schedule</a>' +
@@ -76,4 +77,43 @@
     var nav = document.querySelector(".wvNav");
     if (nav && nav.parentNode) nav.parentNode.insertBefore(bar, nav.nextSibling);
   }).catch(function () {});
+})();
+
+// Job tray: running edits and clip jobs from any page, with a link back to each.
+(function () {
+  var p = location.pathname;
+  if (p === "/" || p.indexOf("/login") === 0 || p === "/links" || p.indexOf("/links/") === 0 || p.indexOf("/c/") === 0 || p === "/terms" || p === "/privacy") return;
+  var box = document.createElement("div");
+  box.id = "wvTray"; box.style.display = "none";
+  document.body.appendChild(box);
+  var open = false, timer = null, seenRunning = {};
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function eta(s) { if (!s || s < 1) return ""; return s < 90 ? " · ~" + Math.round(s) + "s left" : " · ~" + Math.round(s / 60) + " min left"; }
+  function draw(items) {
+    var run = items.filter(function (i) { return i.status === "running"; });
+    run.forEach(function (i) { seenRunning[i.id] = 1; });
+    // Only show finished jobs that were running while this page was open (not old leftovers).
+    var fin = items.filter(function (i) { return i.status !== "running" && seenRunning[i.id]; });
+    var show = run.concat(fin);
+    if (!show.length) { box.style.display = "none"; return; }
+    box.style.display = "block";
+    var head = run.length ? run.length + " running" : (fin.some(function (i) { return i.status === "error"; }) ? "Job problem" : "Done");
+    var rows = show.map(function (i) {
+      var pct = i.status === "running" && i.progress != null ? Math.round(i.progress * 100) + "%" : "";
+      var state = i.status === "running" ? esc(i.label) + (pct ? " · " + pct : "") + eta(i.eta) : (i.status === "error" ? "Failed — " + esc(i.error || "see the page") : "Finished ✓");
+      var bar = i.status === "running" && i.progress != null ? '<div class="wvTb"><i style="width:' + Math.round(i.progress * 100) + '%"></i></div>' : "";
+      return '<a class="wvTr" href="' + esc(i.url) + '"><b>' + esc((i.kind === "clips" ? "Clips · " : "") + i.title) + '</b><span>' + state + '</span>' + bar + '</a>';
+    }).join("");
+    box.innerHTML = '<div id="wvTl" style="display:' + (open ? "block" : "none") + '">' + rows + '</div>' +
+      '<button id="wvTt">' + (run.length ? '<i class="wvTd"></i>' : (fin.some(function (i) { return i.status === "error"; }) ? "⚠️ " : "✓ ")) + head + '</button>';
+    document.getElementById("wvTt").onclick = function () { open = !open; document.getElementById("wvTl").style.display = open ? "block" : "none"; };
+  }
+  function poll() {
+    fetch("/api/jobs/active").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      if (!d) { timer = setTimeout(poll, 30000); return; }
+      draw(d.items || []);
+      timer = setTimeout(poll, (d.items || []).some(function (i) { return i.status === "running"; }) ? 3000 : 15000);
+    }).catch(function () { timer = setTimeout(poll, 30000); });
+  }
+  poll();
 })();

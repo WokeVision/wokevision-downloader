@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0A0A0C" /><link rel="icon" href="/static/assets/logo-mark.png" />
+<title>Sources · WokeVision</title>
+<link rel="stylesheet" href="/static/nav.css" />
+<style>
+  :root { color-scheme: dark; --bg:#0A0A0C; --surface:rgba(255,255,255,0.055); --border:rgba(255,255,255,0.10); --text:#F5F5F7; --faint:rgba(245,245,247,0.5); --accent:#FF2B3C; }
+  * { box-sizing: border-box; } html, body { background: var(--bg); color: var(--text); margin: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; padding-bottom: 60px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,0.10), transparent 55%), var(--bg); }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 22px 18px 0; } h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.02em; } .sub { color: var(--faint); font-size: 13px; margin-bottom: 14px; line-height: 1.5; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 14px; margin-bottom: 12px; }
+  select, input { background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px; font: inherit; font-size: 14px; width: 100%; margin-top: 6px; }
+  .btn { border: 1px solid var(--border); background: rgba(255,255,255,.06); color: var(--text); font: inherit; font-weight: 600; font-size: 13px; padding: 8px 13px; border-radius: 999px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.accent { background: var(--accent); border-color: transparent; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .sm { font-size: 12.5px; color: var(--faint); word-break: break-word; } a { color: #ff6b78; }
+  .pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.1); }
+  .pill.unreviewed { background: rgba(255,214,10,.18); color: #FFD60A; } .pill.own, .pill.permission, .pill.licensed, .pill.public { background: rgba(48,209,88,.2); color: #6ee79a; } .pill.none, .pill.takedown { background: rgba(255,69,58,.2); color: #ff8a93; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; } @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); display: block; margin-top: 10px; }
+</style></head><body>
+<script src="/static/nav.js"></script>
+<div class="wrap">
+  <h1>Sources &amp; permissions</h1>
+  <div class="sub">A record of where each post's footage came from, who made it, and whether you have permission to use it &mdash; so you can answer quickly if a creator or platform raises a takedown. Posts you uploaded yourself count as your own; downloaded ones start as "Not reviewed".</div>
+  <div class="row" style="margin-bottom:12px">
+    <select id="f" style="width:auto;margin:0"><option value="">All posts</option><option value="unreviewed">Not reviewed</option><option value="own">Own footage</option><option value="permission">Permission granted</option><option value="licensed">Licensed</option><option value="public">Public domain / free to use</option><option value="none">No permission</option><option value="takedown">Takedown received</option></select>
+    <a class="btn" href="/api/sources.csv">Download CSV</a><span class="sm" id="count"></span>
+  </div>
+  <div id="list"></div>
+</div>
+<script>
+var items=[];
+var LABEL={unreviewed:"Not reviewed",own:"Own footage",permission:"Permission granted",licensed:"Licensed",public:"Public domain / free to use",none:"No permission",takedown:"Takedown received"};
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function link(u){return /^https?:\/\//.test(u)?'<a href="'+esc(u)+'" target="_blank" rel="noopener">'+esc(u.length>70?u.slice(0,70)+"…":u)+'</a>':esc(u);}
+function render(){
+  var f=document.getElementById("f").value, v=items.filter(function(i){return !f||i.rights.status===f;});
+  var n=items.filter(function(i){return i.rights.status==="unreviewed";}).length;
+  document.getElementById("count").textContent=v.length+" shown"+(n?" · "+n+" not reviewed":"");
+  document.getElementById("list").innerHTML=v.map(function(i){
+    var posted=i.posted_to.map(function(p){return p.url?'<a href="'+esc(p.url)+'" target="_blank" rel="noopener">'+esc(p.platform)+'</a>':esc(p.platform);}).join(", ")||"Not posted yet";
+    return '<div class="card" id="c'+i.id+'"><div class="row" style="justify-content:space-between"><b>'+esc(i.title||"Untitled")+'</b><span class="pill '+i.rights.status+'">'+LABEL[i.rights.status]+'</span></div>'+
+      '<div class="sm" style="margin:4px 0 8px">'+esc((i.created_at||"").slice(0,10))+' · Posted to: '+posted+'</div>'+
+      '<div class="sm"><b>Source:</b> '+(i.source_url?link(i.source_url):(esc(i.method)||"No link saved"))+'</div>'+
+      '<div class="sm"><b>Original creator:</b> '+esc(i.creator||"unknown")+' · <b>Credited as:</b> '+esc(i.credited?"@"+i.credited.replace(/^@/,""):"no credit line")+'</div>'+
+      '<div class="grid"><div><label>Permission status</label><select data-s="'+i.id+'">'+Object.keys(LABEL).map(function(k){return '<option value="'+k+'"'+(k===i.rights.status?' selected':'')+'>'+LABEL[k]+'</option>';}).join("")+'</select></div>'+
+      '<div><label>Proof link (message, email, licence…)</label><input data-e="'+i.id+'" value="'+esc(i.rights.evidence)+'" placeholder="https://…" /></div></div>'+
+      '<label>Notes</label><input data-n="'+i.id+'" value="'+esc(i.rights.note)+'" placeholder="e.g. DM’d @creator on 12 Oct, they said fine with credit" />'+
+      '<div class="row" style="margin-top:10px"><button class="btn accent" data-save="'+i.id+'">Save</button><span class="sm" id="m'+i.id+'"></span></div></div>';}).join("")||'<div class="sub">Nothing here yet.</div>';
+  document.querySelectorAll("[data-save]").forEach(function(b){b.onclick=function(){
+    var id=b.getAttribute("data-save"),m=document.getElementById("m"+id);m.textContent="Saving…";
+    fetch("/api/sources/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:document.querySelector('[data-s="'+id+'"]').value,evidence:document.querySelector('[data-e="'+id+'"]').value,note:document.querySelector('[data-n="'+id+'"]').value})})
+      .then(function(r){if(!r.ok)throw 0;var it=items.filter(function(x){return x.id===id;})[0];it.rights.status=document.querySelector('[data-s="'+id+'"]').value;it.rights.evidence=document.querySelector('[data-e="'+id+'"]').value;it.rights.note=document.querySelector('[data-n="'+id+'"]').value;m.textContent="Saved ✓";var p=document.querySelector("#c"+id+" .pill");p.className="pill "+it.rights.status;p.textContent=LABEL[it.rights.status];})
+      .catch(function(){m.textContent="Couldn't save.";});};});
+}
+document.getElementById("f").onchange=render;
+fetch("/api/sources").then(function(r){return r.json();}).then(function(d){items=d.items;render();}).catch(function(){document.getElementById("list").innerHTML='<div class="sub">Couldn’t load.</div>';});
+</script></body></html>

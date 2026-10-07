@@ -204,6 +204,41 @@ def download_with_progress(key: str, local_path: str, progress_cb=None):
     _get_client().download_file(BUCKET, key, local_path, Callback=cb)
 
 
+def put_bytes(key: str, data: bytes, content_type: str = "application/octet-stream") -> bool:
+    if not configured():
+        return False
+    try:
+        _get_client().put_object(Bucket=BUCKET, Key=key, Body=data, ContentType=content_type)
+        return True
+    except Exception as e:
+        print(f"STORAGE PUT FAILED ({key}): {e}", flush=True)
+        return False
+
+
+def get_bytes(key: str):
+    if not configured():
+        return None
+    try:
+        return _get_client().get_object(Bucket=BUCKET, Key=key)["Body"].read()
+    except Exception as e:
+        print(f"STORAGE GET FAILED ({key}): {e}", flush=True)
+        return None
+
+
+def list_objects(prefix: str):
+    """[{key, size, modified}] for keys under prefix, newest first."""
+    out = []
+    if not configured():
+        return out
+    try:
+        for page in _get_client().get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=prefix):
+            for o in page.get("Contents", []):
+                out.append({"key": o["Key"], "size": o["Size"], "modified": o["LastModified"].isoformat()})
+    except Exception as e:
+        print(f"STORAGE LIST FAILED ({prefix}): {e}", flush=True)
+    return sorted(out, key=lambda x: x["modified"], reverse=True)
+
+
 def delete_key(key: str):
     try:
         _get_client().delete_object(Bucket=BUCKET, Key=key)

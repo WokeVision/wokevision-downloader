@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import datetime as _dt
 import secrets
 import render
@@ -3054,6 +3055,178 @@ def schedule_post_now(sid: str):
     return {"ok": True}
 
 
+# --- Database backups ---------------------------------------------------------
+import gzip as _gzip, re as _re
+
+_BACKUP_KEEP = 14
+
+
+def run_backup() -> dict:
+    """Dumps every table to a gzipped JSON file in R2 (backups/db-<time>.json.gz) and prunes old ones."""
+    if not (db.configured() and storage.configured()):
+        raise RuntimeError("Backups need both the database and R2 storage to be configured.")
+    data = db.dump_all()
+    raw = json.dumps({"taken_at": _dt.datetime.now(_dt.timezone.utc).isoformat(), "tables": data}, default=str).encode()
+    blob = _gzip.compress(raw)
+    key = "backups/db-" + _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M") + ".json.gz"
+    if not storage.put_bytes(key, blob, "application/gzip"):
+        raise RuntimeError("Couldn't write the backup to storage.")
+    for old in storage.list_objects("backups/db-")[_BACKUP_KEEP:]:
+        storage.delete_key(old["key"])
+    return {"key": key, "size": len(blob), "rows": sum(len(v) for v in data.values()), "tables": len(data)}
+
+
+def _maybe_daily_backup():
+    try:
+        if not (db.configured() and storage.configured()):
+            return
+        today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+        if insights.kv_get("backup_day") == today:
+            return
+        insights.kv_set("backup_day", today)
+        r = run_backup()
+        print(f"BACKUP OK {r}", flush=True)
+    except Exception as e:
+        print(f"BACKUP FAILED: {e}", flush=True)
+        try:
+            notify.notify("Database backup failed", str(e)[:200])
+        except Exception:
+            pass
+
+
+@app.post("/api/backup/run")
+def api_backup_run():
+    try:
+        r = run_backup()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    db.audit("backup", r["key"])
+    return r
+
+
+@app.get("/api/backups")
+def api_backups():
+    return {"items": [{"name": o["key"].split("/", 1)[1], "size": o["size"], "modified": o["modified"]}
+                      for o in storage.list_objects("backups/db-")], "keep": _BACKUP_KEEP}
+
+
+@app.get("/api/backups/{name}")
+def api_backup_download(name: str):
+    if not _re.fullmatch(r"db-\d{8}-\d{4}\.json\.gz", name):
+        raise HTTPException(status_code=400, detail="Bad name.")
+    blob = storage.get_bytes("backups/" + name)
+    if blob is None:
+        raise HTTPException(status_code=404, detail="Not found.")
+    db.audit("backup_download", name)
+    return Response(blob, media_type="application/gzip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# --- Source & permission log ---------------------------------------------------
+RIGHTS_STATUSES = {"unreviewed", "own", "permission", "licensed", "public", "none", "takedown"}
+
+
+def _source_row(e: dict) -> dict:
+    meta = e.get("meta") or {}
+    rights = meta.get("rights") or {}
+    method = str(meta.get("method") or "")
+    own_default = method.startswith("direct upload") or method.startswith("clipped")
+    status = rights.get("status") or ("own" if own_default else "unreviewed")
+    posts = []
+    for plat, res in (e.get("publish_results") or {}).items():
+        if isinstance(res, dict) and (res.get("ok") or res.get("success") or res.get("id") or res.get("video_id") or res.get("tweet_id") or res.get("post_id")):
+            posts.append({"platform": plat, "url": _post_url(plat, res)})
+    return {
+        "id": str(e["id"]),
+        "created_at": e["created_at"].isoformat() if e.get("created_at") else None,
+        "title": e.get("title") or "",
+        "source_url": meta.get("source_url") or "",
+        "creator": (meta.get("uploader") or meta.get("uploader_id") or meta.get("channel") or ""),
+        "method": method,
+        "credited": caption_credit_handle(meta),
+        "posted_to": posts,
+        "rights": {"status": status, "note": rights.get("note", ""), "evidence": rights.get("evidence", ""),
+                   "updated_at": rights.get("updated_at"), "explicit": bool(rights.get("status"))},
+    }
+
+
+@app.get("/sources")
+def sources_page():
+    return FileResponse("static/sources.html")
+
+
+@app.get("/api/sources")
+def api_sources():
+    return {"items": [_source_row(e) for e in db.list_history(500)]}
+
+
+class RightsModel(BaseModel):
+    status: str = "unreviewed"
+    note: str = ""
+    evidence: str = ""
+
+
+@app.put("/api/sources/{entry_id}")
+def api_sources_set(entry_id: str, req: RightsModel):
+    if req.status not in RIGHTS_STATUSES:
+        raise HTTPException(status_code=400, detail="Unknown status.")
+    e = db.get_history_entry(entry_id)
+    if not e:
+        raise HTTPException(status_code=404, detail="Unknown entry.")
+    meta = dict(e.get("meta") or {})
+    meta["rights"] = {"status": req.status, "note": req.note.strip()[:1000], "evidence": req.evidence.strip()[:500],
+                      "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat()}
+    db.update_history_meta(entry_id, meta)
+    return {"ok": True}
+
+
+@app.get("/api/sources.csv")
+def api_sources_csv():
+    import csv, io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Date", "Title", "Source link", "Original creator", "Credited as", "Posted to", "Permission status", "Note", "Evidence link"])
+    for e in db.list_history(2000):
+        r = _source_row(e)
+        w.writerow([(r["created_at"] or "")[:10], r["title"], r["source_url"], r["creator"], r["credited"],
+                    "; ".join(f"{p['platform']} {p['url'] or ''}".strip() for p in r["posted_to"]),
+                    r["rights"]["status"], r["rights"]["note"], r["rights"]["evidence"]])
+    return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="wokevision-sources.csv"'})
+
+
+# --- Running jobs (for the global tray) ---------------------------------------
+@app.get("/api/jobs/active")
+def api_jobs_active():
+    now = time.time()
+    items = []
+    with JOBS_LOCK:
+        for jid, j in list(JOBS.items()):
+            st = j.get("status")
+            if st not in ("running", "done", "error"):
+                continue
+            if st != "running":
+                j.setdefault("_done_at", now)
+                if now - j["_done_at"] > 600:
+                    continue
+            items.append({"id": jid, "kind": "edit", "status": st, "label": j.get("stage_label") or "",
+                          "title": (j.get("result") or {}).get("on_screen_caption") or j.get("title") or "Video edit",
+                          "progress": j.get("progress"), "eta": j.get("eta_seconds"), "error": (j.get("error") or "")[:160] if st == "error" else "",
+                          "url": f"/editor#entry={jid}"})
+    with CLIPS_LOCK:
+        for cid, c in list(CLIPS.items()):
+            st = c.get("status")
+            if st not in ("running", "done", "error"):
+                continue
+            if st != "running":
+                c.setdefault("_done_at", now)
+                if now - c["_done_at"] > 600:
+                    continue
+            items.append({"id": cid, "kind": "clips", "status": st, "label": c.get("stage_label") or "",
+                          "title": c.get("title") or "Clipping", "progress": c.get("progress"), "eta": None,
+                          "error": (c.get("error") or "")[:160] if st == "error" else "", "url": "/clipping"})
+    items.sort(key=lambda x: (x["status"] != "running", x["title"]))
+    return {"items": items}
+
+
 _LAST_TICK = {"at": None}
 
 
@@ -3098,6 +3271,7 @@ def cron_tick(request: Request, key: str = ""):
         raise HTTPException(status_code=403, detail="Bad key.")
     _LAST_TICK["at"] = time.time()
     _maybe_weekly_digest()
+    threading.Thread(target=_maybe_daily_backup, daemon=True).start()
     threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
     return {"ok": True}
 

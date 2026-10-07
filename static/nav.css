@@ -54,3 +54,16 @@
 .wvAttnRow button { background: none; border: 0; color: #ffb3ba; font-size: 20px; cursor: pointer; }
 
 .wvBadge { display: inline-block; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px; border-radius: 999px; background: #FF2B3C; color: #fff; font-size: 11px; font-weight: 800; line-height: 18px; text-align: center; vertical-align: 1px; }
+
+/* Job tray */
+#wvTray { position: fixed; left: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 60; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; max-width: min(360px, calc(100vw - 28px)); }
+#wvTt { background: rgba(20,20,24,.92); color: #F5F5F7; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; padding: 9px 15px; font: inherit; font-size: 13.5px; font-weight: 700; cursor: pointer; backdrop-filter: blur(14px); display: inline-flex; align-items: center; gap: 8px; }
+.wvTd { width: 9px; height: 9px; border-radius: 50%; background: #FF2B3C; animation: wvPulse 1.2s infinite; display: inline-block; }
+@keyframes wvPulse { 50% { opacity: .25; } }
+#wvTl { margin-bottom: 8px; background: rgba(20,20,24,.96); border: 1px solid rgba(255,255,255,.14); border-radius: 16px; padding: 6px; max-height: 50vh; overflow: auto; }
+.wvTr { display: block; padding: 10px 12px; border-radius: 12px; text-decoration: none; color: #F5F5F7; }
+.wvTr:hover { background: rgba(255,255,255,.07); }
+.wvTr b { display: block; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wvTr span { display: block; font-size: 12px; color: rgba(245,245,247,.55); margin-top: 2px; }
+.wvTb { height: 4px; border-radius: 2px; background: rgba(255,255,255,.12); margin-top: 7px; overflow: hidden; }
+.wvTb i { display: block; height: 100%; background: #FF2B3C; transition: width .4s; }

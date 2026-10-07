@@ -1239,9 +1239,9 @@ def requests_count():
 
 
 @app.get("/api/requests")
-def requests_list():
+def requests_list(removed: int = 0):
     base = _base_url()
-    items = db.req_list()
+    items = db.req_list_removed() if removed else db.req_list()
     for it in items:
         d = it.get("data") or {}
         it["file_urls"] = [f"{base}/files/{fn}" for fn in d.get("files", [])]
@@ -1435,6 +1435,28 @@ def request_delete(rid: str):
     r = db.req_get(rid)
     if r and r["status"] in ("declined", "done", "error"):
         db.req_update(rid, status="archived", data={"prev_status_removed": r["status"]})
+    return {"ok": True}
+
+
+@app.delete("/api/requests/{rid}/purge")
+def request_purge(rid: str):
+    """Permanently deletes a removed request. Uploaded files are deleted too, unless the
+    request was approved (those files back a scheduled/published post)."""
+    r = db.req_get(rid)
+    if not r or r["status"] != "archived":
+        raise HTTPException(status_code=400, detail="Only removed requests can be deleted permanently.")
+    d = r.get("data") or {}
+    if d.get("prev_status_removed") != "approved" and not r.get("history_id"):
+        for fn in d.get("files", []):
+            try:
+                fp = os.path.join(DOWNLOAD_DIR, os.path.basename(fn))
+                if os.path.exists(fp):
+                    os.remove(fp)
+                storage.delete_key(fn)
+            except Exception as e:
+                print(f"PURGE file {fn}: {e}", flush=True)
+    db.req_purge(rid)
+    db.audit("request_purged", f"{r['kind']} from {r['name']}")
     return {"ok": True}
 
 

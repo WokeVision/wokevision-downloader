@@ -21,10 +21,11 @@
 <div class="wrap">
   <h1>Requests</h1><div class="sub">Customer post bookings and consultation requests from your bio link. Approve a booking to schedule it; nothing posts until you do.</div>
   <div id="note" class="sub"></div>
+  <div class="row" style="margin-bottom:12px"><button class="btn" id="tgl"></button></div>
   <div id="list"></div>
 </div>
 <script>
-var BASE=location.origin, emailOK=false, items=[];
+var BASE=location.origin, emailOK=false, items=[], showRem=false;
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
 function j(u,m,b){return fetch(u,{method:m||"GET",headers:{"Content-Type":"application/json"},body:b?JSON.stringify(b):undefined}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.detail||"failed");return d;});});}
 function loc(iso){if(!iso)return "";var d=new Date(iso);if(isNaN(d))return "";d=new Date(iso),z=new Date(d.getTime()-d.getTimezoneOffset()*60000);return z.toISOString().slice(0,16);}
@@ -59,11 +60,13 @@ function card(r){
       if(r.status==="declined"&&r.owner_note)h+='<div class="sm">Reason sent: '+esc(r.owner_note)+'</div>';
     }
   }
+  if(showRem)return h+'<div class="row" style="margin-top:8px"><button class="btn accent" data-rs="'+r.id+'">Restore</button><button class="btn danger" data-pg="'+r.id+'">Delete permanently</button></div></div>';
   return h+((r.status==="declined"||r.status==="done"||r.status==="error")?'<div class="row" style="margin-top:8px">'+(r.status==="done"?'<button class="btn" data-ro="'+r.id+'">Undo — mark as not handled</button>':'')+'<button class="btn" data-ar="'+r.id+'">Remove</button></div>':'')+'</div>';
 }
 function find(id){return items.filter(function(x){return x.id===id;})[0];}
 function render(){
-  document.getElementById("list").innerHTML=items.map(card).join("")||'<div class="sub">Nothing yet. Requests from your bio link appear here.</div>';
+  document.getElementById("list").innerHTML=items.map(card).join("")||(showRem?'<div class="sub">No removed requests.</div>':'<div class="sub">Nothing yet. Requests from your bio link appear here.</div>');
+  var tg=document.getElementById("tgl");tg.textContent=showRem?"← Back to requests":"Removed requests";tg.onclick=function(){showRem=!showRem;load();};
   document.getElementById("note").textContent=emailOK?"Emails to customers are sent from the app automatically.":"Emails open in your own mail app with the message pre-filled (add SMTP settings on Render to send them automatically).";
   var q=function(a,f){document.querySelectorAll("["+a+"]").forEach(function(b){b.onclick=function(){f(b.getAttribute(a),b);};});};
   q("data-ap",function(id,b){var c=find(id),d=c.data;b.disabled=true;
@@ -79,6 +82,8 @@ function render(){
   q("data-cc",function(id){var c=find(id),t=fmt(new Date(document.getElementById("ct"+id).value||Date.now()).toISOString());
     sendMail(id,c.email,"Your consultation","Hi "+c.name+",\n\nThanks for getting in touch. How does "+t+" work for a short call? Reply to confirm, or suggest another time.\n\nBest wishes");});
   q("data-done",function(id){j("/api/requests/"+id+"/done","POST").then(load);});
+  q("data-rs",function(id){j("/api/requests/"+id+"/restore","POST").then(load);});
+  q("data-pg",function(id){if(!confirm("Delete this request permanently? Its details and any uploaded files will be gone for good."))return;j("/api/requests/"+id+"/purge","DELETE").then(load).catch(function(e){alert(e.message);});});
   q("data-ro",function(id){j("/api/requests/"+id+"/reopen","POST").then(load);});
   q("data-ar",function(id){j("/api/requests/"+id,"DELETE").then(function(){load();toast(id);});});
 }
@@ -88,7 +93,7 @@ function toast(id){var t=document.getElementById("undoBar");if(!t){t=document.cr
   document.getElementById("undoBtn").onclick=function(){t.style.display="none";j("/api/requests/"+id+"/restore","POST").then(load);};
   clearTimeout(tt);tt=setTimeout(function(){t.style.display="none";},10000);}
 var timer;
-function load(){clearTimeout(timer);j("/api/requests").then(function(d){items=d.items;emailOK=d.email_configured;
+function load(){clearTimeout(timer);j("/api/requests"+(showRem?"?removed=1":"")).then(function(d){items=d.items;emailOK=d.email_configured;
   var open=document.activeElement&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);if(!open)render();
   if(items.some(function(x){return x.status==="processing";}))timer=setTimeout(load,4000);});}
 load();

@@ -1054,6 +1054,21 @@ def req_list(limit=200):
         return [_req_row(r) for r in cur.fetchall()]
 
 
+def req_list_removed(limit=200):
+    with _conn() as conn:
+        cur = _req_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM requests WHERE status = 'archived' ORDER BY created_at DESC LIMIT %s", (limit,))
+        return [_req_row(r) for r in cur.fetchall()]
+
+
+def req_purge(rid):
+    """Permanently deletes an archived request row."""
+    with _conn() as conn:
+        cur = _req_cur(conn)
+        cur.execute("DELETE FROM requests WHERE id = %s AND status = 'archived'", (rid,))
+        return cur.rowcount > 0
+
+
 def req_get(rid):
     with _conn() as conn:
         cur = _req_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)

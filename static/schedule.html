@@ -136,6 +136,7 @@
     h += statusBadge(s);
     h += '<span class="rowActions">';
     if (s.status === "done" && s.post_url) h += '<a class="btn2" href="' + esc(s.post_url) + '" target="_blank" rel="noopener">View post</a>';
+    if (s.status === "done") h += '<button class="btn2" data-again="' + s.id + '">Post again…</button>';
     if (editable) h += '<button class="btn2" data-now="' + s.id + '">' + (s.status === "scheduled" ? "Post now" : "Retry now") + '</button><button class="btn2 danger" data-del="' + s.id + '">Remove</button>';
     h += '</span>';
     if (s.error) h += '<div class="errtxt">' + esc(tidyErr(s.error)) + '</div>';
@@ -153,7 +154,7 @@
     var title = f.on_screen_caption || f.title || "Untitled post";
     var anyEditable = rows.some(function (s) { return s.status === "scheduled" || s.status === "error" || s.status === "missed"; });
     var h = '<div class="post"><div>' + (f.video_url ? '<video class="thumb" src="' + esc(f.video_url) + '#t=0.4" preload="metadata" muted playsinline></video>' : '<div class="thumb"></div>') + '</div><div class="pbody">';
-    h += '<div class="ptitle">' + esc(title) + '</div><div class="phead"><a class="btn2" href="/editor#entry=' + f.history_id + '">Edit post</a></div>';
+    h += '<div class="ptitle">' + esc(title) + '</div><div class="phead"><a class="btn2" href="/editor#entry=' + f.history_id + '">Edit post</a><button class="btn2" data-dup="' + f.history_id + '" title="Make a separate copy you can change and schedule on its own">Duplicate</button></div>';
     if (anyEditable && rows.length > 1) {
       h += '<div class="allBar"><span style="font-size:12.5px;color:var(--text-faint)">All times</span><input type="datetime-local" data-all="' + f.history_id + '" value="' + toLocalInput(rows[0].run_at) + '" /><button class="btn2" data-applyall="' + f.history_id + '">Apply</button></div>';
     }
@@ -202,6 +203,12 @@
     var past = items.filter(function (s) { return s.status === "done"; }).sort(function (a, b) { return a.run_at < b.run_at ? 1 : -1; });
     document.getElementById("sub").textContent = upcoming.length ? upcoming.length + " post" + (upcoming.length === 1 ? "" : "s") + " queued" : "Nothing queued";
     var h = "";
+    var bad = upcoming.filter(function (s) { return s.status === "error" || s.status === "missed"; });
+    if (bad.length) {
+      h += '<div class="banner warn"><b>' + bad.length + ' post' + (bad.length === 1 ? "" : "s") + ' need' + (bad.length === 1 ? "s" : "") + ' attention</b><br>' +
+        bad.map(function (s) { return esc(s.label) + " — " + esc(s.on_screen_caption || s.title || "Untitled") + ": " + esc(tidyErr(s.error || (s.status === "missed" ? "Missed" : "Failed"))); }).join("<br>") +
+        '<br><span style="opacity:.8">Each platform is separate: use <b>Retry now</b> on just the one that failed.</span></div>';
+    }
     if (!upcoming.length) {
       h += '<div class="empty">Nothing is scheduled.<br>Finish a post in the Video Editor, switch the bottom panel to <b>Schedule</b>, pick a time and it will appear here.<br><br><a class="btn2 accent" href="/editor">Open the Video Editor</a></div>';
     } else {
@@ -262,6 +269,20 @@
       if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "Tap to confirm"; setTimeout(function () { b.dataset.armed = ""; b.textContent = "Post now"; }, 3000); return; }
       b.disabled = true;
       api("POST", "/api/schedule/" + ds.now + "/post-now").then(function () { toast("Posting now…"); setTimeout(load, 4000); }).catch(function (er) { toast(er.message); b.disabled = false; });
+    } else if (ds.dup) {
+      b.disabled = true;
+      api("POST", "/history/" + ds.dup + "/duplicate").then(function (j) { location.href = "/editor#entry=" + j.id; }).catch(function (er) { toast(er.message); b.disabled = false; });
+    } else if (ds.again) {
+      var row = b.closest(".row"), ex = row.querySelector(".againBox");
+      if (ex) { ex.remove(); return; }
+      var d0 = new Date(Date.now() + 24 * 3600 * 1000);
+      var box = document.createElement("div"); box.className = "againBox allBar"; box.style.flexBasis = "100%";
+      box.innerHTML = '<input type="datetime-local" value="' + toLocalInput(d0.toISOString()) + '" /><button class="btn2 accent" data-again-ok="' + ds.again + '">Schedule again</button>';
+      row.appendChild(box);
+    } else if (ds.againOk) {
+      var v = b.parentNode.querySelector("input").value, d2 = new Date(v);
+      if (isNaN(d2) || d2.getTime() < Date.now() - 60000) { toast("Pick a time in the future."); return; }
+      api("POST", "/api/schedule/" + ds.againOk + "/repost", { run_at: d2.toISOString() }).then(function () { toast("Scheduled again"); return load(); }).catch(function (er) { toast(er.message); });
     } else if (ds.applyall) {
       var inp = view.querySelector('input[data-all="' + ds.applyall + '"]');
       var d = new Date(inp.value);

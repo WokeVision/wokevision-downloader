@@ -25,6 +25,16 @@ def _publish_one(modules: dict, item: dict) -> dict:
     module = modules.get(platform)
     if not module:
         return {"ok": False, "error": "This platform isn't connected."}
+    # Duplicate guard: if this platform already took this edit a moment ago (e.g. the
+    # editor's Upload button and a schedule overlapped), don't post it twice.
+    prev = (e.get("publish_results") or {}).get(platform) or {}
+    if prev.get("ok") and prev.get("at"):
+        try:
+            then = datetime.datetime.fromisoformat(str(prev["at"]).replace("Z", "+00:00"))
+            if (datetime.datetime.now(datetime.timezone.utc) - then).total_seconds() < 30 * 60:
+                return {"ok": False, "error": f"Skipped: this was already posted to {platform} less than 30 minutes ago. Remove this one, or schedule it again later if you do want a repeat."}
+        except Exception:
+            pass
     base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
     filename = e.get("video_filename") or ""
     images = (e.get("meta") or {}).get("images") or []
@@ -95,8 +105,11 @@ def run_due(modules: dict) -> int:
             try:
                 if res.get("ok"):
                     db.sched_finish(item["id"], "done", res)
-                elif item.get("attempts", 1) < 2:
-                    db.sched_finish(item["id"], "error", res, retry_in_minutes=3)   # one automatic retry
+                elif str(res.get("error") or "").startswith("Skipped:"):
+                    db.sched_finish(item["id"], "error", res)
+                elif item.get("attempts", 1) < 3:
+                    # Two automatic retries with growing gaps (3 min, then 15 min).
+                    db.sched_finish(item["id"], "error", res, retry_in_minutes=(3 if item.get("attempts", 1) < 2 else 15))
                 else:
                     db.sched_finish(item["id"], "error", res)
                     notify.notify(f"Scheduled {item['platform']} post failed", str(res.get("error") or "")[:200],

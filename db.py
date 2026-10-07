@@ -664,6 +664,16 @@ def sched_upsert(history_id: str, platform: str, run_at):
             return _row(cur.fetchone())
 
 
+def sched_repost(history_id: str, platform: str, run_at):
+    """Always adds a NEW scheduled row (used to post something again after it has gone out)."""
+    import uuid
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("INSERT INTO scheduled_posts (id, history_id, platform, run_at) VALUES (%s, %s, %s, %s) RETURNING *",
+                        (str(uuid.uuid4()), history_id, platform, run_at))
+            return _row(cur.fetchone())
+
+
 def sched_list(history_id: str = None, include_past: bool = True, limit: int = 300):
     with _conn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:

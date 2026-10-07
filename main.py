@@ -3039,6 +3039,37 @@ def schedule_move(sid: str, req: ScheduleTimeRequest):
     return {"ok": True}
 
 
+@app.post("/api/schedule/{sid}/repost")
+def schedule_repost(sid: str, req: ScheduleTimeRequest):
+    """Schedules a post that already went out to go out again at a new time."""
+    r = db.sched_get(sid)
+    if not r:
+        raise HTTPException(status_code=404, detail="Unknown post.")
+    when = _parse_when(req.run_at)
+    if when < _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=60):
+        raise HTTPException(status_code=400, detail="Pick a time in the future.")
+    db.sched_repost(r["history_id"], r["platform"], when)
+    return {"ok": True}
+
+
+@app.post("/history/{entry_id}/duplicate")
+def history_duplicate(entry_id: str):
+    """Makes an independent copy of an edit (same video, captions and settings) so it can be
+    tweaked and scheduled separately -- e.g. a different caption for another day."""
+    e = db.get_history_entry(entry_id)
+    if not e:
+        raise HTTPException(status_code=404, detail="Unknown history entry")
+    new_id = str(uuid.uuid4())
+    title = (e.get("title") or "Untitled")
+    db.save_history_entry(new_id, title, e.get("video_filename") or "", e.get("source_filename") or "",
+                          e.get("on_screen_caption") or "", e.get("posting_caption") or "", e.get("transcript") or "",
+                          {k: v for k, v in (e.get("meta") or {}).items() if k != "rights"})
+    if e.get("platform_posts"):
+        db.update_history_platform_posts(new_id, e["platform_posts"])
+    db.audit("duplicate", f"{entry_id[:8]} -> {new_id[:8]}")
+    return {"id": new_id}
+
+
 @app.delete("/api/schedule/{sid}")
 def schedule_cancel(sid: str):
     if not db.sched_delete(sid):

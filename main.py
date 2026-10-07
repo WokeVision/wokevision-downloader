@@ -981,10 +981,15 @@ class PasskeyLoginFinish(BaseModel):
 
 
 @app.post("/auth/register/options")
-def auth_register_options(req: PasskeyRegisterStart):
+def auth_register_options(req: PasskeyRegisterStart, request: Request):
+    ip = _client_ip(request)
+    if _login_blocked(ip):
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Try again in 15 minutes.")
     try:
         return auth.start_registration(req.setup_code)
     except auth.AuthError as e:
+        _LOGIN_FAILS.setdefault(ip, []).append(time.time())
+        db.audit("login_failed", f"{ip} (setup code)")
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -1296,6 +1301,11 @@ def save_platform_posts(job_id: str, req: PlatformPostsRequest):
     )
     _save_platform_posts(job_id, posts)
     return {"platform_posts": posts}
+
+
+@app.get("/jobs/{job_id}/versions")
+def job_versions(job_id: str):
+    return {"items": db.caption_versions(job_id)}
 
 
 @app.post("/jobs/{job_id}/platform-posts/generate")

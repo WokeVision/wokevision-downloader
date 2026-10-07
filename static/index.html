@@ -759,9 +759,11 @@
 
       <div class="actionRow">
         <button class="secondary" id="riskBtn" type="button">Check for risks</button>
+        <button class="secondary" id="verBtn" type="button">Version history</button>
         <span class="saveState" id="riskMsg"></span>
       </div>
       <div id="riskOut" style="font-size:13px;line-height:1.5"></div>
+      <div id="verOut" style="font-size:13px;line-height:1.5"></div>
       <div class="actionRow">
         <button class="secondary" id="rewriteAllBtn" type="button">Rewrite all platforms</button>
         <span class="inlineSpinner" id="rewriteSpinner">Rewriting...</span>
@@ -1280,6 +1282,22 @@
   ccRestore.addEventListener("click", () => {
     ccList.querySelectorAll(".ccRow").forEach((row) => { if (row.dataset.src !== undefined) { row.querySelector("textarea").value = row.dataset.src; row.dataset.words = row.dataset.srcWords || "[]"; } });
     ccRestore.style.display = "none";
+  });
+  // --- caption version history
+  document.getElementById("verBtn").addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const out = document.getElementById("verOut");
+    try {
+      const r = await fetch(`/jobs/${currentJobId}/versions`); const d = await r.json();
+      const esc = (t) => String(t == null ? "" : t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+      window._verItems = d.items || [];
+      out.innerHTML = window._verItems.length ? window._verItems.map((v, i) => '<div style="border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;margin:8px 0"><b>' + new Date(v.ts).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + '</b><div style="opacity:.7;white-space:pre-wrap">' + esc(((v.posts.instagram || {}).caption || "").slice(0, 160)) + '</div><button type="button" class="secondary" data-ver="' + i + '" style="margin-top:6px">Restore this version</button></div>').join("") : '<div style="opacity:.7;margin:8px 0">No earlier versions yet — they\'re saved each time you edit or rewrite.</div>';
+      out.querySelectorAll("[data-ver]").forEach((b) => b.addEventListener("click", async () => {
+        const v = window._verItems[+b.dataset.ver];
+        const rr = await fetch(`/jobs/${currentJobId}/platform-posts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ posts: v.posts }) });
+        const dd = await rr.json(); if (rr.ok) { fillPosts(dd.platform_posts); out.innerHTML = '<div style="margin:8px 0">Restored ✓</div>'; }
+      }));
+    } catch (e) { out.textContent = "Couldn't load versions."; }
   });
   // --- pre-publish risk scan
   document.getElementById("riskBtn").addEventListener("click", async () => {

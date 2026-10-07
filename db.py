@@ -410,7 +410,17 @@ def update_history_platform_posts(entry_id: str, posts: dict):
     if not configured():
         return
     with _conn() as conn:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            try:
+                cur.execute("CREATE TABLE IF NOT EXISTS caption_versions (id BIGSERIAL PRIMARY KEY, history_id TEXT, ts TIMESTAMPTZ DEFAULT now(), posts JSONB)")
+                cur.execute("SELECT platform_posts FROM history WHERE id = %s", (entry_id,))
+                row = cur.fetchone()
+                old = (row or {}).get("platform_posts")
+                if old and old != (posts or {}):
+                    cur.execute("INSERT INTO caption_versions (history_id, posts) VALUES (%s, %s)", (str(entry_id), json.dumps(old)))
+                    cur.execute("DELETE FROM caption_versions WHERE history_id = %s AND id NOT IN (SELECT id FROM caption_versions WHERE history_id = %s ORDER BY id DESC LIMIT 20)", (str(entry_id), str(entry_id)))
+            except Exception as e:
+                print(f"VERSION SNAPSHOT FAILED: {e}", flush=True)
             cur.execute("UPDATE history SET platform_posts = %s WHERE id = %s", (json.dumps(posts or {}), entry_id))
 
 
@@ -910,3 +920,11 @@ def ideas_delete(iid):
     with _conn() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM ideas WHERE id = %s", (iid,))
+
+
+def caption_versions(entry_id: str):
+    with _conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("CREATE TABLE IF NOT EXISTS caption_versions (id BIGSERIAL PRIMARY KEY, history_id TEXT, ts TIMESTAMPTZ DEFAULT now(), posts JSONB)")
+            cur.execute("SELECT id, ts, posts FROM caption_versions WHERE history_id = %s ORDER BY id DESC LIMIT 20", (str(entry_id),))
+            return [{"id": r["id"], "ts": r["ts"].isoformat(), "posts": r["posts"]} for r in cur.fetchall()]

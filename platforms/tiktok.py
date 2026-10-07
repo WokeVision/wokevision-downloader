@@ -354,28 +354,3 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     publish_id = _upload_video(access_token, video_url, caption, options=post)
     _poll_publish_status(access_token, publish_id)
     return {"publish_id": publish_id}
-
-
-def audit_status() -> dict:
-    """Asks TikTok which privacy levels this account may post with. Apps that
-    haven't passed TikTok's content-posting audit are limited to private
-    (SELF_ONLY); once approved, PUBLIC_TO_EVERYONE appears in the list."""
-    conn = db.get_connection(PLATFORM)
-    if not conn or not conn.get("access_token"):
-        return {"ok": False, "state": "not_connected", "detail": "TikTok isn't connected."}
-    try:
-        refresh_if_needed()
-        conn = db.get_connection(PLATFORM)
-        r = requests.post("https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
-                          headers={"Authorization": f"Bearer {conn['access_token']}", "Content-Type": "application/json; charset=UTF-8"},
-                          json={}, timeout=20)
-        data = r.json() if r.content else {}
-    except Exception as e:
-        return {"ok": False, "state": "error", "detail": str(e)}
-    err = (data.get("error") or {})
-    if r.status_code != 200 or err.get("code") not in (None, "ok"):
-        return {"ok": False, "state": "error", "detail": f"{r.status_code} {err.get('code')}: {err.get('message')}"}
-    opts = (data.get("data") or {}).get("privacy_level_options") or []
-    public = "PUBLIC_TO_EVERYONE" in opts
-    return {"ok": True, "state": "approved" if public else "private_only", "options": opts,
-            "detail": "Public posting is available." if public else "TikTok is still only offering private posting to this app, so it looks like it hasn't been approved yet."}

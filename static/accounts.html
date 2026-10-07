@@ -157,12 +157,6 @@
       row.innerHTML = '<b style="min-width:110px">' + esc(c.label) + '</b><span style="opacity:.65;flex:1;font-size:13px">' + esc(st) + (c.ok && c.status_label ? " · " + esc(c.status_label) : "") + '</span>';
       var a = document.createElement("a"); a.className = "btn2" + (c.ok ? "" : " accent"); a.href = "/connections/" + c.platform + "/start"; a.textContent = c.connected ? "Reconnect" : "Connect";
       row.appendChild(a); box.appendChild(row);
-      if (c.platform === "tiktok" && c.connected) {
-        var chk = document.createElement("button"); chk.className = "btn2"; chk.textContent = "Check approval";
-        var out = document.createElement("div"); out.style.cssText = "font-size:12.5px;opacity:.8;margin:-2px 0 4px 120px";
-        chk.onclick = function () { out.textContent = "Asking TikTok…"; fetch("/api/tiktok/audit-status").then(function (r) { return r.json(); }).then(function (j) { out.textContent = (j.state === "approved" ? "✅ " : j.state === "private_only" ? "⏳ " : "⚠️ ") + j.detail + (j.options ? " (options: " + j.options.join(", ") + ")" : ""); }).catch(function () { out.textContent = "Couldn't check."; }); };
-        row.insertBefore(chk, a); box.appendChild(out);
-      }
     });
   }).catch(function () { document.getElementById("connRows").textContent = "Couldn't load logins."; });
   document.getElementById("reload").addEventListener("click", load);

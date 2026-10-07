@@ -1306,11 +1306,6 @@ def list_connections():
     return {"connections": out}
 
 
-@app.get("/api/tiktok/audit-status")
-def tiktok_audit_status():
-    return PLATFORM_MODULES["tiktok"].audit_status()
-
-
 @app.get("/connections/{platform}/start")
 def connect_start(platform: str):
     module = PLATFORM_MODULES.get(platform)

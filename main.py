@@ -1356,7 +1356,7 @@ _MEETING_LINK_KEY = "meeting_link"
 
 def _make_meeting(start: _dt.datetime, minutes: int, topic: str):
     """Returns (join_url, how). A fresh Zoom meeting when the Zoom API is set up
-    (ZOOM_ACCOUNT_ID / ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET), otherwise the
+    (ZOOM_ACCOUNT_ID / ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET, optional ZOOM_USER = your Zoom login email), otherwise the
     standing meeting link saved on the Bio link page."""
     acct, cid, sec = (os.environ.get(k) for k in ("ZOOM_ACCOUNT_ID", "ZOOM_CLIENT_ID", "ZOOM_CLIENT_SECRET"))
     if acct and cid and sec:
@@ -1365,7 +1365,7 @@ def _make_meeting(start: _dt.datetime, minutes: int, topic: str):
             tok = _rq.post("https://zoom.us/oauth/token", params={"grant_type": "account_credentials", "account_id": acct},
                            auth=(cid, sec), timeout=20)
             tok.raise_for_status()
-            m = _rq.post("https://api.zoom.us/v2/users/me/meetings", headers={"Authorization": f"Bearer {tok.json()['access_token']}"},
+            m = _rq.post(f"https://api.zoom.us/v2/users/{os.environ.get('ZOOM_USER') or _bio_page()['contact_email'] or 'me'}/meetings", headers={"Authorization": f"Bearer {tok.json()['access_token']}"},
                          json={"topic": topic[:150], "type": 2, "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                                "duration": minutes, "timezone": "UTC", "settings": {"join_before_host": True}}, timeout=20)
             m.raise_for_status()

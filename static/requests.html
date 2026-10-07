@@ -59,7 +59,7 @@ function card(r){
       if(r.status==="declined"&&r.owner_note)h+='<div class="sm">Reason sent: '+esc(r.owner_note)+'</div>';
     }
   }
-  return h+((r.status==="declined"||r.status==="done"||r.status==="error")?'<div style="margin-top:8px"><button class="btn" data-ar="'+r.id+'">Remove</button></div>':'')+'</div>';
+  return h+((r.status==="declined"||r.status==="done"||r.status==="error")?'<div class="row" style="margin-top:8px">'+(r.status==="done"?'<button class="btn" data-ro="'+r.id+'">Undo — mark as not handled</button>':'')+'<button class="btn" data-ar="'+r.id+'">Remove</button></div>':'')+'</div>';
 }
 function find(id){return items.filter(function(x){return x.id===id;})[0];}
 function render(){
@@ -79,6 +79,7 @@ function render(){
   q("data-cc",function(id){var c=find(id),t=fmt(new Date(document.getElementById("ct"+id).value||Date.now()).toISOString());
     sendMail(id,c.email,"Your consultation","Hi "+c.name+",\n\nThanks for getting in touch. How does "+t+" work for a short call? Reply to confirm, or suggest another time.\n\nBest wishes");});
   q("data-done",function(id){j("/api/requests/"+id+"/done","POST").then(load);});
+  q("data-ro",function(id){j("/api/requests/"+id+"/reopen","POST").then(load);});
   q("data-ar",function(id){j("/api/requests/"+id,"DELETE").then(load);});
 }
 var timer;

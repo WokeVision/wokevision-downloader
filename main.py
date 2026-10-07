@@ -1411,7 +1411,22 @@ def request_done(rid: str):
     r = db.req_get(rid)
     if not r:
         raise HTTPException(status_code=404, detail="Unknown request.")
-    db.req_update(rid, status="done")
+    if r["status"] != "done":
+        db.req_update(rid, status="done", data={"prev_status": r["status"]})
+    return {"ok": True}
+
+
+@app.post("/api/requests/{rid}/reopen")
+def request_reopen(rid: str):
+    """Undoes 'Mark handled' — puts it back to what it was (needs review / invite sent)."""
+    r = db.req_get(rid)
+    if not r:
+        raise HTTPException(status_code=404, detail="Unknown request.")
+    if r["status"] == "done":
+        prev = (r.get("data") or {}).get("prev_status")
+        if prev not in ("pending", "confirmed", "approved"):
+            prev = "confirmed" if (r.get("data") or {}).get("invited") else "pending"
+        db.req_update(rid, status=prev)
     return {"ok": True}
 
 

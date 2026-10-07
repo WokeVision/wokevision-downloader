@@ -225,3 +225,34 @@ def verify_session_token(token: str) -> bool:
         return float(data.get("exp", 0)) > time.time()
     except Exception:
         return False
+
+
+# --- Signed, expiring /files links (opt-in via SIGNED_FILES=1) ---------------
+
+def signed_files_enabled() -> bool:
+    return os.environ.get("SIGNED_FILES", "").strip().lower() in ("1", "true", "yes", "on") and configured()
+
+
+def _file_sig(name: str, exp: int) -> str:
+    return _sign(f"file:{name}:{exp}")
+
+
+def sign_file_url(url: str, ttl: int = 6 * 3600) -> str:
+    """Append ?exp&sig to a /files/<name> URL when signing is switched on;
+    otherwise return it unchanged. Used for URLs handed to outside fetchers
+    (platform publishing, scheduled posts, client share pages)."""
+    if not url or not signed_files_enabled() or "/files/" not in url or "sig=" in url:
+        return url
+    name = url.split("/files/", 1)[1].split("?", 1)[0]
+    exp = int(time.time()) + ttl
+    return f"{url.split('?', 1)[0]}?exp={exp}&sig={_file_sig(name, exp)}"
+
+
+def valid_file_sig(name: str, exp, sig) -> bool:
+    try:
+        exp = int(exp)
+    except Exception:
+        return False
+    if not sig or exp < time.time():
+        return False
+    return hmac.compare_digest(str(sig), _file_sig(name, exp))

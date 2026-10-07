@@ -2008,7 +2008,12 @@ def api_translate(req: TranslateRequest):
 
 
 @app.get("/files/{filename}")
-def get_file(filename: str):
+def get_file(filename: str, request: Request, exp: str = "", sig: str = ""):
+    if auth.signed_files_enabled():
+        # Logged-in browser (cookie) or a valid unexpired signed link.
+        if not (auth.verify_session_token(request.cookies.get(auth.SESSION_COOKIE))
+                or auth.valid_file_sig(os.path.basename(filename), exp, sig)):
+            raise HTTPException(status_code=403, detail="This link has expired or isn't valid.")
     path = os.path.join(DOWNLOAD_DIR, os.path.basename(filename))
     if not os.path.exists(path):
         # Local disk is wiped on every redeploy; pull from durable storage.
@@ -2153,6 +2158,7 @@ def publish(req: PublishRequest):
     video_url = job["result"]["video_url"]
     if base_url and video_url.startswith("/"):
         video_url = base_url + video_url
+    video_url = auth.sign_file_url(video_url)
     caption = job.get("posting_caption") or job["result"].get("caption") or ""
     platform_posts = normalize_platform_posts(job.get("platform_posts") or {}, caption)
     if (job.get("meta") or {}).get("paid_promo"):
@@ -3780,7 +3786,7 @@ def _camp_report(c):
         fn = it.get("video_filename")
         out.append({
             "id": it["id"], "title": it.get("title") or "", "caption": it.get("posting_caption") or "",
-            "video_url": f"{base}/files/{fn}" if fn else None, "approval": it.get("approval"), "approval_note": it.get("approval_note"),
+            "video_url": auth.sign_file_url(f"{base}/files/{fn}", 7 * 86400) if fn else None, "approval": it.get("approval"), "approval_note": it.get("approval_note"),
             "posts": [{"platform": PLATFORM_LABELS.get(p["platform"], p["platform"]), "run_at": p["run_at"], "status": p["status"],
                        "url": _post_url(p["platform"], p.get("result") or {}) if p["status"] == "done" else None,
                        **(stats.get(_post_url(p["platform"], p.get("result") or {}) if p["status"] == "done" else None) or {})} for p in it["posts"]],

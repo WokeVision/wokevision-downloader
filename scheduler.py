@@ -11,6 +11,7 @@ import time
 import threading
 import datetime
 
+import auth
 import db
 import notify
 import storage
@@ -49,7 +50,7 @@ def _publish_one(modules: dict, item: dict) -> dict:
                 storage.fetch_to(lp, fn)
             except Exception as ex:
                 print(f"SCHEDULE: storage fetch failed for {fn}: {ex}", flush=True)
-            urls.append(f"{base}/files/{fn}")
+            urls.append(auth.sign_file_url(f"{base}/files/{fn}"))
         caption = e.get("posting_caption") or ""
         posts = normalize_platform_posts(e.get("platform_posts") or {}, caption)
         try:
@@ -67,7 +68,7 @@ def _publish_one(modules: dict, item: dict) -> dict:
         storage.fetch_to(local, filename)
     except Exception as ex:
         print(f"SCHEDULE: storage fetch failed for {filename}: {ex}", flush=True)
-    video_url = f"{base}/files/{filename}"
+    video_url = auth.sign_file_url(f"{base}/files/{filename}")
     caption = e.get("posting_caption") or ""
     posts = normalize_platform_posts(e.get("platform_posts") or {}, caption)
     post = posts.get(platform)

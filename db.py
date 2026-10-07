@@ -928,3 +928,94 @@ def caption_versions(entry_id: str):
             cur.execute("CREATE TABLE IF NOT EXISTS caption_versions (id BIGSERIAL PRIMARY KEY, history_id TEXT, ts TIMESTAMPTZ DEFAULT now(), posts JSONB)")
             cur.execute("SELECT id, ts, posts FROM caption_versions WHERE history_id = %s ORDER BY id DESC LIMIT 20", (str(entry_id),))
             return [{"id": r["id"], "ts": r["ts"].isoformat(), "posts": r["posts"]} for r in cur.fetchall()]
+
+
+# --- Link-in-bio ------------------------------------------------------------------------
+_BIO_DDL = (
+    "CREATE TABLE IF NOT EXISTS bio_links (id BIGSERIAL PRIMARY KEY, label TEXT, url TEXT, sort INT DEFAULT 0, "
+    "active BOOLEAN DEFAULT true, campaign_id TEXT, created_at TIMESTAMPTZ DEFAULT now())",
+    "CREATE TABLE IF NOT EXISTS bio_clicks (id BIGSERIAL PRIMARY KEY, link_id BIGINT, ts TIMESTAMPTZ DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS bio_clicks_link ON bio_clicks (link_id, ts)",
+    "CREATE TABLE IF NOT EXISTS bio_page (id INT PRIMARY KEY, data JSONB)",
+)
+
+
+def _bio_cur(conn, **kw):
+    cur = conn.cursor(**kw)
+    for d in _BIO_DDL:
+        cur.execute(d)
+    return cur
+
+
+def bio_page_get():
+    with _conn() as conn:
+        cur = _bio_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT data FROM bio_page WHERE id = 1")
+        row = cur.fetchone()
+        return (row or {}).get("data") or {}
+
+
+def bio_page_save(data: dict):
+    with _conn() as conn:
+        cur = _bio_cur(conn)
+        cur.execute("INSERT INTO bio_page (id, data) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data", (json.dumps(data),))
+
+
+def bio_links_list(only_active=False, with_stats=False):
+    with _conn() as conn:
+        cur = _bio_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT id, label, url, sort, active, campaign_id FROM bio_links " + ("WHERE active " if only_active else "") + "ORDER BY sort, id")
+        rows = [dict(r) for r in cur.fetchall()]
+        if with_stats:
+            cur.execute("SELECT link_id, count(*) AS total, count(*) FILTER (WHERE ts > now() - interval '7 days') AS week FROM bio_clicks GROUP BY link_id")
+            st = {r["link_id"]: r for r in cur.fetchall()}
+            for r in rows:
+                r["clicks"] = int((st.get(r["id"]) or {}).get("total") or 0)
+                r["clicks_7d"] = int((st.get(r["id"]) or {}).get("week") or 0)
+        return rows
+
+
+def bio_link_save(lid, label, url, active, campaign_id):
+    with _conn() as conn:
+        cur = _bio_cur(conn)
+        if lid:
+            cur.execute("UPDATE bio_links SET label=%s, url=%s, active=%s, campaign_id=%s WHERE id=%s", (label, url, active, campaign_id or None, lid))
+        else:
+            cur.execute("INSERT INTO bio_links (label, url, active, campaign_id, sort) VALUES (%s,%s,%s,%s,(SELECT coalesce(max(sort),0)+1 FROM bio_links))", (label, url, active, campaign_id or None))
+
+
+def bio_link_delete(lid):
+    with _conn() as conn:
+        cur = _bio_cur(conn)
+        cur.execute("DELETE FROM bio_links WHERE id=%s", (lid,))
+        cur.execute("DELETE FROM bio_clicks WHERE link_id=%s", (lid,))
+
+
+def bio_links_reorder(ids):
+    with _conn() as conn:
+        cur = _bio_cur(conn)
+        for i, lid in enumerate(ids):
+            cur.execute("UPDATE bio_links SET sort=%s WHERE id=%s", (i, int(lid)))
+
+
+def bio_click(lid):
+    """Records a click and returns the destination url (None if unknown/inactive)."""
+    with _conn() as conn:
+        cur = _bio_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT url FROM bio_links WHERE id=%s AND active", (lid,))
+        row = cur.fetchone()
+        return (row or {}).get("url")
+
+
+def bio_click_record(lid):
+    with _conn() as conn:
+        cur = _bio_cur(conn)
+        cur.execute("INSERT INTO bio_clicks (link_id) VALUES (%s)", (lid,))
+
+
+def bio_campaign_clicks(cid):
+    with _conn() as conn:
+        cur = _bio_cur(conn, cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""SELECT l.label, count(c.id) AS clicks FROM bio_links l LEFT JOIN bio_clicks c ON c.link_id = l.id
+                       WHERE l.campaign_id = %s GROUP BY l.id, l.label ORDER BY l.id""", (cid,))
+        return [dict(r) for r in cur.fetchall()]

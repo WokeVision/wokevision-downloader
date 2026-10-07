@@ -18,6 +18,7 @@
         '<img src="/static/assets/logo-mark.png" alt="WokeVision" /></a>' +
       '<a class="wvNavLink' + (active("/editor") ? " active" : "") + '" href="/editor">Video Editor</a>' +
       '<a class="wvNavLink' + (active("/clipping") ? " active" : "") + '" href="/clipping">Clipping</a>' +
+      '<a class="wvNavLink' + (active("/bio") ? " active" : "") + '" href="/bio">Bio link</a>' +
       '<a class="wvNavLink' + (active("/ideas") ? " active" : "") + '" href="/ideas">Ideas</a>' +
       '<a class="wvNavLink' + (active("/campaigns") ? " active" : "") + '" href="/campaigns">Campaigns</a>' +
       '<a class="wvNavLink' + (active("/schedule") ? " active" : "") + '" href="/schedule">Schedule</a>' +

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0A0A0C" /><link rel="icon" href="/static/assets/logo-mark.png" />
+<title>WokeVision · Links</title>
+<meta name="robots" content="noindex" />
+<style>
+  :root { color-scheme: dark; --bg:#0A0A0C; --text:#F5F5F7; --faint:rgba(245,245,247,.55); --accent:#FF2B3C; }
+  * { box-sizing: border-box; } html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; min-height: 100vh; display: flex; justify-content: center; padding: 40px 18px 60px; background: radial-gradient(circle at 50% 0%, rgba(255,43,60,.16), transparent 55%), var(--bg); }
+  main { width: 100%; max-width: 460px; text-align: center; }
+  img { width: 84px; height: 84px; border-radius: 50%; object-fit: cover; background: #15151a; }
+  h1 { font-size: 22px; margin: 14px 0 2px; letter-spacing: -.01em; } .h { color: var(--faint); font-size: 14px; margin-bottom: 4px; } .t { font-size: 14.5px; margin: 10px 0 24px; line-height: 1.45; }
+  a.l { display: block; padding: 15px 18px; margin: 0 0 12px; border-radius: 16px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); color: var(--text); text-decoration: none; font-weight: 650; font-size: 16px; transition: transform .12s, background .12s; }
+  a.l:hover, a.l:focus-visible { background: rgba(255,255,255,.12); transform: translateY(-1px); outline: none; }
+  a.l:first-of-type { background: var(--accent); border-color: transparent; }
+</style></head><body>
+<main>
+  <img src="/static/assets/logo-mark.png" alt="" />
+  <h1 id="title">WokeVision</h1><div class="h" id="handle"></div><div class="t" id="text"></div>
+  <div id="links"></div>
+</main>
+<script>
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+fetch("/api/public/bio").then(function(r){return r.json();}).then(function(d){
+  document.getElementById("title").textContent=d.title; document.title=d.title+" · Links";
+  document.getElementById("handle").textContent=d.handle; document.getElementById("text").textContent=d.text;
+  document.getElementById("links").innerHTML=d.links.map(function(l){return '<a class="l" href="/go/'+l.id+'" rel="noopener">'+esc(l.label)+'</a>';}).join("")||'<div class="h">Nothing here yet.</div>';
+});
+</script></body></html>

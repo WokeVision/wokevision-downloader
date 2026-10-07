@@ -29,6 +29,9 @@ fetch("/api/campaigns/" + id + "/report").then(function (r) { return r.json(); }
   document.getElementById("t").textContent = c.name; var posted = 0;
   d.items.forEach(function (i) { i.posts.forEach(function (p) { if (p.status === "done") posted++; }); });
   document.getElementById("s").textContent = [c.sponsor, d.items.length + " video" + (d.items.length == 1 ? "" : "s"), posted + " posted", new Date().toLocaleDateString()].filter(Boolean).join(" · ");
+  var tv = 0; d.items.forEach(function (i) { i.posts.forEach(function (p) { tv += p.views || 0; }); });
+  if (tv) document.getElementById("s").textContent += " · " + tv.toLocaleString() + " total views";
+  if (d.bio_clicks && d.bio_clicks.length) { var bc = d.bio_clicks.reduce(function (a, b) { return a + b.clicks; }, 0); document.getElementById("s").textContent += " · " + bc.toLocaleString() + " link-in-bio clicks"; }
   document.getElementById("items").innerHTML = d.items.map(function (i) {
     return '<div class="card"><div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:14px">' + (i.video_url ? '<video src="' + esc(i.video_url) + '#t=0.4" preload="metadata" muted playsinline></video>' : "") +
       '<div style="min-width:0"><b>' + esc(i.title) + '</b>' + (i.approval ? ' <span class="pill ' + (i.approval === "approved" ? "ok" : "chg") + '">' + (i.approval === "approved" ? "Approved" : "Changes requested") + '</span>' : "") +

@@ -72,8 +72,9 @@ def _startup():
 # half-configured deploy (missing SETUP_CODE/SESSION_SECRET) would lock
 # everyone out including the owner, so auth.configured() gates the whole
 # thing -- if it's not set up yet, the app behaves exactly as before.
-PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/", "/c/", "/api/public/")
+PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/", "/c/", "/api/public/", "/go/")
 PUBLIC_PATHS = {
+    "/links",               # public link-in-bio page
     "/sw.js",               # PWA service worker (must be at the root to cover the whole site)
     "/manifest.webmanifest",
     "/",                    # public homepage
@@ -923,6 +924,97 @@ def ideas_add(req: IdeaModel):
 @app.delete("/api/ideas/{iid}")
 def ideas_delete(iid: int):
     db.ideas_delete(iid)
+    return {"ok": True}
+
+
+# --- Link-in-bio ---
+def _clean_link_url(u: str) -> str:
+    u = (u or "").strip()
+    if u and not re.match(r"^https?://", u, re.I):
+        u = "https://" + u
+    if not re.match(r"^https?://[^\s/]+\.[^\s/]+", u, re.I):
+        raise HTTPException(status_code=400, detail="That doesn't look like a valid link.")
+    return u[:1000]
+
+
+@app.get("/links")
+def bio_public_page():
+    return FileResponse("static/links.html")
+
+
+@app.get("/api/public/bio")
+def bio_public_data():
+    page = db.bio_page_get()
+    return {"title": page.get("title") or "WokeVision", "handle": page.get("handle") or "@wokevision_", "text": page.get("text") or "",
+            "links": [{"id": l["id"], "label": l["label"]} for l in db.bio_links_list(only_active=True)]}
+
+
+@app.get("/go/{lid}")
+def bio_go(lid: int, request: Request):
+    url = db.bio_click(lid)
+    if not url:
+        return RedirectResponse("/links", status_code=302)
+    ua = (request.headers.get("user-agent") or "").lower()
+    if not re.search(r"bot|crawl|spider|preview|facebookexternalhit|slurp", ua):
+        try:
+            db.bio_click_record(lid)
+        except Exception as e:
+            print(f"BIO CLICK FAILED: {e}", flush=True)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/bio")
+def bio_admin_page():
+    return FileResponse("static/bio.html")
+
+
+class BioPage(BaseModel):
+    title: str = ""
+    handle: str = ""
+    text: str = ""
+
+
+class BioLink(BaseModel):
+    id: int = 0
+    label: str
+    url: str
+    active: bool = True
+    campaign_id: str = ""
+
+
+@app.get("/api/bio")
+def bio_admin_data():
+    return {"page": db.bio_page_get(), "links": db.bio_links_list(with_stats=True),
+            "campaigns": [{"id": c["id"], "name": c["name"]} for c in db.camp_list()]}
+
+
+@app.put("/api/bio/page")
+def bio_admin_page_save(req: BioPage):
+    db.bio_page_save({"title": req.title[:60], "handle": req.handle[:40], "text": req.text[:240]})
+    return {"ok": True}
+
+
+@app.post("/api/bio/link")
+def bio_admin_link_save(req: BioLink):
+    if not req.label.strip():
+        raise HTTPException(status_code=400, detail="Give the button a label.")
+    db.bio_link_save(req.id or None, req.label.strip()[:80], _clean_link_url(req.url), req.active, req.campaign_id)
+    return {"ok": True}
+
+
+@app.delete("/api/bio/link/{lid}")
+def bio_admin_link_delete(lid: int):
+    db.bio_link_delete(lid)
+    return {"ok": True}
+
+
+class BioOrder(BaseModel):
+    ids: list
+
+
+@app.put("/api/bio/order")
+def bio_admin_order(req: BioOrder):
+    db.bio_links_reorder([int(i) for i in req.ids])
     return {"ok": True}
 
 
@@ -2711,7 +2803,11 @@ def campaign_report(cid: str):
     c = db.camp_get(cid)
     if not c:
         raise HTTPException(status_code=404, detail="Unknown campaign.")
-    return {"campaign": _camp_public(c), "items": _camp_report(c)}
+    try:
+        clicks = db.bio_campaign_clicks(cid)
+    except Exception:
+        clicks = []
+    return {"campaign": _camp_public(c), "items": _camp_report(c), "bio_clicks": clicks}
 
 
 @app.get("/api/public/campaign/{token}")

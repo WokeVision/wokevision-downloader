@@ -217,6 +217,7 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
             "media_type": "REELS",
             "caption": caption or "",
             "access_token": access_token,
+            **({"thumb_offset": int((post or {}).get("cover_ms"))} if (post or {}).get("cover_ms") is not None else {}),
         },
         timeout=60,
     )

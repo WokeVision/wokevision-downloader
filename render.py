@@ -453,3 +453,89 @@ def render_video(source_path: str, caption_text: str, output_path: str, progress
     finally:
         if os.path.exists(staged_path):
             os.remove(staged_path)
+
+
+# --- Final polish: trim / silence removal / loudness ------------------------------------
+# Applied to the finished (captioned) video, so burned-in captions and the
+# watermark stay in sync with the picture automatically.
+
+def _has_audio(path: str) -> bool:
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", path],
+                       capture_output=True, text=True, timeout=30)
+    return bool(r.stdout.strip())
+
+
+def _keep_segments(path: str, ts, te, noise_db: int = -32, min_silence: float = 0.55, pad: float = 0.12):
+    """[(start, end)] of the parts worth keeping, in time relative to the
+    trimmed start. Returns None when nothing useful could be detected."""
+    cmd = ["ffmpeg", "-hide_banner", "-nostats"]
+    if ts:
+        cmd += ["-ss", f"{ts:.2f}"]
+    if te:
+        cmd += ["-to", f"{te:.2f}"]
+    cmd += ["-i", path, "-vn", "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}", "-f", "null", "-"]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    starts = [float(m) for m in re.findall(r"silence_start: (-?[\d.]+)", r.stderr)]
+    ends = [float(m) for m in re.findall(r"silence_end: ([\d.]+)", r.stderr)]
+    dm = re.search(r"Duration: (\d+):(\d+):([\d.]+)", r.stderr)
+    total = _probe_duration(path) or 0
+    if te or ts:
+        total = max(0.0, (te or total) - (ts or 0))
+    if not starts or not total:
+        return None
+    segs, cur = [], 0.0
+    for i, s in enumerate(starts):
+        e = ends[i] if i < len(ends) else total
+        if s - cur > 0.25:
+            segs.append((max(0.0, cur - pad), min(total, s + pad)))
+        cur = e
+    if total - cur > 0.25:
+        segs.append((max(0.0, cur - pad), total))
+    merged = []
+    for a, b in segs:
+        if merged and a - merged[-1][1] < 0.1:
+            merged[-1] = (merged[-1][0], b)
+        else:
+            merged.append((a, b))
+    return merged[:180] or None
+
+
+def post_process(path: str, opts: dict) -> None:
+    """opts: {trim_start, trim_end (seconds, on the pre-trim timeline), silence, loudness}.
+    Rewrites `path` in place. No-op when nothing is requested."""
+    opts = opts or {}
+    ts = float(opts.get("trim_start") or 0) or None
+    te = float(opts.get("trim_end") or 0) or None
+    if ts and te and te <= ts + 0.5:
+        raise RuntimeError("The trim end has to be after the start.")
+    silence, loud = bool(opts.get("silence")), bool(opts.get("loudness"))
+    if not (ts or te or silence or loud):
+        return
+    audio = _has_audio(path)
+    silence = silence and audio
+    loud = loud and audio
+    tmp = path + ".pp.mp4"
+    cmd = ["ffmpeg", "-y"]
+    if ts:
+        cmd += ["-ss", f"{ts:.2f}"]
+    if te:
+        cmd += ["-to", f"{te:.2f}"]
+    cmd += ["-i", path]
+    segs = _keep_segments(path, ts, te) if silence else None
+    reencode = bool(ts or te or segs)
+    if segs:
+        expr = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in segs)
+        fc = f"[0:v]select='{expr}',setpts=N/FRAME_RATE/TB[v];[0:a]aselect='{expr}',asetpts=N/SR/TB" + (",loudnorm=I=-14:TP=-1.5:LRA=11" if loud else "") + "[a]"
+        cmd += ["-filter_complex", fc, "-map", "[v]", "-map", "[a]"]
+    else:
+        cmd += ["-map", "0:v", "-map", "0:a?"]
+        if loud:
+            cmd += ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
+    cmd += (["-c:v", "libx264", "-preset", "ultrafast", "-crf", "21"] if reencode else ["-c:v", "copy"])
+    cmd += ["-c:a", "aac", "-movflags", "+faststart", tmp]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    if r.returncode != 0 or not os.path.exists(tmp) or os.path.getsize(tmp) == 0:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise RuntimeError("Couldn't apply the trim/polish: " + (r.stderr or "")[-300:])
+    os.replace(tmp, path)

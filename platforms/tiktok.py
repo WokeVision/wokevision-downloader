@@ -257,7 +257,7 @@ def _upload_video(access_token: str, video_url: str, caption: str, options: dict
                 "disable_duet": not options.get("allow_duet", True),
                 "disable_stitch": not options.get("allow_stitch", True),
                 "disable_comment": not options.get("allow_comments", True),
-                "video_cover_timestamp_ms": 1000,
+                "video_cover_timestamp_ms": int(options.get("cover_ms") if options.get("cover_ms") is not None else 1000),
                 # Third-party paid partnership -> "branded content" disclosure.
                 "brand_content_toggle": bool(options.get("paid_promo")),
                 "brand_organic_toggle": False,

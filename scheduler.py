@@ -42,6 +42,8 @@ def _publish_one(modules: dict, item: dict) -> dict:
     post = posts.get(platform)
     if (e.get("meta") or {}).get("paid_promo"):
         post = apply_disclosure(platform, post)
+    if (e.get("meta") or {}).get("cover_ms") is not None and isinstance(post, dict):
+        post = {**post, "cover_ms": e["meta"]["cover_ms"]}
     try:
         outcome = module.publish_video(video_url, caption, post=post)
         return {"ok": True, **(outcome or {})}

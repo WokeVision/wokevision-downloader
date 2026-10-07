@@ -327,6 +327,8 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
         "captions_style": meta.get("captions_style", "classic"),
         "credit": caption_credit_handle(meta),
         "campaign_id": (meta or {}).get("campaign_id", ""),
+        "post": (meta or {}).get("post") or {},
+        "cover_ms": (meta or {}).get("cover_ms"),
         "watermark": ({"pos": (meta.get("wm") or {}).get("pos", "right"),
                        "url": f"{base_url}/files/{(meta.get('wm') or {}).get('file')}"}
                       if (meta.get("wm") or {}).get("file") else None),
@@ -536,6 +538,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
             progress_cb=lambda frac: _set_stage(job_id, "rendering", 0.5 + frac * 0.5),
             cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
         )
+        render.post_process(output_path, (meta or {}).get("post"))
         with JOBS_LOCK:
             _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
 
@@ -632,6 +635,7 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
         progress_cb=lambda frac: _set_stage(job_id, "rendering", progress_base + frac * (1 - progress_base)),
         cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
     )
+    render.post_process(output_path, (meta or {}).get("post"))
     with JOBS_LOCK:
         _record_stage_duration("rendering", time.time() - JOBS[job_id].get("_stage_started_at", time.time()))
 
@@ -1427,6 +1431,9 @@ def publish(req: PublishRequest):
     platform_posts = normalize_platform_posts(job.get("platform_posts") or {}, caption)
     if (job.get("meta") or {}).get("paid_promo"):
         platform_posts = {p: apply_disclosure(p, v) for p, v in platform_posts.items()}
+    _cv = (job.get("meta") or {}).get("cover_ms")
+    if _cv is not None:
+        platform_posts = {p: ({**v, "cover_ms": _cv} if isinstance(v, dict) else v) for p, v in platform_posts.items()}
 
     publish_job_id = str(uuid.uuid4())
     with JOBS_LOCK:
@@ -1494,7 +1501,7 @@ def get_history(entry_id: str):
         "publish_results": e.get("publish_results") or {},
         "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
         **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
-           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id")},
+           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms")},
     }
 
 
@@ -1610,6 +1617,51 @@ def set_paid_promo(job_id: str, req: PaidPromoRequest):
         db.update_history_meta(job_id, meta)
     except Exception as e:
         print(f"PAID PROMO SAVE FAILED: {e}", flush=True)
+    return {"ok": True}
+
+
+class FinishRequest(BaseModel):
+    trim_start: float = 0
+    trim_end: float = 0
+    silence: bool = False
+    loudness: bool = False
+
+
+@app.put("/jobs/{job_id}/finish")
+def set_finish(job_id: str, req: FinishRequest):
+    """Trim / cut the silences / even out the loudness of the finished video.
+    Saved on the job so later caption edits keep it, then re-rendered."""
+    if req.trim_end and req.trim_start and req.trim_end <= req.trim_start + 0.5:
+        raise HTTPException(status_code=400, detail="The trim end has to be after the start.")
+    post = {"trim_start": max(0.0, req.trim_start), "trim_end": max(0.0, req.trim_end), "silence": req.silence, "loudness": req.loudness}
+    job = _begin_rerender(job_id, "Applying trim & polish")
+    with JOBS_LOCK:
+        job["meta"] = {**(job.get("meta") or {}), "post": post}
+        meta = job["meta"]
+    try:
+        db.update_history_meta(job_id, meta)
+    except Exception as e:
+        print(f"FINISH SAVE FAILED: {e}", flush=True)
+    threading.Thread(target=_run_set_on_screen_caption, args=(job_id, job.get("on_screen_caption", "")), daemon=True).start()
+    return {"ok": True}
+
+
+class CoverRequest(BaseModel):
+    ms: int = 1000
+
+
+@app.put("/jobs/{job_id}/cover")
+def set_cover(job_id: str, req: CoverRequest):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown job id")
+        job["meta"] = {**(job.get("meta") or {}), "cover_ms": max(0, min(req.ms, 600000))}
+        meta = job["meta"]
+    try:
+        db.update_history_meta(job_id, meta)
+    except Exception as e:
+        print(f"COVER SAVE FAILED: {e}", flush=True)
     return {"ok": True}
 
 

@@ -141,6 +141,9 @@
   .ccSel { background: rgba(0,0,0,.35); color: inherit; border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 12.5px; }
   .ccRow { grid-template-columns: 62px 1fr 28px; } .ccRow .t input { width: 56px; background: rgba(0,0,0,.35); color: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 3px 4px; font-size: 11.5px; margin-bottom: 3px; }
   .hookOpts { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; } .hookOpts button { text-align: left; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,.06); color: inherit; font: inherit; font-size: 13.5px; cursor: pointer; } .hookOpts button small { display: block; opacity: .55; text-transform: uppercase; letter-spacing: .06em; font-size: 10.5px; margin-bottom: 2px; }
+  .polish { margin-top: 12px; text-align: left; } .polish summary { cursor: pointer; font-size: 13.5px; font-weight: 600; opacity: .85; }
+  .polRow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 10px 0 6px; font-size: 13px; } .polRow input { width: 72px; background: rgba(0,0,0,.35); color: inherit; border: 1px solid var(--border); border-radius: 8px; padding: 6px; margin: 0; }
+  .polChk { display: flex; gap: 8px; align-items: center; font-size: 13px; margin: 6px 0; cursor: pointer; } .polNote { font-size: 12px; opacity: .55; margin: 6px 0 8px; }
   .ccEmpty { font-size: 13px; opacity: .65; padding: 6px 0 10px; }
 
   /* Touch devices: bigger, easier targets */
@@ -707,6 +710,14 @@
       <div class="vidEmpty" id="vidEmpty">Your edited video appears here</div>
       <video id="preview" controls playsinline hidden></video>
       <a class="dl" id="downloadLink" download="wokevision.mp4">Download video</a>
+      <details class="polish" id="polish"><summary>Trim &amp; polish · cover frame</summary>
+        <div class="polRow">Trim from <input type="number" id="trimS" min="0" step="0.1" placeholder="0" /> to <input type="number" id="trimE" min="0" step="0.1" placeholder="end" /> s
+          <button type="button" class="secondary" id="setS">Start = now</button><button type="button" class="secondary" id="setE">End = now</button></div>
+        <label class="polChk"><input type="checkbox" id="polSil" /> Cut the silences / dead air</label>
+        <label class="polChk"><input type="checkbox" id="polLoud" /> Even out the loudness (social-media level)</label>
+        <div class="polNote" id="polNote">Trim times are measured on the untrimmed video. Captions follow the cuts automatically.</div>
+        <div class="actionRow"><button type="button" class="secondary" id="polApply">Apply trim &amp; polish</button><button type="button" class="secondary" id="coverBtn">Use this frame as cover</button><span class="saveState" id="polMsg"></span></div>
+      </details>
     </div>
   <div class="card captionCard resultPart" id="ccCard">
         <div class="ccHead">
@@ -858,7 +869,7 @@
     document.getElementById("captionBox").value = data.caption || "";
     document.getElementById("angleBox").value = data.angle || document.getElementById("angleBox").value || "";
     updateCaptionCharCount();
-    fillCues(data.cues, data.captions_on); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; campSel.value = (data.campaign_id || ''); setJobWm(data.watermark); paidPromo.checked = !!data.paid_promo;
+    fillCues(data.cues, data.captions_on); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; campSel.value = (data.campaign_id || ''); fillPolish(data.post, data.cover_ms); setJobWm(data.watermark); paidPromo.checked = !!data.paid_promo;
     fillPosts(data.platform_posts);
     setSaveState("");
     setResult(true); autoGrowAll();
@@ -1289,6 +1300,34 @@
         if (w) { wmSaved.value = w.token; wmSaved.dispatchEvent(new Event("change")); wmApplyBtn.click(); }
       }
     } catch (e) { alert("Couldn't set campaign: " + e.message); }
+  });
+  const trimS = document.getElementById("trimS"), trimE = document.getElementById("trimE"), polSil = document.getElementById("polSil"), polLoud = document.getElementById("polLoud"), polMsg = document.getElementById("polMsg");
+  function fillPolish(post, cover) {
+    post = post || {};
+    trimS.value = post.trim_start || ""; trimE.value = post.trim_end || ""; polSil.checked = !!post.silence; polLoud.checked = !!post.loudness;
+    polMsg.textContent = cover != null ? "Cover set at " + (cover / 1000).toFixed(1) + "s" : "";
+  }
+  // Preview time -> time on the untrimmed video (only exact when silences aren't being cut).
+  function origTime() { const t = document.getElementById("preview").currentTime || 0; return (+trimS.value || 0) + t; }
+  document.getElementById("setS").addEventListener("click", () => { trimS.value = origTime().toFixed(1); });
+  document.getElementById("setE").addEventListener("click", () => { trimE.value = origTime().toFixed(1); });
+  document.getElementById("polApply").addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const b = document.getElementById("polApply"); b.disabled = true; polMsg.textContent = "";
+    try {
+      const r = await fetch(`/jobs/${currentJobId}/finish`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trim_start: +trimS.value || 0, trim_end: +trimE.value || 0, silence: polSil.checked, loudness: polLoud.checked }) });
+      const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.detail || "Couldn't apply that.");
+      await pollJob(currentJobId);
+    } catch (e) { alert("Error: " + e.message); } finally { b.disabled = false; }
+  });
+  document.getElementById("coverBtn").addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const ms = Math.round((document.getElementById("preview").currentTime || 0) * 1000);
+    try {
+      const r = await fetch(`/jobs/${currentJobId}/cover`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ms }) });
+      if (!r.ok) throw new Error("failed");
+      polMsg.textContent = "Cover set at " + (ms / 1000).toFixed(1) + "s (used for TikTok and Instagram)";
+    } catch (e) { polMsg.textContent = "Couldn't save the cover."; }
   });
   const paidPromo = document.getElementById("paidPromo");
   document.getElementById("creditBtn").addEventListener("click", async () => {
@@ -2060,7 +2099,7 @@
       document.getElementById("captionBox").value = e.posting_caption || "";
       document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";
       updateCaptionCharCount();
-      fillCues(e.cues, e.captions_on); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; campSel.value = (e.campaign_id || ''); setJobWm(e.watermark); paidPromo.checked = !!e.paid_promo;
+      fillCues(e.cues, e.captions_on); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; campSel.value = (e.campaign_id || ''); fillPolish(e.post, e.cover_ms); setJobWm(e.watermark); paidPromo.checked = !!e.paid_promo;
       fillPosts(e.platform_posts);
       setSaveState("");
       setResult(true); autoGrowAll();

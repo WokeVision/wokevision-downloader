@@ -587,9 +587,6 @@ def attention_items():
                 else:
                     out.append({"kind": "expiry", "platform": r["platform"],
                                 "text": f"{r['platform']} login expires soon -- reconnect it", "href": "/accounts#connections"})
-    n = req_pending_count()
-    if n:
-        out.append({"kind": "requests", "platform": "", "text": f"{n} customer request{'s' if n != 1 else ''} waiting for review", "href": "/requests"})
     return out
 
 

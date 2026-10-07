@@ -52,3 +52,5 @@
 .wvAttnRow { display: flex; gap: 8px; align-items: center; }
 .wvAttn .wvAttnRow a { display: block; margin: 0; max-width: none; padding: 5px 0; white-space: normal; overflow: visible; text-overflow: clip; flex: 1; min-width: 0; color: #ffd0d4; }
 .wvAttnRow button { background: none; border: 0; color: #ffb3ba; font-size: 20px; cursor: pointer; }
+
+.wvBadge { display: inline-block; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 6px; border-radius: 999px; background: #FF2B3C; color: #fff; font-size: 11px; font-weight: 800; line-height: 18px; text-align: center; vertical-align: 1px; }

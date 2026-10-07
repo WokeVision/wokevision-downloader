@@ -40,7 +40,7 @@ $("go").onclick=function(){$("err").textContent="";
   if(!$("name").value.trim()||!$("email").value.trim()){$("err").textContent="Please add your name and email.";return;}
   var w=$("when").value?new Date($("when").value).toLocaleString([],{dateStyle:"full",timeStyle:"short"})+" ("+tzn+")":"";
   $("go").disabled=true;
-  fetch("/api/public/consult",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:$("name").value,email:$("email").value,when:w,topic:$("topic").value,website:$("website").value})})
+  fetch("/api/public/consult",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:$("name").value,email:$("email").value,when:w,when_iso:($("when").value?new Date($("when").value).toISOString():""),topic:$("topic").value,website:$("website").value})})
    .then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.detail||"failed");});})
    .then(function(){$("form").style.display="none";$("thanks").style.display="";})
    .catch(function(e){$("err").textContent=e.message;$("go").disabled=false;});};

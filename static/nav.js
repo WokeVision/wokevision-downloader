@@ -30,6 +30,17 @@
       '<a class="wvNavAuth" id="wvNavAuth" href="/login?next=' + encodeURIComponent(path) + '" style="visibility:hidden">Sign in</a>' +
     '</div>';
   document.body.insertBefore(nav, document.body.firstChild);
+  // Numbered bubble on "Requests" for requests waiting for review.
+  function badge() {
+    fetch("/api/requests/count").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      var a = document.querySelector('.wvNavLink[href="/requests"]'); if (!a || !d) return;
+      var b = a.querySelector(".wvBadge");
+      if (!d.pending) { if (b) b.remove(); return; }
+      if (!b) { b = document.createElement("span"); b.className = "wvBadge"; a.appendChild(b); }
+      b.textContent = d.pending > 99 ? "99+" : d.pending;
+    }).catch(function () {});
+  }
+  if (location.pathname.indexOf("/login") !== 0) { badge(); setInterval(badge, 60000); }
   fetch("/auth/status").then(function (r) { return r.json(); }).then(function (s) {
     var a = document.getElementById("wvNavAuth");
     if (s.authed) {

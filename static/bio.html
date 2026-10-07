@@ -34,6 +34,7 @@
     <label><input type="checkbox" id="showSrv" style="width:auto;margin:0 6px 0 0" />Show the advertising section</label>
     <button class="btn accent" id="saveRates">Save rates</button> <span class="stat" id="rm"></span></div>
   <div class="card"><b>“Build us a tool” section</b><div class="stat" style="margin:4px 0 10px">The consultation booking goes to Requests. Put screenshots of your app at <code>static/assets/preview/1.png</code>, <code>2.png</code>, <code>3.png</code> to show them instead of the illustration.</div>
+    <label>Video meeting link used in consultation invites (a Google Meet, Zoom or other standing room link)</label><input type="text" id="meet" placeholder="https://meet.google.com/…" />
     <label>Intro text (blank = default)</label><textarea id="blurb" rows="3" style="width:100%;background:rgba(0,0,0,.35);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px;font:inherit;font-size:14.5px;margin-bottom:10px"></textarea>
     <label><input type="checkbox" id="showTool" style="width:auto;margin:0 6px 0 0" />Show this section</label>
     <button class="btn accent" id="saveTool">Save</button> <span class="stat" id="tm"></span></div>
@@ -55,7 +56,7 @@ function load(){j("/api/bio").then(function(d){
   PAGE=d.page||{};title.value=PAGE.title||"";handle.value=PAGE.handle||"";text.value=PAGE.text||"";
   cemail.value=PAGE.contact_email||"";socials.value=(PAGE.socials||[]).map(function(x){return x.label+" | "+x.url;}).join("\n");
   preel.value=PAGE.reel_price;pstill.value=PAGE.still_price;pcur.value=PAGE.currency||"$";deal.value=PAGE.deal_note||"";payreel.value=PAGE.pay_link_reel||"";paystill.value=PAGE.pay_link_still||"";
-  showSrv.checked=PAGE.show_services!==false;blurb.value=PAGE.consult_blurb||"";showTool.checked=PAGE.show_tool!==false;
+  showSrv.checked=PAGE.show_services!==false;blurb.value=PAGE.consult_blurb||"";meet.value=PAGE.meeting_link||"";showTool.checked=PAGE.show_tool!==false;
   camp.innerHTML='<option value="">None</option>'+d.campaigns.map(function(c){return '<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>';}).join("");
   links=d.links; var total=links.reduce(function(a,l){return a+l.clicks;},0);
   document.getElementById("list").innerHTML=links.map(function(l,i){
@@ -74,12 +75,12 @@ saveLink.onclick=function(){var a=links.find(function(l){return l.id===editing;}
   j("/api/bio/link","POST",{id:editing,label:lbl.value,url:url.value,active:a?a.active:true,campaign_id:camp.value}).then(function(){reset();document.getElementById("lm").textContent="";load();}).catch(function(e){document.getElementById("lm").textContent=e.message;});};
 function pageBody(){
   var soc=socials.value.split("\n").map(function(l){var i=l.indexOf("|");return i<0?{label:"",url:l.trim()}:{label:l.slice(0,i).trim(),url:l.slice(i+1).trim()};}).filter(function(x){return x.url;});
-  return {title:title.value,handle:handle.value,text:text.value,contact_email:cemail.value,socials:soc,reel_price:parseInt(preel.value)||0,still_price:parseInt(pstill.value)||0,currency:pcur.value||"$",deal_note:deal.value,pay_link_reel:payreel.value,pay_link_still:paystill.value,consult_blurb:blurb.value,show_services:showSrv.checked,show_tool:showTool.checked};}
+  return {title:title.value,handle:handle.value,text:text.value,contact_email:cemail.value,socials:soc,reel_price:parseInt(preel.value)||0,still_price:parseInt(pstill.value)||0,currency:pcur.value||"$",deal_note:deal.value,pay_link_reel:payreel.value,pay_link_still:paystill.value,consult_blurb:blurb.value,meeting_link:meet.value,show_services:showSrv.checked,show_tool:showTool.checked};}
 function savePageNow(msgId){j("/api/bio/page","PUT",pageBody()).then(function(){document.getElementById(msgId).textContent="Saved ✓";}).catch(function(e){document.getElementById(msgId).textContent=e.message;});}
 document.getElementById("savePage").onclick=function(){savePageNow("pm");};
 document.getElementById("saveRates").onclick=function(){savePageNow("rm");};
 document.getElementById("saveTool").onclick=function(){savePageNow("tm");};
 var PAGE={};var title=document.getElementById("title"),handle=document.getElementById("handle"),text=document.getElementById("text");
-var cemail=document.getElementById("cemail"),socials=document.getElementById("socials"),preel=document.getElementById("preel"),pstill=document.getElementById("pstill"),pcur=document.getElementById("pcur"),deal=document.getElementById("deal"),payreel=document.getElementById("payreel"),paystill=document.getElementById("paystill"),showSrv=document.getElementById("showSrv"),blurb=document.getElementById("blurb"),showTool=document.getElementById("showTool");
+var cemail=document.getElementById("cemail"),socials=document.getElementById("socials"),preel=document.getElementById("preel"),pstill=document.getElementById("pstill"),pcur=document.getElementById("pcur"),deal=document.getElementById("deal"),payreel=document.getElementById("payreel"),paystill=document.getElementById("paystill"),showSrv=document.getElementById("showSrv"),blurb=document.getElementById("blurb"),showTool=document.getElementById("showTool"),meet=document.getElementById("meet");
 load();
 </script></body></html>

@@ -947,7 +947,7 @@ _BIO_DEFAULTS = {"title": "WokeVision", "handle": "@wokevision_", "text": "", "c
                  "reel_price": 100, "still_price": 80, "currency": "$",
                  "deal_note": "First-time customer deals and bulk-upload deals are available on request.",
                  "socials": [{"label": "Instagram", "url": "https://instagram.com/wokevision_"}],
-                 "pay_link_reel": "", "pay_link_still": "", "consult_blurb": "", "show_services": True, "show_tool": True}
+                 "pay_link_reel": "", "pay_link_still": "", "meeting_link": "", "consult_blurb": "", "show_services": True, "show_tool": True}
 
 
 def _bio_page() -> dict:
@@ -993,6 +993,7 @@ class BioPage(BaseModel):
     socials: list = []
     pay_link_reel: str = ""
     pay_link_still: str = ""
+    meeting_link: str = ""
     consult_blurb: str = ""
     show_services: bool = True
     show_tool: bool = True
@@ -1018,7 +1019,7 @@ def bio_admin_page_save(req: BioPage):
     for it in (req.socials or [])[:12]:
         if isinstance(it, dict) and str(it.get("url") or "").strip():
             socials.append({"label": str(it.get("label") or "").strip()[:30] or "Link", "url": _clean_link_url(str(it["url"]))})
-    for k in ("pay_link_reel", "pay_link_still"):
+    for k in ("pay_link_reel", "pay_link_still", "meeting_link"):
         v = getattr(req, k).strip()
         if v:
             _clean_link_url(v)
@@ -1029,7 +1030,7 @@ def bio_admin_page_save(req: BioPage):
                       "reel_price": max(0, min(req.reel_price, 100000)), "still_price": max(0, min(req.still_price, 100000)),
                       "currency": (req.currency or "$")[:3], "deal_note": req.deal_note[:300], "socials": socials,
                       "pay_link_reel": req.pay_link_reel.strip()[:500], "pay_link_still": req.pay_link_still.strip()[:500],
-                      "consult_blurb": req.consult_blurb[:600], "show_services": req.show_services, "show_tool": req.show_tool})
+                      "meeting_link": req.meeting_link.strip()[:500], "consult_blurb": req.consult_blurb[:600], "show_services": req.show_services, "show_tool": req.show_tool})
     return {"ok": True}
 
 
@@ -1208,6 +1209,7 @@ class ConsultReq(BaseModel):
     name: str
     email: str
     when: str = ""
+    when_iso: str = ""
     topic: str = ""
     website: str = ""
 
@@ -1223,11 +1225,16 @@ def public_consult(req: ConsultReq, request: Request):
         raise HTTPException(status_code=400, detail="Please add your name and a valid email.")
     when = req.when.strip()[:200]
     rid = uuid.uuid4().hex[:14]
-    db.req_create(rid, "consult", name, email, {"when": when, "topic": req.topic.strip()[:1500]})
+    db.req_create(rid, "consult", name, email, {"when": when, "when_iso": req.when_iso[:40], "topic": req.topic.strip()[:1500]})
     notify.notify("Consultation request", f"{name} would like a call: {when or 'time not given'}", f"{_base_url()}/requests" if _base_url() else None)
     page = _bio_page()
     notify.send_email(email, "We got your consultation request", f"Hi {name},\n\nThanks — we'll reply shortly to confirm a time.\n\n{page['title']}", page["contact_email"])
     return {"ok": True}
+
+
+@app.get("/api/requests/count")
+def requests_count():
+    return {"pending": db.req_pending_count()}
 
 
 @app.get("/api/requests")
@@ -1341,6 +1348,60 @@ def request_email(rid: str, req: ReqEmail):
     if sent:
         db.req_update(rid, data={"emailed": True})
     return {"sent": sent}
+
+
+_MEETING_LINK_KEY = "meeting_link"
+
+
+def _make_meeting(start: _dt.datetime, minutes: int, topic: str):
+    """Returns (join_url, how). A fresh Zoom meeting when the Zoom API is set up
+    (ZOOM_ACCOUNT_ID / ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET), otherwise the
+    standing meeting link saved on the Bio link page."""
+    acct, cid, sec = (os.environ.get(k) for k in ("ZOOM_ACCOUNT_ID", "ZOOM_CLIENT_ID", "ZOOM_CLIENT_SECRET"))
+    if acct and cid and sec:
+        try:
+            import requests as _rq
+            tok = _rq.post("https://zoom.us/oauth/token", params={"grant_type": "account_credentials", "account_id": acct},
+                           auth=(cid, sec), timeout=20)
+            tok.raise_for_status()
+            m = _rq.post("https://api.zoom.us/v2/users/me/meetings", headers={"Authorization": f"Bearer {tok.json()['access_token']}"},
+                         json={"topic": topic[:150], "type": 2, "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                               "duration": minutes, "timezone": "UTC", "settings": {"join_before_host": True}}, timeout=20)
+            m.raise_for_status()
+            return m.json()["join_url"], "zoom"
+        except Exception as e:
+            print(f"ZOOM MEETING FAILED: {e}", flush=True)
+    link = (_bio_page().get("meeting_link") or "").strip()
+    return (link or None), "link"
+
+
+class InviteReq(BaseModel):
+    start_iso: str
+    minutes: int = 30
+    note: str = ""
+
+
+@app.post("/api/requests/{rid}/invite")
+def request_invite(rid: str, req: InviteReq):
+    """Emails the customer a calendar invite (.ics) with a video-call link."""
+    r = db.req_get(rid)
+    if not r or r["kind"] != "consult":
+        raise HTTPException(status_code=404, detail="Unknown consultation request.")
+    start = _parse_when(req.start_iso)
+    if start < _dt.datetime.now(_dt.timezone.utc):
+        raise HTTPException(status_code=400, detail="Pick a time in the future.")
+    minutes = max(15, min(req.minutes, 120))
+    page = _bio_page()
+    link, how = _make_meeting(start, minutes, f"{page['title']} consultation with {r['name']}")
+    if not link:
+        raise HTTPException(status_code=400, detail="No video link yet — add a meeting link on the Bio link page (or set up Zoom), then try again.")
+    if not notify.email_configured():
+        raise HTTPException(status_code=400, detail="Sending invites needs the email settings on Render (SMTP_HOST, SMTP_USER, SMTP_PASS).")
+    ok = notify.send_invite(r["email"], r["name"], f"{page['title']} consultation", start, minutes, link, page["contact_email"], req.note)
+    if not ok:
+        raise HTTPException(status_code=502, detail="The invite couldn't be sent — check the email settings.")
+    db.req_update(rid, status="confirmed", run_at=start, data={"meeting_link": link, "minutes": minutes, "invited": True})
+    return {"ok": True, "link": link, "how": how}
 
 
 @app.post("/api/requests/{rid}/done")

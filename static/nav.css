@@ -83,3 +83,4 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 .wvSubLink.active { color: #F5F5F7; border-bottom-color: #FF2B3C; }
 @media (min-width: 900px) { .wvSub { padding: 0 28px; } }
 @media (max-width: 560px) { .wvSub { padding: 0 10px; } }
+@media (max-width: 430px) { .wvNavLogo img { width: 26px; height: 26px; } .wvNavLink { padding: 7px 5px; font-size: 12px; } .wvNavAuth { font-size: 11px; padding: 5px 6px; } .wvBadge { margin-left: 3px; min-width: 16px; height: 16px; line-height: 16px; font-size: 10px; } }

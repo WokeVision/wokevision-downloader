@@ -301,6 +301,7 @@ class ProcessRequest(BaseModel):
     angle: str = ""
     wm_token: str = ""
     wm_pos: str = "right"
+    campaign_id: str = ""
 
 
 def _cleanup_later(path: str, delay: int = 1200):
@@ -482,6 +483,16 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
         with JOBS_LOCK:
             _j = JOBS.get(job_id) or {}
             _wm_token, _wm_pos = _j.get("wm_token", ""), _j.get("wm_pos", "right")
+        _cid = _j.get("campaign_id", "")
+        _camp = None
+        try:
+            _camp = db.camp_get(_cid) if _cid else None
+        except Exception:
+            _camp = None
+        if _camp:
+            if not _wm_token and _camp.get("wm_token"):
+                _wm_token, _wm_pos = _camp["wm_token"], _camp.get("wm_pos") or "right"
+            meta = {**meta, "campaign_id": _cid}
         meta = _claim_watermark(job_id, _wm_token, _wm_pos, meta)
         _set_stage(job_id, "transcribing")
         _st = app_settings()
@@ -499,6 +510,11 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
             _set_job(job_id, meta=meta)
         on_screen_caption, posting_caption = generate_captions(transcript, meta)
         platform_posts = generate_platform_posts(transcript, meta, on_screen_caption, posting_caption)
+        if _camp:
+            _tags = _camp_hashtags(_camp)
+            if _tags:
+                posting_caption = _with_hashtags(posting_caption, _tags)
+                platform_posts = _tag_posts(platform_posts, posting_caption, _tags)
 
         # Rendering happens in two cached stages: render_staged() does the
         # crop/scale/logo/watermark compositing (everything that has nothing
@@ -539,6 +555,11 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
         )
         _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
         _save_platform_posts(job_id, platform_posts)
+        if _camp:
+            try:
+                db.history_set_campaign(job_id, _cid)
+            except Exception as e:
+                print(f"CAMPAIGN LINK FAILED: {e}", flush=True)
         if not (JOBS.get(job_id) or {}).get("_quiet"):
             _b = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
             notify.notify("Edit ready", on_screen_caption[:120], f"{_b}/editor#entry={job_id}" if _b else None)
@@ -993,7 +1014,7 @@ def process(req: ProcessRequest):
     job_id = str(uuid.uuid4())
     final_source_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
     with JOBS_LOCK:
-        JOBS[job_id] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos}
+        JOBS[job_id] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos, "campaign_id": req.campaign_id}
     threading.Thread(
         target=_run_download_then_pipeline, args=(job_id, req.url, final_source_path), daemon=True
     ).start()
@@ -1005,6 +1026,7 @@ class BatchRequest(BaseModel):
     angle: str = ""
     wm_token: str = ""
     wm_pos: str = "right"
+    campaign_id: str = ""
 
 
 def _run_batch(items):
@@ -1030,14 +1052,14 @@ def process_batch(req: BatchRequest):
         for u in urls:
             jid = str(uuid.uuid4())
             JOBS[jid] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running",
-                         "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos}
+                         "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos, "campaign_id": req.campaign_id}
             items.append((jid, u))
     threading.Thread(target=_run_batch, args=(items,), daemon=True).start()
     return {"job_ids": [j for j, _ in items]}
 
 
 @app.post("/process-file")
-async def process_file(file: UploadFile = File(...), angle: str = Form(""), wm_token: str = Form(""), wm_pos: str = Form("right")):
+async def process_file(file: UploadFile = File(...), angle: str = Form(""), wm_token: str = Form(""), wm_pos: str = Form("right"), campaign_id: str = Form("")):
     """Direct upload path: skips the download step entirely. Use this when a
     link can't be fetched automatically (most often YouTube, when the host's
     IP is being rate-limited) -- download the video yourself and upload the
@@ -1045,7 +1067,7 @@ async def process_file(file: UploadFile = File(...), angle: str = Form(""), wm_t
     job_id = str(uuid.uuid4())
     final_source_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
     with JOBS_LOCK:
-        JOBS[job_id] = {"stage": "uploading", "stage_label": "Receiving upload", "progress": 0.0, "status": "running", "angle": (angle or "").strip()[:1500], "wm_token": wm_token, "wm_pos": wm_pos}
+        JOBS[job_id] = {"stage": "uploading", "stage_label": "Receiving upload", "progress": 0.0, "status": "running", "angle": (angle or "").strip()[:1500], "wm_token": wm_token, "wm_pos": wm_pos, "campaign_id": campaign_id}
 
     try:
         with open(final_source_path, "wb") as f:
@@ -1939,6 +1961,7 @@ class ProcessUpload(BaseModel):
     angle: str = ""
     wm_token: str = ""
     wm_pos: str = "right"
+    campaign_id: str = ""
 
 
 def _run_pulled_pipeline(job_id: str, key: str, final_source_path: str, filename: str):
@@ -1960,7 +1983,7 @@ def process_upload(req: ProcessUpload):
     final_source_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
     with JOBS_LOCK:
         JOBS[job_id] = {"stage": "downloading", "stage_label": "Fetching your upload", "progress": 0.0, "status": "running",
-                        "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos}
+                        "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos, "campaign_id": req.campaign_id}
     threading.Thread(target=_run_pulled_pipeline, args=(job_id, req.key, final_source_path, req.filename), daemon=True).start()
     return {"job_id": job_id}
 
@@ -2368,6 +2391,17 @@ def _camp_hashtags(c) -> list:
 def _with_hashtags(text: str, tags: list) -> str:
     missing = [t for t in tags if t.lower() not in (text or "").lower()]
     return (text or "").rstrip() + ("\n\n" + " ".join(missing) if missing else "")
+
+
+def _tag_posts(posts: dict, caption: str, tags: list) -> dict:
+    posts = normalize_platform_posts(posts, caption)
+    for v in posts.values():
+        if isinstance(v, dict):
+            for fld in ("caption", "text", "description"):
+                if isinstance(v.get(fld), str) and v[fld].strip():
+                    v[fld] = _with_hashtags(v[fld], tags)
+                    break
+    return normalize_platform_posts(posts, caption)
 
 
 class JobCampaign(BaseModel):

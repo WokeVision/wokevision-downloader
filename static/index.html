@@ -619,6 +619,8 @@
   <div class="card" id="sourceCard">
     <label class="fieldLabel" for="angleBox">What's this clip about? <span style="opacity:.6;font-weight:400">(optional)</span></label>
     <textarea id="angleBox" rows="2" maxlength="1500" placeholder="e.g. Dark humour animation about the Lindsay Clancy case &mdash; don't take it seriously. Or: mock the OnlyFans 'empowerment' angle."></textarea>
+    <div class="campPick" style="margin:0 0 10px"><label class="fieldLabel" for="srcCamp">Campaign <span style="opacity:.6;font-weight:400">(optional &mdash; applies its watermark and hashtags automatically)</span></label>
+      <select id="srcCamp" class="ccSel" style="width:100%"><option value="">None</option></select></div>
     <div class="wmRow" id="wmRow">
       <div class="wmHead">
         <span class="wmTitle">Watermark <span>(optional &mdash; campaign logo)</span></span>
@@ -929,6 +931,10 @@
     }
   }
 
+  const srcCamp = document.getElementById("srcCamp");
+  fetch("/api/campaigns").then((r) => r.json()).then((d) => {
+    srcCamp.innerHTML = '<option value="">None</option>' + (d.items || []).map((c) => '<option value="' + c.id + '">' + c.name.replace(/</g, "&lt;") + '</option>').join("");
+  }).catch(() => {});
   const form = document.getElementById("form");
   const submitBtn = document.getElementById("submitBtn");
 
@@ -943,7 +949,7 @@
 
     try {
       if (many.length > 1) {
-        const rb = await fetch("/api/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: many, angle: document.getElementById("angleBox").value, wm_token: await wmToken(), wm_pos: wmPos }) });
+        const rb = await fetch("/api/batch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ urls: many, angle: document.getElementById("angleBox").value, wm_token: await wmToken(), wm_pos: wmPos, campaign_id: srcCamp.value }) });
         const db = await rb.json(); if (!rb.ok) throw new Error(db.detail || "Something went wrong.");
         alert(db.job_ids.length + " videos queued. They're processed one at a time — find each in History as it finishes (you'll get a phone alert if alerts are set up).");
         document.getElementById("url").value = "";
@@ -953,7 +959,7 @@
       const resp = await fetch("/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, angle: document.getElementById("angleBox").value, wm_token: await wmToken(), wm_pos: wmPos }),
+        body: JSON.stringify({ url, angle: document.getElementById("angleBox").value, wm_token: await wmToken(), wm_pos: wmPos, campaign_id: srcCamp.value }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
@@ -1089,12 +1095,12 @@
       } catch (e) { throw e; }
       let resp;
       if (direct) {
-        resp = await fetch("/process-upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: direct.key, filename: file.name, angle, wm_token: tok, wm_pos: wmPos }) });
+        resp = await fetch("/process-upload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: direct.key, filename: file.name, angle, wm_token: tok, wm_pos: wmPos, campaign_id: srcCamp.value }) });
       } else {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("angle", angle);
-        formData.append("wm_token", tok); formData.append("wm_pos", wmPos);
+        formData.append("wm_token", tok); formData.append("wm_pos", wmPos); formData.append("campaign_id", srcCamp.value);
         resp = await fetch("/process-file", { method: "POST", body: formData });
       }
       const data = await resp.json();

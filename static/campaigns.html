@@ -25,11 +25,19 @@
     <label>Sponsor / client</label><input id="sponsor" />
     <label>Brief / notes</label><textarea id="brief" rows="3" placeholder="Talking points, dos and don'ts…"></textarea>
     <label>Required hashtags</label><input id="hashtags" placeholder="#acme #ad" />
-    <label>Watermark (from your saved ones)</label><select id="wm"><option value="">None</option></select>
+    <label>Watermark</label>
+    <div class="row" style="margin-bottom:10px"><img id="wmPrev" alt="" style="display:none;height:44px;border-radius:8px;background:#222;padding:2px" /><label class="btn" style="margin:0;text-transform:none;letter-spacing:0;font-size:13.5px;color:inherit">Upload image<input type="file" id="wmFile" accept="image/*" style="display:none" /></label>
+      <select id="wmPos" style="width:auto;margin:0"><option value="left">Bottom left</option><option value="middle">Bottom middle</option><option value="right" selected>Bottom right</option></select>
+      <button class="btn" id="wmClear" type="button" style="display:none">Remove</button><span id="wmMsg" class="sub" style="margin:0"></span></div>
+    <label>…or pick one you saved in the editor</label><select id="wm"><option value="">None</option></select>
     <button class="btn accent" id="save">Save campaign</button> <span id="msg" class="sub"></span></div>
   <div id="list"></div></div>
 <script>
-var $ = function (i) { return document.getElementById(i); }, items = [], editing = null, wms = [];
+var $ = function (i) { return document.getElementById(i); }, items = [], editing = null, wms = [], wmTok = "";
+function showWm(tok) { wmTok = tok || ""; var im = $("wmPrev"); im.style.display = wmTok ? "inline-block" : "none"; if (wmTok) im.src = "/files/wm_" + wmTok + ".png"; $("wmClear").style.display = wmTok ? "" : "none"; }
+$("wmFile").onchange = function () { var f = this.files[0]; if (!f) return; $("wmMsg").textContent = "Uploading…"; var fd = new FormData(); fd.append("file", f); fetch("/api/watermark", { method: "POST", body: fd }).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || "failed"); return j; }); }).then(function (j) { showWm(j.token); $("wm").value = ""; $("wmMsg").textContent = "Uploaded ✓ (press Save campaign)"; }).catch(function (e) { $("wmMsg").textContent = e.message; }); };
+$("wmClear").onclick = function () { showWm(""); $("wm").value = ""; $("wmFile").value = ""; };
+$("wm").onchange = function () { var o = this.selectedOptions[0]; if (this.value) { showWm(this.value); $("wmPos").value = o.dataset.pos || "right"; } };
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 function load() {
   Promise.all([fetch("/api/campaigns").then(function (r) { return r.json(); }), fetch("/api/watermarks").then(function (r) { return r.json(); })]).then(function (a) {
@@ -44,13 +52,13 @@ function load() {
 $("list").onclick = function (e) {
   var t = e.target;
   if (t.dataset.copy) { var u = location.origin + "/c/" + t.dataset.copy; (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(function () { t.textContent = "Copied ✓"; }, function () { prompt("Copy this link:", u); }); }
-  if (t.dataset.edit) { var c = items.filter(function (x) { return x.id === t.dataset.edit; })[0]; editing = c.id; $("formTitle").textContent = "Edit campaign"; $("cancelEdit").style.display = ""; ["name", "sponsor", "brief", "hashtags"].forEach(function (k) { $(k).value = c[k] || ""; }); $("wm").value = c.wm_token || ""; scrollTo(0, 0); }
+  if (t.dataset.edit) { var c = items.filter(function (x) { return x.id === t.dataset.edit; })[0]; editing = c.id; $("formTitle").textContent = "Edit campaign"; $("cancelEdit").style.display = ""; ["name", "sponsor", "brief", "hashtags"].forEach(function (k) { $(k).value = c[k] || ""; }); showWm(c.wm_token || ""); $("wmPos").value = c.wm_pos || "right"; $("wm").value = ""; scrollTo(0, 0); }
   if (t.dataset.del && confirm("Delete this campaign? Posts stay, they just become unfiled.")) fetch("/api/campaigns/" + t.dataset.del, { method: "DELETE" }).then(load);
 };
-function reset() { editing = null; $("formTitle").textContent = "New campaign"; $("cancelEdit").style.display = "none"; ["name", "sponsor", "brief", "hashtags"].forEach(function (k) { $(k).value = ""; }); $("wm").value = ""; }
+function reset() { editing = null; $("formTitle").textContent = "New campaign"; $("cancelEdit").style.display = "none"; ["name", "sponsor", "brief", "hashtags"].forEach(function (k) { $(k).value = ""; }); showWm(""); $("wm").value = ""; $("wmPos").value = "right"; $("wmMsg").textContent = ""; }
 $("cancelEdit").onclick = reset;
 $("save").onclick = function () {
-  var opt = $("wm").selectedOptions[0], body = { name: $("name").value, sponsor: $("sponsor").value, brief: $("brief").value, hashtags: $("hashtags").value, wm_token: $("wm").value, wm_pos: (opt && opt.dataset.pos) || "right" };
+  var body = { name: $("name").value, sponsor: $("sponsor").value, brief: $("brief").value, hashtags: $("hashtags").value, wm_token: wmTok, wm_pos: $("wmPos").value };
   fetch(editing ? "/api/campaigns/" + editing : "/api/campaigns", { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || "failed"); }); }).then(function () { $("msg").textContent = "Saved ✓"; reset(); load(); }).catch(function (e) { $("msg").textContent = e.message; });
 };

@@ -2054,7 +2054,7 @@
       document.getElementById("captionBox").value = e.posting_caption || "";
       document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";
       updateCaptionCharCount();
-      fillCues(e.cues, e.captions_on); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; setJobWm(e.watermark); paidPromo.checked = !!e.paid_promo;
+      fillCues(e.cues, e.captions_on); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; campSel.value = (e.campaign_id || ''); setJobWm(e.watermark); paidPromo.checked = !!e.paid_promo;
       fillPosts(e.platform_posts);
       setSaveState("");
       setResult(true); autoGrowAll();

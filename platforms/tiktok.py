@@ -7,13 +7,11 @@ it could be used at all. Streaming our own rendered-video bytes up in
 chunks avoids that extra prerequisite and matches the same pattern already
 used for YouTube/X.
 
-Important caveat, not a bug: TikTok restricts every post from an app that
-hasn't been through their manual content-posting audit to SELF_ONLY
-(private) visibility, regardless of what privacy_level is requested --
-see https://developers.tiktok.com/doc/content-posting-api-get-started.
-Until @wokevision_'s app is audited, publish_video() will successfully
-post, but only privately/visible to the account itself. There's nothing to
-fix in code for that -- it clears up once TikTok approves the app.
+Visibility: apps that haven't passed TikTok's content-posting audit are
+limited to SELF_ONLY (private) posts. Once the production app is approved,
+posts go out with the most public privacy level the creator's account allows
+(PUBLIC_TO_EVERYONE by default, read from TikTok's creator_info endpoint).
+TIKTOK_PRIVACY_LEVEL can force a specific level if it's set.
 
 Flow:
   1. Browser -> AUTHORIZE_URL (user approves) -> redirected back with a
@@ -41,6 +39,7 @@ AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
 INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
 STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 
 # video.publish posts directly to the profile (what we need); user.info.basic
@@ -55,6 +54,26 @@ PLATFORM = "tiktok"
 # chunk count low.
 CHUNK_SIZE = 8 * 1024 * 1024
 MIN_CHUNK_SIZE = 5 * 1024 * 1024
+
+
+_PRIVACY_PREFERENCE = ["PUBLIC_TO_EVERYONE", "FOLLOWER_OF_CREATOR", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY"]
+
+
+def _privacy_level(access_token: str) -> str:
+    """Most public level TikTok will accept for this account. An explicit
+    TIKTOK_PRIVACY_LEVEL wins; if TikTok can't be asked, assume public."""
+    forced = (os.environ.get("TIKTOK_PRIVACY_LEVEL") or "").strip()
+    if forced:
+        return forced
+    try:
+        r = requests.post(CREATOR_INFO_URL, headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json; charset=UTF-8"}, timeout=20)
+        opts = ((r.json().get("data") or {}).get("privacy_level_options")) or []
+        for level in _PRIVACY_PREFERENCE:
+            if level in opts:
+                return level
+    except Exception as ex:
+        print(f"TIKTOK creator_info failed, assuming public: {ex}", flush=True)
+    return "PUBLIC_TO_EVERYONE"
 
 
 def _plan_chunks(total_bytes: int) -> list:
@@ -253,7 +272,7 @@ def _upload_video(access_token: str, video_url: str, caption: str, options: dict
         json={
             "post_info": {
                 "title": title,
-                "privacy_level": os.environ.get("TIKTOK_PRIVACY_LEVEL", "PUBLIC_TO_EVERYONE"),
+                "privacy_level": _privacy_level(access_token),
                 "disable_duet": not options.get("allow_duet", True),
                 "disable_stitch": not options.get("allow_stitch", True),
                 "disable_comment": not options.get("allow_comments", True),
@@ -340,9 +359,7 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     public URL (this app's own /files/<name>.mp4 route). Returns
     {"publish_id": ...}. Raises TikTokError on any failure, with the
     underlying platform message included so the UI can show something
-    actionable. Note: until this app passes TikTok's content-posting audit,
-    every post lands as SELF_ONLY (private) no matter what privacy_level is
-    requested -- that's a TikTok-side restriction, not an error here."""
+    actionable."""
     caption = (post or {}).get("caption", caption)
     conn = db.get_connection(PLATFORM)
     if not conn or not conn.get("access_token"):

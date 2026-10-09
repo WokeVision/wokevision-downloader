@@ -885,7 +885,7 @@
     // Cache-bust so a re-rendered video (same URL) actually reloads
     // instead of showing the browser's cached first render.
     preview.src = data.video_url + (data.video_url.includes("?") ? "&" : "?") + "t=" + Date.now();
-    document.getElementById("downloadLink").href = data.video_url;
+    document.getElementById("downloadLink").href = data.video_url + "?dl=1";
     document.getElementById("onScreenBox").value = data.on_screen_caption || "";
     document.getElementById("captionBox").value = data.caption || "";
     document.getElementById("angleBox").value = data.angle || document.getElementById("angleBox").value || "";
@@ -2197,7 +2197,7 @@
         preview.style.display = "";
         document.body.classList.add("has-video");
         preview.src = e.video_url + (e.video_url.includes("?") ? "&" : "?") + "t=" + Date.now();
-        downloadLink.href = e.video_url;
+        downloadLink.href = e.video_url + "?dl=1";
         downloadLink.style.display = "";
         if (expiredNote) expiredNote.remove();
       } else {

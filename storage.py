@@ -244,3 +244,60 @@ def delete_key(key: str):
         _get_client().delete_object(Bucket=BUCKET, Key=key)
     except Exception as e:
         print(f"STORAGE DELETE FAILED ({key}): {e}", flush=True)
+
+
+# --- Serving finished videos straight from R2 (opt-in: R2_SERVE=1) ---------
+# R2 has no download charges, so previews and platform pulls go to a signed
+# R2 link instead of streaming through the web service (which is metered).
+
+_HAS = {}
+
+
+def serve_enabled() -> bool:
+    return configured() and os.environ.get("R2_SERVE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _exists(key: str) -> bool:
+    import time
+    hit = _HAS.get(key)
+    if hit and time.time() - hit[1] < 600:
+        return hit[0]
+    try:
+        _s3().head_object(Bucket=BUCKET, Key=key)
+        ok = True
+    except Exception:
+        ok = False
+    if len(_HAS) > 2000:
+        _HAS.clear()
+    _HAS[key] = (ok, time.time())
+    return ok
+
+
+def signed_url(key: str, ttl: int = 6 * 3600, download_name: str = None, content_type: str = None):
+    """Signed GET link for key, or None if serving is off / the file isn't in
+    the bucket (caller then falls back to the app's own /files route)."""
+    if not serve_enabled() or not _exists(key):
+        return None
+    ext = os.path.splitext(key)[1].lower()
+    content_type = content_type or {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".mov": "video/quicktime"}.get(ext, "video/mp4")
+    params = {"Bucket": BUCKET, "Key": key, "ResponseContentType": content_type}
+    params["ResponseContentDisposition"] = (f'attachment; filename="{download_name}"' if download_name else "inline")
+    try:
+        return _s3().generate_presigned_url("get_object", Params=params, ExpiresIn=min(int(ttl), 604800))
+    except Exception as e:
+        print(f"STORAGE SIGN FAILED ({key}): {e}", flush=True)
+        return None
+
+
+def external_url(filename: str, fallback_url: str, ttl: int = 6 * 3600) -> str:
+    """Link handed to outside fetchers (platforms, client share pages): a signed
+    R2 link when R2 serving is on and the file is there, else the app's own
+    /files link (itself signed when SIGNED_FILES is on)."""
+    u = signed_url(filename, ttl)
+    if u:
+        return u
+    try:
+        import auth
+        return auth.sign_file_url(fallback_url, ttl)
+    except Exception:
+        return fallback_url

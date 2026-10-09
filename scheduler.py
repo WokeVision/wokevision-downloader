@@ -50,7 +50,7 @@ def _publish_one(modules: dict, item: dict) -> dict:
                 storage.fetch_to(lp, fn)
             except Exception as ex:
                 print(f"SCHEDULE: storage fetch failed for {fn}: {ex}", flush=True)
-            urls.append(auth.sign_file_url(f"{base}/files/{fn}"))
+            urls.append(storage.external_url(fn, f"{base}/files/{fn}", 24 * 3600))
         caption = e.get("posting_caption") or ""
         posts = normalize_platform_posts(e.get("platform_posts") or {}, caption)
         try:
@@ -68,7 +68,7 @@ def _publish_one(modules: dict, item: dict) -> dict:
         storage.fetch_to(local, filename)
     except Exception as ex:
         print(f"SCHEDULE: storage fetch failed for {filename}: {ex}", flush=True)
-    video_url = auth.sign_file_url(f"{base}/files/{filename}")
+    video_url = storage.external_url(filename, f"{base}/files/{filename}", 24 * 3600)
     caption = e.get("posting_caption") or ""
     posts = normalize_platform_posts(e.get("platform_posts") or {}, caption)
     post = posts.get(platform)

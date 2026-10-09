@@ -241,14 +241,16 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     while time.time() < deadline:
         status_resp = requests.get(
             f"{GRAPH_BASE}/{container_id}",
-            params={"fields": "status", "access_token": access_token},
+            params={"fields": "status,error_message", "access_token": access_token},
             timeout=20,
         )
-        status = status_resp.json().get("status", "IN_PROGRESS")
+        sdata = status_resp.json()
+        status = sdata.get("status", "IN_PROGRESS")
         if status == "FINISHED":
             break
         if status in ("ERROR", "EXPIRED"):
-            raise ThreadsError(f"Threads failed to process the video (status: {status}).")
+            detail = (sdata.get("error_message") or "").strip()
+            raise ThreadsError(f"Threads failed to process the video (status: {status})" + (f": {detail}" if detail else "") + ".")
         time.sleep(10)
     else:
         raise ThreadsError("Timed out waiting for Threads to process the video.")

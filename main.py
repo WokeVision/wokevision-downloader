@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import vision
 import datetime as _dt
 import secrets
 import render
@@ -327,6 +328,7 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
         "caption": posting_caption,
         "download_method": meta.get("method", ""),
         "angle": meta.get("angle", ""),
+        "video_read": meta.get("video_read", ""),
         "cues": meta.get("cues") or [],
         "captions_on": bool(meta.get("captions_on", False)),
         "paid_promo": bool(meta.get("paid_promo", False)),
@@ -533,6 +535,14 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
         _set_job(job_id, transcript=transcript, meta=meta, source_path=final_source_path)
 
         _set_stage(job_id, "captioning")
+        if not meta.get("video_read"):
+            try:
+                _vr = vision.watch(final_source_path, transcript, meta)
+                if _vr:
+                    meta = {**meta, "video_read": _vr}
+                    _set_job(job_id, meta=meta)
+            except Exception as _e:
+                print(f"VISION SKIPPED: {_e}", flush=True)
         if "credit_ok" not in meta:
             meta = {**meta, "credit_ok": decide_credit(meta, transcript)}
             _set_job(job_id, meta=meta)

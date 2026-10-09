@@ -689,6 +689,7 @@
     </div>
   </div>
   <div class="card captionCard resultPart" id="onScreenCard">
+        <details class="moreOpts" id="seenBox" style="display:none"><summary>What the AI saw in the video</summary><div id="seenText" style="font-size:13px;line-height:1.55;white-space:pre-wrap;opacity:.85"></div><div style="font-size:12px;opacity:.6;margin-top:6px">Got it wrong? Put the right context in &ldquo;What&rsquo;s this clip about?&rdquo; at the top and change the caption.</div></details>
         <h3 class="capSub">On-screen caption</h3>
         <textarea id="onScreenBox"></textarea>
         <div class="actionRow">
@@ -889,7 +890,7 @@
     document.getElementById("captionBox").value = data.caption || "";
     document.getElementById("angleBox").value = data.angle || document.getElementById("angleBox").value || "";
     updateCaptionCharCount();
-    fillCues(data.cues, data.captions_on); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; campSel.value = (data.campaign_id || ''); fillPolish(data.post, data.cover_ms); setJobWm(data.watermark); setJobCrop(data.crop); paidPromo.checked = !!data.paid_promo;
+    fillCues(data.cues, data.captions_on); showSeen(data.video_read); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; campSel.value = (data.campaign_id || ''); fillPolish(data.post, data.cover_ms); setJobWm(data.watermark); setJobCrop(data.crop); paidPromo.checked = !!data.paid_promo;
     fillPosts(data.platform_posts);
     setSaveState("");
     setResult(true); autoGrowAll();
@@ -2211,7 +2212,7 @@
       document.getElementById("captionBox").value = e.posting_caption || "";
       document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";
       updateCaptionCharCount();
-      fillCues(e.cues, e.captions_on); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; campSel.value = (e.campaign_id || ''); fillPolish(e.post, e.cover_ms); setJobWm(e.watermark); setJobCrop(e.crop); paidPromo.checked = !!e.paid_promo;
+      fillCues(e.cues, e.captions_on); showSeen(e.video_read); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; campSel.value = (e.campaign_id || ''); fillPolish(e.post, e.cover_ms); setJobWm(e.watermark); setJobCrop(e.crop); paidPromo.checked = !!e.paid_promo;
       fillPosts(e.platform_posts);
       setSaveState("");
       setResult(true); autoGrowAll();
@@ -2274,6 +2275,7 @@
       }).catch(() => {});
     }
   })();
+function showSeen(t){var b=document.getElementById('seenBox');if(!b)return;document.getElementById('seenText').textContent=t||'';b.style.display=t?'':'none';}
 </script>
 </body>
 </html>

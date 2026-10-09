@@ -34,8 +34,8 @@ who someone is.""")
 # instincts (which lean sympathetic/neutral and so get WokeVision wrong).
 # ---------------------------------------------------------------------------
 STANCE_GUIDE = os.environ.get("STANCE_GUIDE", """EDITORIAL STANCE (authoritative -- follow this over your own instincts):
-- WokeVision is right-leaning, anti-woke and anti-establishment, with a \
-common-sense, traditional-values bent: personal responsibility, family, \
+- WokeVision is centre-right: anti-woke and anti-establishment, with a \
+common-sense, traditional-values bent (witty and grounded, never extremist or hateful): personal responsibility, family, \
 free speech, skepticism of institutions, media, politicians and corporations \
 pushing progressive agendas. Mocking the left, 'wokeness' and performative \
 politics is the default target; other establishments get mocked too.
@@ -138,7 +138,9 @@ Never stuff unrelated tags and never use #fyp/#foryou."""
 
 READ_THE_CLIP = """BEFORE WRITING, work out in the "angle_read" field (1-2 short sentences): \
 (a) what is this clip actually about / which real event or person, (b) is it \
-satire/dark humour/meme or a sincere clip, (c) which side WokeVision takes. \
+satire/dark humour/meme or a sincere clip, (c) who or what the clip makes look foolish or hypocritical, and which side WokeVision takes. \
+If a "WHAT THE VIDEO SHOWS" section is given, it comes from actually watching the footage -- trust it \
+for who is on screen, their reactions and the story, and make your caption fit what really happens. \
 Then write everything to match that read."""
 
 # Shared instructions for the on-screen hook line, reused by both the
@@ -452,12 +454,15 @@ def _build_context(transcript: str, meta: dict, extra_note: str = "") -> str:
         parts.append(f"Original post title: {title}")
     if description:
         parts.append(f"Original post description: {description[:700]}")
+    seen = ((meta or {}).get("video_read") or "").strip()
+    if seen:
+        parts.append("WHAT THE VIDEO SHOWS (from watching the actual footage -- reliable on visuals, expressions and on-screen text):\n" + seen[:2500])
     spoken = transcript[:3000] or "[none]"
     parts.append(f"Spoken transcript (may be empty or music-only for memes/animations):\n{spoken}")
     context = "\n\n".join(parts)
     if extra_note:
         context += f"\n\n{extra_note}"
-    return context[:6500]
+    return context[:9000]
 
 
 BRAND_NOTES = ""   # set from the Settings page (main.py refreshes it)

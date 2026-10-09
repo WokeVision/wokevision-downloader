@@ -294,6 +294,11 @@ def _upload_video(access_token: str, video_url: str, caption: str, options: dict
     init_data = init_resp.json() if init_resp.content else {}
     if init_resp.status_code != 200 or (init_data.get("error") or {}).get("code") not in (None, "ok"):
         source_resp.close()
+        if "unaudited_client" in init_resp.text:
+            raise TikTokError("TikTok still treats this app as unaudited, so it will only post to a private account. "
+                              "Check that Render has the PRODUCTION client key/secret, that TikTok was reconnected after changing them, "
+                              "and that Content Posting API (Direct Post) shows as approved in the developer portal. "
+                              f"(TikTok said: {init_resp.text[:200]})")
         raise TikTokError(f"Could not start the upload: {init_resp.status_code} {init_resp.text[:500]}")
     publish_id = (init_data.get("data") or {}).get("publish_id")
     upload_url = (init_data.get("data") or {}).get("upload_url")

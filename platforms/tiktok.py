@@ -44,7 +44,10 @@ STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 
 # video.publish posts directly to the profile (what we need); user.info.basic
 # is just so the status card can show the connected account's name.
-SCOPES = "video.publish,user.info.basic"
+# To show TikTok in Analytics, also add user.info.stats and video.list here (via the
+# TIKTOK_SCOPES env var) AFTER they're enabled on the app in the developer portal,
+# then reconnect TikTok. Requesting scopes the app doesn't have breaks connecting.
+SCOPES = os.environ.get("TIKTOK_SCOPES", "video.publish,user.info.basic").replace(" ", "")
 
 PLATFORM = "tiktok"
 

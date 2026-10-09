@@ -255,9 +255,49 @@ def _tiktok():
     c = _conn("tiktok", m)
     if not c:
         return _empty("tiktok", "not_connected", "Connect TikTok in the Video Editor to see stats.")
-    out = _empty("tiktok", "limited",
-                 "TikTok only shares follower, view and like counts after its app review is approved and the stats permission is granted.",
-                 c.get("extra", {}).get("display_name"))
+    h = {"Authorization": f"Bearer {c['access_token']}"}
+    need = ("Add the user.info.stats and video.list permissions to your TikTok app (developer portal), "
+            "put them in TIKTOK_SCOPES on Render, then reconnect TikTok in Accounts.")
+    r = _get("https://open.tiktokapis.com/v2/user/info/",
+             params={"fields": "open_id,display_name,avatar_url,follower_count,likes_count,video_count"}, headers=h)
+    err = (r.json().get("error") or {}) if r.content else {}
+    if r.status_code != 200 or err.get("code") not in (None, "ok"):
+        if r.status_code in (401, 403) or "scope" in (err.get("code") or ""):
+            return _empty("tiktok", "limited", need, (c.get("extra") or {}).get("display_name"))
+        return _empty("tiktok", "error", f"TikTok returned {r.status_code}: {r.text[:200]}")
+    u = (r.json().get("data") or {}).get("user") or {}
+    posts, cursor = [], None
+    note = None
+    for _ in range(10):
+        body = {"max_count": 20}
+        if cursor:
+            body["cursor"] = cursor
+        vr = requests.post("https://open.tiktokapis.com/v2/video/list/",
+                           params={"fields": "id,title,cover_image_url,share_url,create_time,view_count,like_count,comment_count,share_count"},
+                           headers={**h, "Content-Type": "application/json"}, json=body, timeout=20)
+        ve = (vr.json().get("error") or {}) if vr.content else {}
+        if vr.status_code != 200 or ve.get("code") not in (None, "ok"):
+            if not posts:
+                note = "Post-level stats need the video.list permission. " + need
+            break
+        d = vr.json().get("data") or {}
+        for v in d.get("videos") or []:
+            ts = v.get("create_time")
+            posts.append({
+                "id": str(v.get("id")), "title": (v.get("title") or "")[:140], "url": v.get("share_url"),
+                "thumb": v.get("cover_image_url"),
+                "ts": datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).isoformat() if ts else None,
+                "views": v.get("view_count"), "likes": v.get("like_count"),
+                "comments": v.get("comment_count"), "shares": v.get("share_count"),
+            })
+        cursor = d.get("cursor")
+        if not d.get("has_more"):
+            break
+    out = _empty("tiktok", "ok", note, u.get("display_name"))
+    out["totals"].update(followers=u.get("follower_count"), posts=u.get("video_count") if u.get("video_count") is not None else (len(posts) or None),
+                         views=_sum(posts, "views") if posts else None, likes=u.get("likes_count") if u.get("likes_count") is not None else _sum(posts, "likes"),
+                         comments=_sum(posts, "comments") if posts else None, shares=_sum(posts, "shares") if posts else None)
+    out["posts"] = posts
     return out
 
 

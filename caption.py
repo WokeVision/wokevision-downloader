@@ -752,10 +752,15 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     tk = g("tiktok", "caption")
     tk = base["tiktok"]["caption"] if tk is None else str(tk)
     tkd = raw.get("tiktok") if isinstance(raw.get("tiktok"), dict) else {}
-    flag = lambda k: bool(tkd.get(k)) if k in tkd else True
+    # TikTok's posting rules: interactions start OFF, privacy has no default, and the
+    # commercial-content disclosure starts OFF -- the user opts in to each.
+    flag = lambda k: bool(tkd.get(k)) if k in tkd else False
+    _priv = str(tkd.get("privacy_level") or "")
     out["tiktok"] = {
         "caption": _trim_to_chars(_limit_hashtags(tk, LIM["tiktok_tags"]).strip(), LIM["tiktok_caption"]),
         "allow_comments": flag("allow_comments"), "allow_duet": flag("allow_duet"), "allow_stitch": flag("allow_stitch"),
+        "privacy_level": _priv if _priv in ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY") else "",
+        "disclose": flag("disclose"), "your_brand": flag("your_brand"), "branded_content": flag("branded_content"),
     }
 
     fb = g("facebook", "description")
@@ -782,7 +787,8 @@ def default_platform_posts(master: str) -> dict:
         },
         "x": {"text": body},
         "tiktok": {"caption": (body + ("\n\n" + tags5 if tags5 else "")).strip(),
-                   "allow_comments": True, "allow_duet": True, "allow_stitch": True},
+                   "allow_comments": False, "allow_duet": False, "allow_stitch": False, "privacy_level": "",
+                   "disclose": False, "your_brand": False, "branded_content": False},
         "facebook": {"description": (body + ("\n\n" + " ".join(tags[:2]) if tags else "")).strip()},
     }
 

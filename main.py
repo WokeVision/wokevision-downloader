@@ -2039,6 +2039,15 @@ def get_file(filename: str, request: Request, exp: str = "", sig: str = "", dl: 
     return FileResponse(path, media_type=_mt, headers={"Content-Disposition": "inline"})
 
 
+@app.get("/api/tiktok/creator-info")
+def tiktok_creator_info():
+    from platforms import tiktok as _tt
+    try:
+        return _tt.creator_info()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 # --- Platform connections (Instagram, and eventually Threads/YouTube/TikTok/X) ---
 
 @app.get("/connections")

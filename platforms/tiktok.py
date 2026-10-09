@@ -268,6 +268,11 @@ def _upload_video(access_token: str, video_url: str, caption: str, options: dict
 
     title = (caption or "").strip()[:2200]
     options = options or {}
+    privacy = (options.get("privacy_level") or "").strip() or _privacy_level(access_token)
+    branded = bool(options.get("branded_content") or options.get("paid_promo"))
+    if branded and privacy == "SELF_ONLY":
+        source_resp.close()
+        raise TikTokError("Branded content (paid partnership) can't be posted as private. Pick a different privacy level.")
 
     init_resp = requests.post(
         INIT_URL,
@@ -275,14 +280,14 @@ def _upload_video(access_token: str, video_url: str, caption: str, options: dict
         json={
             "post_info": {
                 "title": title,
-                "privacy_level": _privacy_level(access_token),
-                "disable_duet": not options.get("allow_duet", True),
-                "disable_stitch": not options.get("allow_stitch", True),
-                "disable_comment": not options.get("allow_comments", True),
+                "privacy_level": privacy,
+                "disable_duet": not options.get("allow_duet", False),
+                "disable_stitch": not options.get("allow_stitch", False),
+                "disable_comment": not options.get("allow_comments", False),
                 "video_cover_timestamp_ms": int(options.get("cover_ms") if options.get("cover_ms") is not None else 1000),
                 # Third-party paid partnership -> "branded content" disclosure.
-                "brand_content_toggle": bool(options.get("paid_promo")),
-                "brand_organic_toggle": False,
+                "brand_content_toggle": branded,
+                "brand_organic_toggle": bool(options.get("your_brand")),
                 "is_aigc": False,
             },
             "source_info": {
@@ -379,3 +384,30 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     publish_id = _upload_video(access_token, video_url, caption, options=post)
     _poll_publish_status(access_token, publish_id)
     return {"publish_id": publish_id}
+
+
+CREATOR_INFO_QUERY = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
+
+
+def creator_info() -> dict:
+    """What TikTok says this account can do right now: nickname, allowed privacy
+    levels, which interactions the creator has turned off, max video length."""
+    conn = db.get_connection(PLATFORM)
+    if not conn or not conn.get("access_token"):
+        raise TikTokError("TikTok isn't connected.")
+    refresh_if_needed()
+    conn = db.get_connection(PLATFORM)
+    r = requests.post(CREATOR_INFO_QUERY, headers={"Authorization": f"Bearer {conn['access_token']}", "Content-Type": "application/json; charset=UTF-8"}, timeout=20)
+    j = r.json() if r.content else {}
+    if r.status_code != 200 or (j.get("error") or {}).get("code") not in (None, "ok"):
+        raise TikTokError(f"TikTok wouldn't share this account's posting options: {r.text[:300]}")
+    d = j.get("data") or {}
+    return {
+        "nickname": d.get("creator_nickname") or d.get("creator_username") or "",
+        "username": d.get("creator_username") or "",
+        "privacy_level_options": d.get("privacy_level_options") or [],
+        "comment_disabled": bool(d.get("comment_disabled")),
+        "duet_disabled": bool(d.get("duet_disabled")),
+        "stitch_disabled": bool(d.get("stitch_disabled")),
+        "max_video_post_duration_sec": d.get("max_video_post_duration_sec"),
+    }

@@ -1488,11 +1488,17 @@
       { k: "category", type: "select", label: "Category" },
     ],
     tiktok: [
-      { k: "caption", type: "area", label: "Caption", max: 2200, tags: 5,
-        hint: "Hook and keywords in the first line (TikTok search reads captions). Only the first 5 hashtags count." },
+      { k: "_creator", type: "ttcreator" },
+      { k: "caption", type: "area", label: "Title", max: 2200, tags: 5,
+        hint: "Hook and keywords in the first line (TikTok search reads captions). Only the first 5 hashtags count. You can edit this before posting." },
+      { k: "privacy_level", type: "ttprivacy", label: "Who can view this video" },
       { k: "allow_comments", type: "switch", label: "Allow comments" },
       { k: "allow_duet", type: "switch", label: "Allow duets" },
       { k: "allow_stitch", type: "switch", label: "Allow stitches" },
+      { k: "disclose", type: "switch", label: "Disclose commercial content", tt: "disclose" },
+      { k: "your_brand", type: "switch", label: "Your brand", tt: "sub" },
+      { k: "branded_content", type: "switch", label: "Branded content", tt: "sub" },
+      { k: "_note", type: "ttnote" },
     ],
     x: [
       { k: "text", type: "area", label: "Post", max: 280, tags: 1,
@@ -1522,11 +1528,37 @@
       panel.className = "platPanel"; panel.dataset.p = p.id;
       FIELDS[p.id].forEach((f) => {
         const id = `pp_${p.id}_${f.k}`;
+        if (f.type === "ttcreator") {
+          const box = document.createElement("div");
+          box.id = "tt_creator"; box.className = "hint";
+          box.style.cssText = "font-size:13px;margin:0 0 8px;opacity:.85";
+          box.textContent = "Checking which TikTok account will receive this\u2026";
+          panel.appendChild(box);
+          const pv = document.createElement("video");
+          pv.id = "tt_prev"; pv.controls = true; pv.playsInline = true; pv.muted = true;
+          pv.style.cssText = "width:100%;max-height:260px;border-radius:12px;background:#000;margin:0 0 10px;display:none";
+          panel.appendChild(pv);
+          return;
+        }
+        if (f.type === "ttprivacy") {
+          const lab = document.createElement("div"); lab.className = "fieldLabel"; lab.innerHTML = `<span>${f.label}</span>`; panel.appendChild(lab);
+          const sel = document.createElement("select"); sel.id = id; sel.className = "ccSel"; sel.style.width = "100%";
+          sel.innerHTML = '<option value="">Select who can view\u2026</option>';
+          sel.addEventListener("change", () => { ttSync(); scheduleSave(); });
+          panel.appendChild(sel);
+          const ip = document.createElement("div"); ip.className = "fieldLabel"; ip.style.marginTop = "10px"; ip.innerHTML = "<span>Allow users to</span>"; panel.appendChild(ip);
+          return;
+        }
+        if (f.type === "ttnote") {
+          const n = document.createElement("div"); n.id = "tt_note"; n.style.cssText = "font-size:12.5px;line-height:1.5;opacity:.8;margin:10px 0";
+          panel.appendChild(n);
+          return;
+        }
         if (f.type === "switch") {
           const row = document.createElement("div");
-          row.className = "optRow";
-          row.innerHTML = `<span>${f.label}</span><label class="switch"><input type="checkbox" id="${id}" checked><span class="track"></span></label>`;
-          row.querySelector("input").addEventListener("change", scheduleSave);
+          row.className = "optRow"; if (f.tt) row.dataset.tt = f.tt;
+          row.innerHTML = `<span>${f.label}</span><label class="switch"><input type="checkbox" id="${id}"><span class="track"></span></label>`;
+          row.querySelector("input").addEventListener("change", () => { if (f.tt) ttSync(); scheduleSave(); });
           panel.appendChild(row);
           return;
         }
@@ -1569,8 +1601,72 @@
     selectPlat("instagram");
   }
 
+  // ---- TikTok posting rules: creator info, privacy (no default), interactions off by default,
+  //      commercial-content disclosure, consent line. ----
+  const TT_LABEL = { PUBLIC_TO_EVERYONE: "Everyone", MUTUAL_FOLLOW_FRIENDS: "Friends", FOLLOWER_OF_CREATOR: "Followers", SELF_ONLY: "Only me" };
+  let ttInfo = null, ttLoading = false;
+  const ttEl = (k) => document.getElementById("pp_tiktok_" + k);
+  function ttSync() {
+    const priv = ttEl("privacy_level"); if (!priv) return;
+    const dis = ttEl("disclose").checked, yb = ttEl("your_brand"), bc = ttEl("branded_content");
+    document.querySelectorAll('#platPanels [data-tt="sub"]').forEach((r) => { r.style.display = dis ? "" : "none"; });
+    if (!dis) { yb.checked = false; bc.checked = false; }
+    // Branded content can't be private.
+    const only = Array.from(priv.options).find((o) => o.value === "SELF_ONLY");
+    if (only) { only.disabled = !!bc.checked; only.title = bc.checked ? "Branded content visibility cannot be set to private." : ""; }
+    if (bc.checked && priv.value === "SELF_ONLY") priv.value = "";
+    bc.disabled = priv.value === "SELF_ONLY"; bc.parentElement.title = bc.disabled ? "Branded content visibility cannot be set to private." : "";
+    if (bc.disabled) bc.checked = false;
+    const tgl = ttEl("disclose"); tgl.parentElement.title = "Indicate whether this content promotes yourself, a third party, or both.";
+    const brand = yb.checked, branded = bc.checked;
+    const note = document.getElementById("tt_note"); if (!note) return;
+    let msg = "";
+    if (dis && !brand && !branded) msg = "You need to indicate if your content promotes yourself, a third party, or both.";
+    else if (branded) msg = "Your video will be labeled \u2018Paid partnership\u2019.";
+    else if (brand) msg = "Your video will be labeled \u2018Promotional content\u2019.";
+    const pol = branded
+      ? 'By posting, you agree to TikTok\u2019s <a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noopener">Branded Content Policy</a> and <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noopener">Music Usage Confirmation</a>.'
+      : 'By posting, you agree to TikTok\u2019s <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noopener">Music Usage Confirmation</a>.';
+    note.innerHTML = (msg ? "<div>" + msg + "</div>" : "") + "<div>" + pol + "</div><div style='opacity:.7'>It can take a few minutes for the video to appear on your TikTok profile after posting.</div>";
+  }
+  function ttApplyInfo() {
+    const box = document.getElementById("tt_creator"), priv = ttEl("privacy_level"); if (!box || !priv) return;
+    if (!ttInfo) return;
+    if (ttInfo.error) { box.textContent = ttInfo.error; return; }
+    box.innerHTML = "Posting to TikTok as <b></b>"; box.querySelector("b").textContent = "@" + (ttInfo.username || ttInfo.nickname);
+    const want = priv.dataset.want || priv.value;
+    priv.innerHTML = '<option value="">Select who can view\u2026</option>' + (ttInfo.privacy_level_options || []).map((o) => `<option value="${o}">${TT_LABEL[o] || o}</option>`).join("");
+    priv.value = (ttInfo.privacy_level_options || []).includes(want) ? want : "";
+    [["allow_comments", "comment_disabled"], ["allow_duet", "duet_disabled"], ["allow_stitch", "stitch_disabled"]].forEach(([k, flag]) => {
+      const el = ttEl(k); if (!el) return;
+      el.disabled = !!ttInfo[flag]; el.parentElement.parentElement.style.opacity = ttInfo[flag] ? ".45" : "";
+      el.parentElement.parentElement.title = ttInfo[flag] ? "Turned off in your TikTok settings." : "";
+      if (ttInfo[flag]) el.checked = false;
+    });
+    const pv = document.getElementById("tt_prev"), src = document.getElementById("preview");
+    if (pv && src && src.src) { if (pv.src !== src.src) pv.src = src.src; pv.style.display = ""; }
+    ttSync();
+  }
+  async function loadTtCreator() {
+    if (ttLoading) return; ttLoading = true;
+    try {
+      const r = await fetch("/api/tiktok/creator-info"); const d = await r.json();
+      ttInfo = r.ok ? d : { error: d.detail || "Couldn\u2019t read your TikTok posting options. Is TikTok connected?" };
+    } catch (e) { ttInfo = { error: "Couldn\u2019t reach TikTok." }; }
+    ttLoading = false; ttApplyInfo();
+  }
+  // Returns an error string if TikTok is switched on but its required choices are missing.
+  function ttValidate() {
+    if (!toggledOn.has("tiktok")) return "";
+    const priv = ttEl("privacy_level"); if (!priv) return "";
+    if (!priv.value) return "TikTok: choose who can view the video (TikTok tab).";
+    if (ttEl("disclose").checked && !ttEl("your_brand").checked && !ttEl("branded_content").checked) return "TikTok: you turned on commercial content disclosure \u2014 pick Your brand and/or Branded content.";
+    return "";
+  }
+
   function selectPlat(id) {
     activePlat = id;
+    if (id === "tiktok") { if (!ttInfo) loadTtCreator(); else ttApplyInfo(); }
     platTabs.querySelectorAll(".platTab").forEach((t) => t.classList.toggle("active", t.dataset.p === id));
     setTimeout(autoGrowAll, 0);
     platPanels.querySelectorAll(".platPanel").forEach((t) => t.classList.toggle("active", t.dataset.p === id));
@@ -1584,7 +1680,7 @@
     FIELDS[pid].forEach((f) => {
       const el = document.getElementById(`pp_${pid}_${f.k}`);
       const cnt = document.getElementById(`pp_${pid}_${f.k}_cnt`);
-      if (!el || !cnt || f.type === "select") return;
+      if (!el || !cnt || f.type === "select" || f.type === "ttprivacy") return;
       const v = el.value;
       let over = false, txt = "";
       if (f.type === "tags") {
@@ -1629,7 +1725,8 @@
       FIELDS[p.id].forEach((f) => {
         const el = document.getElementById(`pp_${p.id}_${f.k}`);
         if (!el) return;
-        if (f.type === "switch") el.checked = d[f.k] === undefined ? true : !!d[f.k];
+        if (f.type === "switch") el.checked = d[f.k] === undefined ? false : !!d[f.k];
+        else if (f.type === "ttprivacy") { el.dataset.want = d[f.k] || ""; el.value = d[f.k] || ""; }
         else if (f.type === "tags") el.value = (d[f.k] || []).join(", ");
         else if (f.type === "select") el.value = String(d[f.k] || "25");
         else el.value = d[f.k] || "";
@@ -1647,6 +1744,7 @@
         const el = document.getElementById(`pp_${p.id}_${f.k}`);
         if (!el) return;
         if (f.type === "switch") out[p.id][f.k] = el.checked;
+        else if (f.type === "ttprivacy") out[p.id][f.k] = el.value || el.dataset.want || "";
         else if (f.type === "tags") out[p.id][f.k] = el.value.split(",").map((s) => s.trim()).filter(Boolean);
         else out[p.id][f.k] = el.value;
       });
@@ -2044,7 +2142,7 @@
   }
 
   uploadToPlatformsBtn.addEventListener("click", async () => {
-    if (whenMode === "schedule") { if (!currentJobId) { alert("Process a video first."); return; } return submitSchedule(); }
+    if (whenMode === "schedule") { if (!currentJobId) { alert("Process a video first."); return; } { const e = ttValidate(); if (e) { alert(e); selectPlat("tiktok"); return; } } return submitSchedule(); }
     if (!currentJobId) {
       alert("Process a video first, then come back here to publish it.");
       return;
@@ -2054,6 +2152,7 @@
       alert("Toggle on at least one platform first.");
       return;
     }
+    { const e = ttValidate(); if (e) { alert(e); selectPlat("tiktok"); return; } }
     uploadToPlatformsBtn.disabled = true;
     const original = uploadToPlatformsBtn.textContent;
     uploadToPlatformsBtn.textContent = "Uploading...";

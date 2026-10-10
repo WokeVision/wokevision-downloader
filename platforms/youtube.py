@@ -33,8 +33,12 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 # youtube.upload alone is enough to publish; youtube.readonly lets us look
 # up the connected channel's name for the status display.
-SCOPES = os.environ.get("YOUTUBE_SCOPES") or ("https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly "
-                                              "https://www.googleapis.com/auth/youtube.force-ssl")
+SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+# Replying/hiding needs youtube.force-ssl on the Google OAuth consent screen first;
+# then set COMMENT_SCOPES=1 on the server and reconnect YouTube.
+if os.environ.get("COMMENT_SCOPES") == "1":
+    SCOPES += " https://www.googleapis.com/auth/youtube.force-ssl"
+SCOPES = os.environ.get("YOUTUBE_SCOPES") or SCOPES
 
 PLATFORM = "youtube"
 

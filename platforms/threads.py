@@ -35,8 +35,12 @@ LONG_LIVED_EXCHANGE_URL = "https://graph.threads.net/access_token"
 REFRESH_URL = "https://graph.threads.net/refresh_access_token"
 GRAPH_BASE = "https://graph.threads.net/v1.0"
 
-SCOPES = os.environ.get("THREADS_SCOPES") or ("threads_basic,threads_content_publish,threads_manage_insights,"
-                                             "threads_read_replies,threads_manage_replies")
+SCOPES = "threads_basic,threads_content_publish,threads_manage_insights"
+# Add threads_read_replies + threads_manage_replies to the Threads use case first,
+# then set COMMENT_SCOPES=1 on the server and reconnect Threads.
+if os.environ.get("COMMENT_SCOPES") == "1":
+    SCOPES += ",threads_read_replies,threads_manage_replies"
+SCOPES = os.environ.get("THREADS_SCOPES") or SCOPES
 
 PLATFORM = "threads"
 

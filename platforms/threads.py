@@ -255,11 +255,59 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     else:
         raise ThreadsError("Timed out waiting for Threads to process the video.")
 
-    publish_resp = requests.post(
-        f"{GRAPH_BASE}/{threads_user_id}/threads_publish",
-        data={"creation_id": container_id, "access_token": access_token},
-        timeout=30,
-    )
-    if publish_resp.status_code != 200:
-        raise ThreadsError(f"Could not publish: {publish_resp.text[:500]}")
-    return {"media_id": publish_resp.json().get("id")}
+    # Meta's own guidance is to give a finished container a moment before
+    # publishing, and threads_publish is known to return a transient
+    # "OAuthException code 2 / unexpected error" (is_transient: true) when
+    # called straight away. So: pause briefly, then retry transient failures
+    # with growing gaps. Before each retry, check the account's latest posts
+    # in case the earlier attempt actually went through (never double-post).
+    time.sleep(8)
+    last_err = ""
+    for attempt, wait in enumerate((0, 10, 25, 45)):
+        if wait:
+            time.sleep(wait)
+            already = _already_posted(threads_user_id, access_token, caption)
+            if already:
+                return {"media_id": already}
+        publish_resp = requests.post(
+            f"{GRAPH_BASE}/{threads_user_id}/threads_publish",
+            data={"creation_id": container_id, "access_token": access_token},
+            timeout=30,
+        )
+        if publish_resp.status_code == 200:
+            return {"media_id": publish_resp.json().get("id")}
+        last_err = publish_resp.text[:500]
+        try:
+            err = (publish_resp.json() or {}).get("error") or {}
+        except Exception:
+            err = {}
+        if not (err.get("is_transient") or err.get("code") in (1, 2, 4, 17, 341)):
+            break
+    raise ThreadsError(f"Could not publish: {last_err}")
+
+
+def _already_posted(threads_user_id: str, access_token: str, caption: str):
+    """Returns the media id of a very recent post whose text matches, else None."""
+    try:
+        r = requests.get(
+            f"{GRAPH_BASE}/{threads_user_id}/threads",
+            params={"fields": "id,text,timestamp", "limit": 5, "access_token": access_token},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return None
+        want = (caption or "").strip()[:60]
+        now = time.time()
+        for item in r.json().get("data", []):
+            if want and (item.get("text") or "").strip().startswith(want):
+                ts = item.get("timestamp") or ""
+                try:
+                    import datetime as _dt
+                    t = _dt.datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=_dt.timezone.utc).timestamp()
+                    if now - t < 600:
+                        return item.get("id")
+                except Exception:
+                    return item.get("id")
+    except Exception:
+        return None
+    return None

@@ -52,10 +52,10 @@ AUTHORIZE_URL = "https://www.facebook.com/v23.0/dialog/oauth"
 TOKEN_URL = f"{GRAPH_BASE}/oauth/access_token"
 
 SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement,business_management,read_insights"
-# Comment permissions must first be added to the Meta app (Use cases -> Manage
-# everything on your Page -> Permissions). Only then set COMMENT_SCOPES=1 on the
-# server, otherwise Facebook rejects the connect request as an invalid scope.
-if os.environ.get("COMMENT_SCOPES") == "1":
+# Comment permissions are requested by default. They must also be added on the platform's
+# app (Meta use case permissions / Google consent screen); set COMMENT_SCOPES=0 on the
+# server to stop requesting them if a platform rejects the connect request.
+if os.environ.get("COMMENT_SCOPES", "1") != "0":
     SCOPES += ",pages_manage_engagement,pages_read_user_content"
 SCOPES = os.environ.get("FACEBOOK_SCOPES") or SCOPES
 

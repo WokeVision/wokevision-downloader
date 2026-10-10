@@ -34,9 +34,10 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 # youtube.upload alone is enough to publish; youtube.readonly lets us look
 # up the connected channel's name for the status display.
 SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
-# Replying/hiding needs youtube.force-ssl on the Google OAuth consent screen first;
-# then set COMMENT_SCOPES=1 on the server and reconnect YouTube.
-if os.environ.get("COMMENT_SCOPES") == "1":
+# Comment permissions are requested by default. They must also be added on the platform's
+# app (Meta use case permissions / Google consent screen); set COMMENT_SCOPES=0 on the
+# server to stop requesting them if a platform rejects the connect request.
+if os.environ.get("COMMENT_SCOPES", "1") != "0":
     SCOPES += " https://www.googleapis.com/auth/youtube.force-ssl"
 SCOPES = os.environ.get("YOUTUBE_SCOPES") or SCOPES
 

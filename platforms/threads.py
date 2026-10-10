@@ -36,9 +36,10 @@ REFRESH_URL = "https://graph.threads.net/refresh_access_token"
 GRAPH_BASE = "https://graph.threads.net/v1.0"
 
 SCOPES = "threads_basic,threads_content_publish,threads_manage_insights"
-# Add threads_read_replies + threads_manage_replies to the Threads use case first,
-# then set COMMENT_SCOPES=1 on the server and reconnect Threads.
-if os.environ.get("COMMENT_SCOPES") == "1":
+# Comment permissions are requested by default. They must also be added on the platform's
+# app (Meta use case permissions / Google consent screen); set COMMENT_SCOPES=0 on the
+# server to stop requesting them if a platform rejects the connect request.
+if os.environ.get("COMMENT_SCOPES", "1") != "0":
     SCOPES += ",threads_read_replies,threads_manage_replies"
 SCOPES = os.environ.get("THREADS_SCOPES") or SCOPES
 

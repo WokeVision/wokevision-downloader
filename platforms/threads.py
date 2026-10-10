@@ -212,78 +212,107 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     if not threads_user_id:
         raise ThreadsError("No Threads account id on file -- try reconnecting.")
 
-    create_data = {
-        "video_url": video_url,
-        "media_type": "VIDEO",
-        "text": caption or "",
-        "access_token": access_token,
-    }
+    def _attempt(tag: str, text: str) -> dict:
+        create_data = {
+            "video_url": video_url,
+            "media_type": "VIDEO",
+            "text": text or "",
+            "access_token": access_token,
+        }
+        if tag:
+            # Threads allows ONE topic tag per post, set here rather than as a
+            # #hashtag in the text (1-50 chars, no "." or "&").
+            create_data["topic_tag"] = tag
+        create_resp = requests.post(
+            f"{GRAPH_BASE}/{threads_user_id}/threads",
+            data=create_data,
+            timeout=60,
+        )
+        if create_resp.status_code != 200:
+            raise ThreadsError(f"Could not start the upload: {create_resp.text[:500]}")
+        container_id = create_resp.json().get("id")
+        if not container_id:
+            raise ThreadsError("Threads didn't return a container id.")
+
+        # Threads processes the video asynchronously; poll until it's ready to
+        # publish (or errors out). Mirrors Instagram's container pattern -- up
+        # to 5 minutes, checked every 10s, which is plenty for our short clips.
+        deadline = time.time() + 5 * 60
+        status = "IN_PROGRESS"
+        while time.time() < deadline:
+            status_resp = requests.get(
+                f"{GRAPH_BASE}/{container_id}",
+                params={"fields": "status,error_message", "access_token": access_token},
+                timeout=20,
+            )
+            sdata = status_resp.json()
+            status = sdata.get("status", "IN_PROGRESS")
+            if status == "FINISHED":
+                break
+            if status in ("ERROR", "EXPIRED"):
+                detail = (sdata.get("error_message") or "").strip()
+                raise ThreadsError(f"Threads failed to process the video (status: {status})" + (f": {detail}" if detail else "") + ".")
+            time.sleep(10)
+        else:
+            raise ThreadsError("Timed out waiting for Threads to process the video.")
+
+        # Meta's own guidance is to give a finished container a moment before
+        # publishing, and threads_publish is known to return a transient
+        # "OAuthException code 2 / unexpected error" (is_transient: true) when
+        # called straight away. So: pause briefly, then retry transient failures
+        # with growing gaps. Before each retry, check the account's latest posts
+        # in case the earlier attempt actually went through (never double-post).
+        time.sleep(8)
+        last_err = ""
+        for attempt, wait in enumerate((0, 10, 25, 45)):
+            if wait:
+                time.sleep(wait)
+                already = _already_posted(threads_user_id, access_token, text)
+                if already:
+                    return {"media_id": already}
+            publish_resp = requests.post(
+                f"{GRAPH_BASE}/{threads_user_id}/threads_publish",
+                data={"creation_id": container_id, "access_token": access_token},
+                timeout=30,
+            )
+            if publish_resp.status_code == 200:
+                return {"media_id": publish_resp.json().get("id")}
+            last_err = publish_resp.text[:500]
+            try:
+                err = (publish_resp.json() or {}).get("error") or {}
+            except Exception:
+                err = {}
+            if not (err.get("is_transient") or err.get("code") in (1, 2, 4, 17, 341)):
+                break
+        raise ThreadsError(f"Could not publish: {last_err}")
+
+    # Same clip failed identically on repeated tries, so the cause can be the
+    # post itself rather than timing. Try the full post first; if Meta keeps
+    # refusing at the publish step, retry once without the topic tag, then once
+    # more with the hashtags moved out of the text. The first variant that goes
+    # through wins and is reported back so it's visible what changed.
+    import re as _re
+    plain = _re.sub(r"\s*#\w+", "", caption or "").strip()
+    variants = [(topic_tag, caption, "")]
     if topic_tag:
-        # Threads allows ONE topic tag per post, set here rather than as a
-        # #hashtag in the text (1-50 chars, no "." or "&").
-        create_data["topic_tag"] = topic_tag
-    create_resp = requests.post(
-        f"{GRAPH_BASE}/{threads_user_id}/threads",
-        data=create_data,
-        timeout=60,
-    )
-    if create_resp.status_code != 200:
-        raise ThreadsError(f"Could not start the upload: {create_resp.text[:500]}")
-    container_id = create_resp.json().get("id")
-    if not container_id:
-        raise ThreadsError("Threads didn't return a container id.")
-
-    # Threads processes the video asynchronously; poll until it's ready to
-    # publish (or errors out). Mirrors Instagram's container pattern -- up
-    # to 5 minutes, checked every 10s, which is plenty for our short clips.
-    deadline = time.time() + 5 * 60
-    status = "IN_PROGRESS"
-    while time.time() < deadline:
-        status_resp = requests.get(
-            f"{GRAPH_BASE}/{container_id}",
-            params={"fields": "status,error_message", "access_token": access_token},
-            timeout=20,
-        )
-        sdata = status_resp.json()
-        status = sdata.get("status", "IN_PROGRESS")
-        if status == "FINISHED":
-            break
-        if status in ("ERROR", "EXPIRED"):
-            detail = (sdata.get("error_message") or "").strip()
-            raise ThreadsError(f"Threads failed to process the video (status: {status})" + (f": {detail}" if detail else "") + ".")
-        time.sleep(10)
-    else:
-        raise ThreadsError("Timed out waiting for Threads to process the video.")
-
-    # Meta's own guidance is to give a finished container a moment before
-    # publishing, and threads_publish is known to return a transient
-    # "OAuthException code 2 / unexpected error" (is_transient: true) when
-    # called straight away. So: pause briefly, then retry transient failures
-    # with growing gaps. Before each retry, check the account's latest posts
-    # in case the earlier attempt actually went through (never double-post).
-    time.sleep(8)
-    last_err = ""
-    for attempt, wait in enumerate((0, 10, 25, 45)):
-        if wait:
-            time.sleep(wait)
-            already = _already_posted(threads_user_id, access_token, caption)
-            if already:
-                return {"media_id": already}
-        publish_resp = requests.post(
-            f"{GRAPH_BASE}/{threads_user_id}/threads_publish",
-            data={"creation_id": container_id, "access_token": access_token},
-            timeout=30,
-        )
-        if publish_resp.status_code == 200:
-            return {"media_id": publish_resp.json().get("id")}
-        last_err = publish_resp.text[:500]
+        variants.append(("", caption, " (posted without the topic tag)"))
+    if plain and plain != (caption or "").strip():
+        variants.append(("", plain, " (posted without hashtags)"))
+    first_err = None
+    for tag, text, note in variants:
         try:
-            err = (publish_resp.json() or {}).get("error") or {}
-        except Exception:
-            err = {}
-        if not (err.get("is_transient") or err.get("code") in (1, 2, 4, 17, 341)):
-            break
-    raise ThreadsError(f"Could not publish: {last_err}")
+            out = _attempt(tag, text)
+            if note:
+                out["note"] = "Threads" + note
+                print(f"THREADS: succeeded{note}", flush=True)
+            return out
+        except ThreadsError as e:
+            msg = str(e)
+            first_err = first_err or msg
+            print(f"THREADS variant failed{note or ' (full post)'}: {msg[:300]}", flush=True)
+            if not msg.startswith("Could not publish"):
+                raise
+    raise ThreadsError(first_err or "Threads publish failed.")
 
 
 def _already_posted(threads_user_id: str, access_token: str, caption: str):

@@ -359,20 +359,37 @@ def _auth():
     return conn["access_token"], uid
 
 
-def recent_comments(media_limit: int = 6, per_media: int = 30) -> list:
-    """Comments on the latest posts, newest first. Needs instagram_business_manage_comments."""
+def recent_comments(media_limit: int = 6, per_media: int = 30, diag: dict = None) -> list:
+    """Comments on the latest posts, newest first. Needs instagram_business_manage_comments.
+
+    If a `diag` dict is passed it is filled with what happened (posts scanned,
+    the account's real post count, and any per-post errors) so the page can say
+    why the list is empty instead of showing a blank."""
     token, uid = _auth()
     r = requests.get(f"{GRAPH_BASE}/{uid}/media", params={"fields": "id,caption,permalink,timestamp", "limit": media_limit, "access_token": token}, timeout=30)
     if r.status_code != 200:
         raise InstagramError(f"Couldn't list posts: {r.text[:300]}")
+    posts = r.json().get("data", [])
+    errors = []
+    if diag is not None:
+        diag["posts_scanned"] = len(posts)
+        try:
+            me = requests.get(f"{GRAPH_BASE}/me", params={"fields": "username,media_count,account_type", "access_token": token}, timeout=15)
+            if me.status_code == 200:
+                diag["media_count"] = me.json().get("media_count")
+                diag["account_type"] = me.json().get("account_type")
+        except Exception:
+            pass
     out = []
-    for m in r.json().get("data", []):
+    for m in posts:
         cr = requests.get(f"{GRAPH_BASE}/{m['id']}/comments", params={
             "fields": "id,text,username,timestamp,hidden,like_count,replies{id,text,username,timestamp}",
             "limit": per_media, "access_token": token}, timeout=30)
         if cr.status_code != 200:
-            if "permission" in cr.text.lower() or cr.status_code in (400, 403):
+            low = cr.text.lower()
+            if "permission" in low or "(#10)" in cr.text or "(#200)" in cr.text:
                 raise InstagramError("Instagram needs the comments permission: reconnect Instagram on the Accounts page, then try again. (" + cr.text[:160] + ")")
+            errors.append(f"HTTP {cr.status_code}: {cr.text[:200]}")
             continue
         for c in cr.json().get("data", []):
             out.append({"id": c["id"], "text": c.get("text", ""), "username": c.get("username", ""), "ts": c.get("timestamp"),
@@ -381,6 +398,8 @@ def recent_comments(media_limit: int = 6, per_media: int = 30) -> list:
                                     for x in (c.get("replies") or {}).get("data", [])],
                         "media_caption": (m.get("caption") or "")[:140], "permalink": m.get("permalink")})
     out.sort(key=lambda c: c.get("ts") or "", reverse=True)
+    if diag is not None:
+        diag["errors"] = errors[:3]
     return out
 
 

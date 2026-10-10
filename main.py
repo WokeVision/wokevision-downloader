@@ -2256,7 +2256,7 @@ def get_history(entry_id: str):
         "publish_results": e.get("publish_results") or {},
         "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
         **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
-           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief", "crop")},
+           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief", "crop", "video_read")},
     }
 
 
@@ -3253,8 +3253,9 @@ def comments_cfg_put(req: CommentCfg):
 
 @app.get("/api/comments")
 def comments_list():
+    diag = {}
     try:
-        items = instagram.recent_comments()
+        items = instagram.recent_comments(diag=diag)
     except Exception as e:
         return {"items": [], "error": str(e)[:400]}
     me = instagram.own_username().lower()
@@ -3262,7 +3263,24 @@ def comments_list():
         c["replied"] = any((r.get("username") or "").lower() == me for r in c["replies"]) if me else bool(c["replies"])
         c["mine"] = (c.get("username") or "").lower() == me
         c["platform"] = "instagram"
-    return {"items": [c for c in items if not c["mine"]], "config": _comment_cfg()}
+    shown = [c for c in items if not c["mine"]]
+    note = ""
+    if not shown:
+        # Say WHY the list is empty rather than a blank page.
+        scanned, total = diag.get("posts_scanned", 0), diag.get("media_count")
+        if diag.get("errors"):
+            note = "Instagram refused the comments request for your latest posts. First error: " + diag["errors"][0]
+        elif scanned == 0 and total:
+            note = (f"Instagram says the account has {total} posts but returned none to this app. That usually means the Meta app is still in "
+                    "Development mode or lacks access for this permission: check App Review in the Meta developer dashboard.")
+        elif scanned == 0:
+            note = "Instagram returned no posts for this account."
+        elif len(items) and not shown:
+            note = f"Checked your latest {scanned} posts: the only comments are your own."
+        else:
+            note = (f"Checked your latest {scanned} posts and Instagram returned no comments. If you can see comments on Instagram itself, the "
+                    "app's Meta access level (Development vs Live) is the usual reason: public comments only come through for Live apps.")
+    return {"items": shown, "config": _comment_cfg(), "note": note, "diag": diag}
 
 
 class CommentReply(BaseModel):

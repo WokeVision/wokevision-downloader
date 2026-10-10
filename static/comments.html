@@ -62,7 +62,7 @@ function render(){
   f.querySelectorAll("[data-sv]").forEach(function(s){s.onchange=function(){if(s.value!=="")document.getElementById("t"+s.dataset.sv).value=cfg.saved_replies[+s.value];s.value="";};});
 }
 function load(){j("/api/comments").then(function(d){items=d.items||[];if(d.config)cfg=d.config;
-  document.getElementById("err").innerHTML=d.error?'<div class="banner">'+esc(d.error)+'</div>':"";
+  document.getElementById("err").innerHTML=d.error?'<div class="banner">'+esc(d.error)+'</div>':(d.note?'<div class="banner">'+esc(d.note)+'</div>':"");
   document.getElementById("saved").value=cfg.saved_replies.join("\n");document.getElementById("words").value=cfg.hide_words.join("\n");render();})
   .catch(function(e){document.getElementById("list").innerHTML='<div class="banner">Couldn’t load comments: '+esc(e.message)+'</div>';});}
 document.getElementById("saveCfg").onclick=function(){var lines=function(id){return document.getElementById(id).value.split("\n").map(function(x){return x.trim();}).filter(Boolean);};

@@ -51,7 +51,8 @@ GRAPH_BASE = "https://graph.facebook.com/v23.0"
 AUTHORIZE_URL = "https://www.facebook.com/v23.0/dialog/oauth"
 TOKEN_URL = f"{GRAPH_BASE}/oauth/access_token"
 
-SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement,business_management,read_insights"
+SCOPES = os.environ.get("FACEBOOK_SCOPES") or ("pages_show_list,pages_manage_posts,pages_read_engagement,business_management,read_insights,"
+                                              "pages_manage_engagement,pages_read_user_content")
 
 PLATFORM = "facebook"
 
@@ -332,3 +333,81 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     if publish_resp.status_code != 200:
         raise FacebookError(f"Could not publish: {publish_resp.text[:500]}")
     return {"media_id": video_id}
+
+
+# --- Comments ------------------------------------------------------------------
+# Needs pages_manage_engagement + pages_read_user_content (reconnect Facebook
+# once after they're added). Reads comments on the Page's latest posts/videos.
+def _page_auth():
+    conn = db.get_connection(PLATFORM)
+    if not conn or not conn.get("access_token"):
+        raise FacebookError("Facebook isn't connected.")
+    refresh_if_needed()
+    conn = db.get_connection(PLATFORM)
+    page_id = (conn.get("extra") or {}).get("page_id")
+    if not page_id:
+        raise FacebookError("No Facebook Page on file -- try reconnecting.")
+    return conn["access_token"], page_id
+
+
+def _fb_perm_error(text: str) -> bool:
+    low = text.lower()
+    return "(#10)" in text or "(#200)" in text or "(#190)" in text or "permission" in low or "oauth" in low
+
+
+def own_username() -> str:
+    conn = db.get_connection(PLATFORM) or {}
+    return (conn.get("extra") or {}).get("page_name") or ""
+
+
+def recent_comments(media_limit: int = 8, per_media: int = 30, diag: dict = None) -> list:
+    token, page_id = _page_auth()
+    cm = (f"comments.summary(true).limit({per_media}){{id,message,created_time,like_count,is_hidden,from{{id,name}},"
+          "comments.limit(10){id,message,created_time,from{id,name}}}")
+    sources = [("posts", f"id,message,permalink_url,created_time,{cm}"), ("videos", f"id,description,permalink_url,created_time,{cm}")]
+    posts, out, seen, claimed, errs = [], [], set(), 0, []
+    me_id = page_id
+    for edge, fields in sources:
+        r = requests.get(f"{GRAPH_BASE}/{page_id}/{edge}", params={"fields": fields, "limit": media_limit, "access_token": token}, timeout=40)
+        if r.status_code != 200:
+            if _fb_perm_error(r.text):
+                raise FacebookError("Facebook needs the comments permissions: reconnect Facebook on the Accounts page, then try again. (" + r.text[:160] + ")")
+            if edge == "posts":
+                raise FacebookError(f"Couldn't read Page posts: {r.text[:300]}")
+            errs.append(f"{edge}: {r.text[:150]}")
+            continue
+        for p in r.json().get("data", []):
+            posts.append(p)
+            cmt = p.get("comments") or {}
+            claimed += (cmt.get("summary") or {}).get("total_count", 0)
+            for c in cmt.get("data", []):
+                if c["id"] in seen:
+                    continue
+                seen.add(c["id"])
+                frm = c.get("from") or {}
+                out.append({"id": c["id"], "text": c.get("message", ""), "username": frm.get("name") or "A Facebook user",
+                            "ts": c.get("created_time"), "hidden": bool(c.get("is_hidden")), "likes": c.get("like_count", 0),
+                            "replies": [{"id": x.get("id"), "text": x.get("message", ""), "username": (x.get("from") or {}).get("name", ""), "ts": x.get("created_time"),
+                                         "mine": (x.get("from") or {}).get("id") == me_id}
+                                        for x in (c.get("comments") or {}).get("data", [])],
+                            "media_caption": ((p.get("message") or p.get("description") or ""))[:140], "permalink": p.get("permalink_url"),
+                            "mine": frm.get("id") == me_id})
+    out.sort(key=lambda c: c.get("ts") or "", reverse=True)
+    if diag is not None:
+        diag.update({"posts_scanned": len(posts), "comments_reported": claimed, "errors": errs[:3]})
+    return out
+
+
+def reply_comment(comment_id: str, text: str) -> dict:
+    token, _ = _page_auth()
+    r = requests.post(f"{GRAPH_BASE}/{comment_id}/comments", data={"message": text, "access_token": token}, timeout=30)
+    if r.status_code != 200:
+        raise FacebookError(f"Couldn't post the reply: {r.text[:300]}")
+    return r.json()
+
+
+def hide_comment(comment_id: str, hide: bool = True) -> None:
+    token, _ = _page_auth()
+    r = requests.post(f"{GRAPH_BASE}/{comment_id}", data={"is_hidden": "true" if hide else "false", "access_token": token}, timeout=30)
+    if r.status_code != 200:
+        raise FacebookError(f"Couldn't {'hide' if hide else 'unhide'} the comment: {r.text[:300]}")

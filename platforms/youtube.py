@@ -33,7 +33,8 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 # youtube.upload alone is enough to publish; youtube.readonly lets us look
 # up the connected channel's name for the status display.
-SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+SCOPES = os.environ.get("YOUTUBE_SCOPES") or ("https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly "
+                                              "https://www.googleapis.com/auth/youtube.force-ssl")
 
 PLATFORM = "youtube"
 
@@ -289,3 +290,84 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
         raise YouTubeError(f"Upload failed: {upload_resp.status_code} {upload_resp.text[:500]}")
     video_id = upload_resp.json().get("id")
     return {"video_id": video_id}
+
+
+# --- Comments ------------------------------------------------------------------
+# Reading works with youtube.readonly; replying and hiding need youtube.force-ssl
+# (reconnect YouTube once after it's on the OAuth consent screen).
+API = "https://www.googleapis.com/youtube/v3"
+
+
+def _yt_auth():
+    conn = db.get_connection(PLATFORM)
+    if not conn or not conn.get("access_token"):
+        raise YouTubeError("YouTube isn't connected.")
+    refresh_if_needed()
+    conn = db.get_connection(PLATFORM)
+    cid = (conn.get("extra") or {}).get("channel_id")
+    if not cid:
+        raise YouTubeError("No YouTube channel on file -- try reconnecting.")
+    return {"Authorization": f"Bearer {conn['access_token']}"}, cid
+
+
+def own_username() -> str:
+    conn = db.get_connection(PLATFORM) or {}
+    return (conn.get("extra") or {}).get("channel_title") or ""
+
+
+def recent_comments(media_limit: int = 8, per_media: int = 30, diag: dict = None) -> list:
+    headers, cid = _yt_auth()
+    out, titles, errors = [], {}, []
+    for status in ("published", "heldForReview"):
+        r = requests.get(f"{API}/commentThreads", params={
+            "part": "snippet,replies", "allThreadsRelatedToChannelId": cid, "maxResults": 50, "order": "time",
+            "moderationStatus": status, "textFormat": "plainText"}, headers=headers, timeout=30)
+        if r.status_code != 200:
+            low = r.text.lower()
+            if r.status_code in (401, 403) and ("insufficient" in low or "scope" in low or "forbidden" in low):
+                raise YouTubeError("YouTube needs the comments permission: reconnect YouTube on the Accounts page, then try again. (" + r.text[:160] + ")")
+            if status == "published":
+                raise YouTubeError(f"Couldn't read comments: {r.status_code} {r.text[:300]}")
+            errors.append(f"held: HTTP {r.status_code}")
+            continue
+        for t in r.json().get("items", []):
+            sn = t["snippet"]["topLevelComment"]["snippet"]
+            vid = sn.get("videoId") or t["snippet"].get("videoId")
+            out.append({"id": t["snippet"]["topLevelComment"]["id"], "text": sn.get("textDisplay") or sn.get("textOriginal", ""),
+                        "username": sn.get("authorDisplayName", ""), "ts": sn.get("publishedAt"), "hidden": status == "heldForReview",
+                        "likes": sn.get("likeCount", 0), "_vid": vid,
+                        "replies": [{"id": x.get("id"), "text": x["snippet"].get("textDisplay", ""), "username": x["snippet"].get("authorDisplayName", ""), "ts": x["snippet"].get("publishedAt")}
+                                    for x in (t.get("replies") or {}).get("comments", [])],
+                        "mine": (sn.get("authorChannelId") or {}).get("value") == cid})
+    vids = sorted({c["_vid"] for c in out if c.get("_vid")})[:50]
+    if vids:
+        vr = requests.get(f"{API}/videos", params={"part": "snippet", "id": ",".join(vids)}, headers=headers, timeout=20)
+        if vr.status_code == 200:
+            titles = {v["id"]: v["snippet"].get("title", "") for v in vr.json().get("items", [])}
+    for c in out:
+        v = c.pop("_vid", None)
+        c["media_caption"] = (titles.get(v) or "")[:140]
+        c["permalink"] = f"https://www.youtube.com/watch?v={v}&lc={c['id']}" if v else None
+    out.sort(key=lambda c: c.get("ts") or "", reverse=True)
+    if diag is not None:
+        diag.update({"posts_scanned": len(vids), "errors": errors})
+    return out[: media_limit * per_media]
+
+
+def reply_comment(comment_id: str, text: str) -> dict:
+    headers, _ = _yt_auth()
+    r = requests.post(f"{API}/comments", params={"part": "snippet"}, headers=headers,
+                      json={"snippet": {"parentId": comment_id, "textOriginal": text}}, timeout=30)
+    if r.status_code != 200:
+        raise YouTubeError(f"Couldn't post the reply: {r.status_code} {r.text[:300]}")
+    return r.json()
+
+
+def hide_comment(comment_id: str, hide: bool = True) -> None:
+    """YouTube's closest thing to hiding: hold the comment for review (it
+    disappears publicly until you publish it again)."""
+    headers, _ = _yt_auth()
+    r = requests.post(f"{API}/comments/setModerationStatus", params={"id": comment_id, "moderationStatus": "heldForReview" if hide else "published"},
+                      headers=headers, timeout=30)
+    if r.status_code not in (200, 204):
+        raise YouTubeError(f"Couldn't {'hide' if hide else 'restore'} the comment: {r.status_code} {r.text[:300]}")

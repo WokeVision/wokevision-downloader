@@ -35,7 +35,8 @@ LONG_LIVED_EXCHANGE_URL = "https://graph.threads.net/access_token"
 REFRESH_URL = "https://graph.threads.net/refresh_access_token"
 GRAPH_BASE = "https://graph.threads.net/v1.0"
 
-SCOPES = "threads_basic,threads_content_publish,threads_manage_insights"
+SCOPES = os.environ.get("THREADS_SCOPES") or ("threads_basic,threads_content_publish,threads_manage_insights,"
+                                             "threads_read_replies,threads_manage_replies")
 
 PLATFORM = "threads"
 
@@ -340,3 +341,73 @@ def _already_posted(threads_user_id: str, access_token: str, caption: str):
     except Exception:
         return None
     return None
+
+
+# --- Replies (comments) ----------------------------------------------------------
+# Needs threads_read_replies + threads_manage_replies (reconnect Threads once).
+def _auth():
+    conn = db.get_connection(PLATFORM)
+    if not conn or not conn.get("access_token"):
+        raise ThreadsError("Threads isn't connected.")
+    refresh_if_needed()
+    conn = db.get_connection(PLATFORM)
+    uid = (conn.get("extra") or {}).get("threads_user_id")
+    if not uid:
+        raise ThreadsError("No Threads account id on file -- try reconnecting.")
+    return conn["access_token"], uid
+
+
+def own_username() -> str:
+    conn = db.get_connection(PLATFORM) or {}
+    return (conn.get("extra") or {}).get("username") or ""
+
+
+def recent_comments(media_limit: int = 8, per_media: int = 30, diag: dict = None) -> list:
+    token, uid = _auth()
+    r = requests.get(f"{GRAPH_BASE}/{uid}/threads", params={"fields": "id,text,permalink,timestamp", "limit": media_limit, "access_token": token}, timeout=30)
+    if r.status_code != 200:
+        raise ThreadsError(f"Couldn't list your Threads posts: {r.text[:300]}")
+    posts = r.json().get("data", [])
+    errors, out = [], []
+    for m in posts:
+        cr = requests.get(f"{GRAPH_BASE}/{m['id']}/conversation", params={
+            "fields": "id,text,username,timestamp,hide_status,like_count,replied_to,permalink", "limit": per_media * 2, "access_token": token}, timeout=30)
+        if cr.status_code != 200:
+            low = cr.text.lower()
+            if "permission" in low or "(#10)" in cr.text or "(#200)" in cr.text or "threads_read_replies" in low:
+                raise ThreadsError("Threads needs the replies permissions: reconnect Threads on the Accounts page, then try again. (" + cr.text[:160] + ")")
+            errors.append(f"HTTP {cr.status_code}: {cr.text[:200]}")
+            continue
+        flat = cr.json().get("data", [])
+        by_parent = {}
+        for x in flat:
+            by_parent.setdefault((x.get("replied_to") or {}).get("id") or m["id"], []).append(x)
+        for c in by_parent.get(m["id"], []):
+            out.append({"id": c["id"], "text": c.get("text", ""), "username": c.get("username", ""), "ts": c.get("timestamp"),
+                        "hidden": (c.get("hide_status") or "NOT_HUSHED") == "HIDDEN", "likes": c.get("like_count", 0),
+                        "replies": [{"id": x.get("id"), "text": x.get("text", ""), "username": x.get("username", ""), "ts": x.get("timestamp")}
+                                    for x in by_parent.get(c["id"], [])],
+                        "media_caption": (m.get("text") or "")[:140], "permalink": c.get("permalink") or m.get("permalink")})
+    out.sort(key=lambda c: c.get("ts") or "", reverse=True)
+    if diag is not None:
+        diag.update({"posts_scanned": len(posts), "errors": errors[:3]})
+    return out
+
+
+def reply_comment(comment_id: str, text: str) -> dict:
+    token, uid = _auth()
+    c = requests.post(f"{GRAPH_BASE}/{uid}/threads", data={"media_type": "TEXT", "text": text, "reply_to_id": comment_id, "access_token": token}, timeout=30)
+    if c.status_code != 200:
+        raise ThreadsError(f"Couldn't create the reply: {c.text[:300]}")
+    time.sleep(3)
+    p = requests.post(f"{GRAPH_BASE}/{uid}/threads_publish", data={"creation_id": c.json().get("id"), "access_token": token}, timeout=30)
+    if p.status_code != 200:
+        raise ThreadsError(f"Couldn't post the reply: {p.text[:300]}")
+    return p.json()
+
+
+def hide_comment(comment_id: str, hide: bool = True) -> None:
+    token, _ = _auth()
+    r = requests.post(f"{GRAPH_BASE}/{comment_id}/manage_reply", data={"hide": "true" if hide else "false", "access_token": token}, timeout=30)
+    if r.status_code != 200:
+        raise ThreadsError(f"Couldn't {'hide' if hide else 'unhide'} the reply: {r.text[:300]}")

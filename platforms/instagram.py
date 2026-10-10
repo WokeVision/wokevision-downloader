@@ -366,7 +366,7 @@ def recent_comments(media_limit: int = 6, per_media: int = 30, diag: dict = None
     the account's real post count, and any per-post errors) so the page can say
     why the list is empty instead of showing a blank."""
     token, uid = _auth()
-    r = requests.get(f"{GRAPH_BASE}/{uid}/media", params={"fields": "id,caption,permalink,timestamp", "limit": media_limit, "access_token": token}, timeout=30)
+    r = requests.get(f"{GRAPH_BASE}/{uid}/media", params={"fields": "id,caption,permalink,timestamp,comments_count", "limit": media_limit, "access_token": token}, timeout=30)
     if r.status_code != 200:
         raise InstagramError(f"Couldn't list posts: {r.text[:300]}")
     posts = r.json().get("data", [])
@@ -381,10 +381,15 @@ def recent_comments(media_limit: int = 6, per_media: int = 30, diag: dict = None
         except Exception:
             pass
     out = []
+    claimed = sum(int(m.get("comments_count") or 0) for m in posts)
     for m in posts:
         cr = requests.get(f"{GRAPH_BASE}/{m['id']}/comments", params={
             "fields": "id,text,username,timestamp,hidden,like_count,replies{id,text,username,timestamp}",
             "limit": per_media, "access_token": token}, timeout=30)
+        if cr.status_code != 200 and "replies" in cr.text.lower():
+            # Some accounts reject the nested replies field: retry without it.
+            cr = requests.get(f"{GRAPH_BASE}/{m['id']}/comments", params={
+                "fields": "id,text,username,timestamp,hidden,like_count", "limit": per_media, "access_token": token}, timeout=30)
         if cr.status_code != 200:
             low = cr.text.lower()
             if "permission" in low or "(#10)" in cr.text or "(#200)" in cr.text:
@@ -400,6 +405,8 @@ def recent_comments(media_limit: int = 6, per_media: int = 30, diag: dict = None
     out.sort(key=lambda c: c.get("ts") or "", reverse=True)
     if diag is not None:
         diag["errors"] = errors[:3]
+        diag["comments_reported"] = claimed
+        diag["comments_returned"] = len(out)
     return out
 
 

@@ -3218,7 +3218,7 @@ def schedule_post_now(sid: str):
     return {"ok": True}
 
 
-# --- Comments inbox (Instagram) ----------------------------------------------
+# --- Comments inbox (Instagram, Facebook, YouTube, Threads) ----------------------------------------------
 def _comment_cfg() -> dict:
     out = {"saved_replies": [], "hide_words": []}
     try:
@@ -3251,49 +3251,88 @@ def comments_cfg_put(req: CommentCfg):
     return {"ok": True}
 
 
+COMMENT_PLATFORMS = ["instagram", "facebook", "youtube", "threads"]
+COMMENT_UNAVAILABLE = {
+    "tiktok": "TikTok does not offer comment access to apps like this one, so comments have to be read in the TikTok app.",
+    "x": "X only lets apps read replies on a paid API plan, so replies have to be read in the X app.",
+}
+_RECONNECT_HINT = {
+    "instagram": "reconnect Instagram on the Accounts page",
+    "facebook": "reconnect Facebook on the Accounts page",
+    "youtube": "reconnect YouTube on the Accounts page",
+    "threads": "reconnect Threads on the Accounts page",
+}
+
+
+def _comment_mod(platform: str):
+    if platform not in COMMENT_PLATFORMS:
+        raise HTTPException(status_code=404, detail=COMMENT_UNAVAILABLE.get(platform, "Comments aren't supported for that platform."))
+    return PLATFORM_MODULES[platform]
+
+
+@app.get("/api/comments/platforms")
+def comments_platforms():
+    out = []
+    for p in COMMENT_PLATFORMS:
+        conn = db.get_connection(p) if db.configured() else None
+        out.append({"id": p, "connected": bool(conn and conn.get("access_token")), "available": True})
+    for p, why in COMMENT_UNAVAILABLE.items():
+        out.append({"id": p, "connected": False, "available": False, "why": why})
+    return {"platforms": out}
+
+
+def _empty_note(platform: str, diag: dict, items: list, shown: list) -> str:
+    scanned, total = diag.get("posts_scanned", 0), diag.get("media_count")
+    claimed, returned = diag.get("comments_reported"), diag.get("comments_returned")
+    name = platform.capitalize()
+    if diag.get("errors"):
+        return f"{name} refused part of the comments request. First error: {diag['errors'][0]}"
+    if platform == "instagram" and claimed and not returned:
+        return (f"Instagram says your latest {scanned} posts have {claimed} comments, but returned none to this app. This is Meta's access level: "
+                "while the Meta app is in Development mode, Instagram only passes on comments from accounts that have a role on the app (admin, developer, tester). "
+                "Switching the app to Live, with the comments permission approved through App Review, fixes it.")
+    if platform == "facebook" and claimed and not shown:
+        return (f"Facebook says your latest posts have {claimed} comments, but none came through. Reconnect Facebook so the new comment permissions are granted, "
+                "and note that in Development mode Facebook only passes on comments from people with a role on the Meta app.")
+    if scanned == 0 and platform == "instagram" and total:
+        return f"Instagram says the account has {total} posts but returned none to this app. Check the Meta app's access level."
+    if scanned == 0:
+        return f"{name} returned no posts to check yet."
+    if items and not shown:
+        return f"Checked your latest {scanned} posts: the only comments are your own."
+    return f"Checked your latest {scanned} posts and found no comments."
+
+
 @app.get("/api/comments")
-def comments_list():
+def comments_list(platform: str = "instagram"):
+    mod = _comment_mod(platform)
     diag = {}
     try:
-        items = instagram.recent_comments(diag=diag)
+        items = mod.recent_comments(diag=diag)
     except Exception as e:
-        return {"items": [], "error": str(e)[:400]}
-    me = instagram.own_username().lower()
+        return {"items": [], "error": str(e)[:400], "platform": platform}
+    me = (mod.own_username() or "").lower()
     for c in items:
-        c["replied"] = any((r.get("username") or "").lower() == me for r in c["replies"]) if me else bool(c["replies"])
-        c["mine"] = (c.get("username") or "").lower() == me
-        c["platform"] = "instagram"
+        c["replied"] = any(r.get("mine") or (me and (r.get("username") or "").lower() == me) for r in c["replies"]) if (me or any(r.get("mine") for r in c["replies"])) else bool(c["replies"])
+        c["mine"] = bool(c.get("mine")) or (bool(me) and (c.get("username") or "").lower() == me)
+        c["platform"] = platform
     shown = [c for c in items if not c["mine"]]
-    note = ""
-    if not shown:
-        # Say WHY the list is empty rather than a blank page.
-        scanned, total = diag.get("posts_scanned", 0), diag.get("media_count")
-        if diag.get("errors"):
-            note = "Instagram refused the comments request for your latest posts. First error: " + diag["errors"][0]
-        elif scanned == 0 and total:
-            note = (f"Instagram says the account has {total} posts but returned none to this app. That usually means the Meta app is still in "
-                    "Development mode or lacks access for this permission: check App Review in the Meta developer dashboard.")
-        elif scanned == 0:
-            note = "Instagram returned no posts for this account."
-        elif len(items) and not shown:
-            note = f"Checked your latest {scanned} posts: the only comments are your own."
-        else:
-            note = (f"Checked your latest {scanned} posts and Instagram returned no comments. If you can see comments on Instagram itself, the "
-                    "app's Meta access level (Development vs Live) is the usual reason: public comments only come through for Live apps.")
-    return {"items": shown, "config": _comment_cfg(), "note": note, "diag": diag}
+    note = "" if shown else _empty_note(platform, diag, items, shown)
+    return {"items": shown, "config": _comment_cfg(), "note": note, "diag": diag, "platform": platform}
 
 
 class CommentReply(BaseModel):
     text: str
 
 
-@app.post("/api/comments/instagram/{cid}/reply")
-def comments_reply(cid: str, req: CommentReply):
+@app.post("/api/comments/{platform}/{cid}/reply")
+def comments_reply(platform: str, cid: str, req: CommentReply):
+    mod = _comment_mod(platform)
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Write a reply first.")
     try:
-        instagram.reply_comment(cid, text[:2000])
+        mod.reply_comment(cid, text[:2000] if platform != "threads" else text[:500])
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True}
@@ -3303,10 +3342,11 @@ class CommentHide(BaseModel):
     hide: bool = True
 
 
-@app.post("/api/comments/instagram/{cid}/hide")
-def comments_hide(cid: str, req: CommentHide):
+@app.post("/api/comments/{platform}/{cid}/hide")
+def comments_hide(platform: str, cid: str, req: CommentHide):
+    mod = _comment_mod(platform)
     try:
-        instagram.hide_comment(cid, req.hide)
+        mod.hide_comment(cid, req.hide)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True}
@@ -3315,6 +3355,7 @@ def comments_hide(cid: str, req: CommentHide):
 class CommentSuggest(BaseModel):
     text: str
     post: str = ""
+    platform: str = "instagram"
 
 
 @app.post("/api/comments/suggest")
@@ -3322,7 +3363,7 @@ def comments_suggest(req: CommentSuggest):
     if not os.environ.get("OPENAI_API_KEY"):
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY isn't set.")
     voice = (app_settings().get("voice_notes") or "").strip()[:800]
-    system = ("You write replies to Instagram comments for WokeVision, a political/news meme page. Replies are short (under 25 words), "
+    system = (f"You write replies to {req.platform.capitalize()} comments for WokeVision, a political/news meme page. Replies are short (under 25 words), "
               "warm or witty, never insulting, never making new factual claims, never taking a side on a person's private life. "
               "If the comment is hostile or bait, give calm, brief, non-engaging options. "
               + (f"Brand voice notes: {voice}. " if voice else "") + 'Return JSON {"replies":["...","...","..."]}.')
@@ -3334,7 +3375,7 @@ def comments_suggest(req: CommentSuggest):
 
 
 def _auto_hide_comments():
-    """Every ~15 min: hides new comments that contain any of the saved keywords."""
+    """Every ~15 min: hides new comments that contain any of the saved keywords, on every connected comment platform."""
     try:
         if not db.configured():
             return
@@ -3345,18 +3386,26 @@ def _auto_hide_comments():
         if not words:
             return
         insights.kv_set("comment_scan_last", str(time.time()))
-        me = instagram.own_username().lower()
         n = 0
-        for c in instagram.recent_comments(4, 40):
-            if c["hidden"] or (c.get("username") or "").lower() == me:
-                continue
-            low = (c.get("text") or "").lower()
-            if any(w in low for w in words):
-                instagram.hide_comment(c["id"], True)
-                n += 1
+        for platform in COMMENT_PLATFORMS:
+            try:
+                conn = db.get_connection(platform)
+                if not (conn and conn.get("access_token")):
+                    continue
+                mod = PLATFORM_MODULES[platform]
+                me = (mod.own_username() or "").lower()
+                for c in mod.recent_comments(4, 40):
+                    if c["hidden"] or c.get("mine") or (me and (c.get("username") or "").lower() == me):
+                        continue
+                    low = (c.get("text") or "").lower()
+                    if any(w in low for w in words):
+                        mod.hide_comment(c["id"], True)
+                        n += 1
+            except Exception as e:
+                print(f"AUTO-HIDE {platform} FAILED: {e}", flush=True)
         if n:
             db.audit("comments_hidden", f"{n} comment(s) matched your keywords")
-            notify.notify("Comments hidden", f"{n} Instagram comment(s) matched your keyword list.")
+            notify.notify("Comments hidden", f"{n} comment(s) matched your keyword list.")
     except Exception as e:
         print(f"AUTO-HIDE FAILED: {e}", flush=True)
 

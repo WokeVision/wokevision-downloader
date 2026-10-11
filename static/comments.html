@@ -87,7 +87,7 @@ function render(){
   if(!vis.length){f.innerHTML='<div class="sub">'+(onlyNew?'Nothing needs a reply here.':'No comments on this post.')+'</div>';return;}
   f.innerHTML=vis.map(function(i){var c=items[i];
     var sel='<select data-sv="'+i+'"><option value="">Insert a saved reply…</option>'+cfg.saved_replies.map(function(s,k){return '<option value="'+k+'">'+esc(s.slice(0,70))+'</option>';}).join("")+'</select>';
-    return '<div class="card c'+(c.hidden?' hidden-c':'')+'" id="c'+i+'"><div class="row" style="justify-content:space-between"><b>@'+esc(c.username)+'</b><span class="row"><span class="sm">'+when(c.ts)+'</span>'+(c.hidden?'<span class="pill hid">'+(cur==="youtube"?"Held for review":"Hidden")+'</span>':'')+(c.replied?'<span class="pill ok">Replied</span>':'')+'</span></div>'+
+    return '<div class="card c'+(c.hidden?' hidden-c':'')+'" id="c'+i+'"><div class="row" style="justify-content:space-between"><b>'+(c.username?'@'+esc(c.username):'A '+PN[cur]+' user')+'</b><span class="row"><span class="sm">'+when(c.ts)+'</span>'+(c.hidden?'<span class="pill hid">'+(cur==="youtube"?"Held for review":"Hidden")+'</span>':'')+(c.replied?'<span class="pill ok">Replied</span>':'')+'</span></div>'+
       '<div style="margin:6px 0;white-space:pre-wrap">'+esc(c.text)+'</div><div class="sm">On: '+(c.permalink?'<a style="color:#ff6b78" target="_blank" rel="noopener" href="'+esc(c.permalink)+'">':'')+esc(c.media_caption||"post")+(c.permalink?'</a>':'')+' · ♥ '+(c.likes||0)+'</div>'+
       c.replies.map(function(r){return '<div class="rep"><b>@'+esc(r.username)+'</b> '+esc(r.text)+'</div>';}).join("")+
       '<textarea id="t'+i+'" placeholder="Write a reply…"></textarea>'+(cfg.saved_replies.length?sel:'')+

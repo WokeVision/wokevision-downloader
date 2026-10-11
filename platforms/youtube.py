@@ -353,6 +353,9 @@ def recent_comments(media_limit: int = 8, per_media: int = 30, diag: dict = None
         v = c.pop("_vid", None)
         c["media_caption"] = (titles.get(v) or "")[:140]
         c["permalink"] = f"https://www.youtube.com/watch?v={v}&lc={c['id']}" if v else None
+        c["post_id"] = v
+        c["post_url"] = f"https://www.youtube.com/watch?v={v}" if v else None
+        c["post_thumb"] = f"https://i.ytimg.com/vi/{v}/mqdefault.jpg" if v else None
     out.sort(key=lambda c: c.get("ts") or "", reverse=True)
     if diag is not None:
         diag.update({"posts_scanned": len(vids), "errors": errors})

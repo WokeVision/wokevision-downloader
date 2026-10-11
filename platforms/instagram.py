@@ -366,7 +366,7 @@ def recent_comments(media_limit: int = 6, per_media: int = 30, diag: dict = None
     the account's real post count, and any per-post errors) so the page can say
     why the list is empty instead of showing a blank."""
     token, uid = _auth()
-    r = requests.get(f"{GRAPH_BASE}/{uid}/media", params={"fields": "id,caption,permalink,timestamp,comments_count", "limit": media_limit, "access_token": token}, timeout=30)
+    r = requests.get(f"{GRAPH_BASE}/{uid}/media", params={"fields": "id,caption,permalink,timestamp,comments_count,media_type,thumbnail_url,media_url", "limit": media_limit, "access_token": token}, timeout=30)
     if r.status_code != 200:
         raise InstagramError(f"Couldn't list posts: {r.text[:300]}")
     posts = r.json().get("data", [])
@@ -401,7 +401,9 @@ def recent_comments(media_limit: int = 6, per_media: int = 30, diag: dict = None
                         "hidden": bool(c.get("hidden")), "likes": c.get("like_count", 0),
                         "replies": [{"id": x.get("id"), "text": x.get("text", ""), "username": x.get("username", ""), "ts": x.get("timestamp")}
                                     for x in (c.get("replies") or {}).get("data", [])],
-                        "media_caption": (m.get("caption") or "")[:140], "permalink": m.get("permalink")})
+                        "media_caption": (m.get("caption") or "")[:140], "permalink": m.get("permalink"),
+                        "post_id": m["id"], "post_url": m.get("permalink"), "post_ts": m.get("timestamp"),
+                        "post_thumb": m.get("thumbnail_url") or (m.get("media_url") if m.get("media_type") != "VIDEO" else None)})
     out.sort(key=lambda c: c.get("ts") or "", reverse=True)
     if diag is not None:
         diag["errors"] = errors[:3]

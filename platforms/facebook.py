@@ -369,7 +369,7 @@ def recent_comments(media_limit: int = 8, per_media: int = 30, diag: dict = None
     token, page_id = _page_auth()
     cm = (f"comments.summary(true).limit({per_media}){{id,message,created_time,like_count,is_hidden,from{{id,name}},"
           "comments.limit(10){id,message,created_time,from{id,name}}}")
-    sources = [("posts", f"id,message,permalink_url,created_time,{cm}"), ("videos", f"id,description,permalink_url,created_time,{cm}")]
+    sources = [("posts", f"id,message,permalink_url,created_time,full_picture,{cm}"), ("videos", f"id,description,permalink_url,created_time,picture,{cm}")]
     posts, out, seen, claimed, errs = [], [], set(), 0, []
     me_id = page_id
     for edge, fields in sources:
@@ -396,6 +396,8 @@ def recent_comments(media_limit: int = 8, per_media: int = 30, diag: dict = None
                                          "mine": (x.get("from") or {}).get("id") == me_id}
                                         for x in (c.get("comments") or {}).get("data", [])],
                             "media_caption": ((p.get("message") or p.get("description") or ""))[:140], "permalink": p.get("permalink_url"),
+                            "post_id": p["id"], "post_url": p.get("permalink_url"), "post_ts": p.get("created_time"),
+                            "post_thumb": p.get("full_picture") or p.get("picture"),
                             "mine": frm.get("id") == me_id})
     out.sort(key=lambda c: c.get("ts") or "", reverse=True)
     if diag is not None:

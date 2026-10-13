@@ -117,7 +117,7 @@
       var pct = i.status === "running" && i.progress != null ? Math.round(i.progress * 100) + "%" : "";
       var state = i.status === "running" ? esc(i.label) + (pct ? " · " + pct : "") + eta(i.eta) : (i.status === "error" ? "Failed — " + esc(i.error || "see the page") : "Finished ✓");
       var bar = i.status === "running" && i.progress != null ? '<div class="wvTb"><i style="width:' + Math.round(i.progress * 100) + '%"></i></div>' : "";
-      return '<a class="wvTr" href="' + esc(i.url) + '"><b>' + esc((i.kind === "clips" ? "Clips · " : "") + i.title) + '</b><span>' + state + '</span>' + bar + '</a>';
+      return '<a class="wvTr" href="' + esc(i.url) + '"><b>' + esc((i.kind === "clips" ? "Clips · " : i.kind === "publish" ? "Upload · " : "") + i.title) + '</b><span>' + state + '</span>' + bar + '</a>';
     }).join("");
     box.innerHTML = '<div id="wvTl" style="display:' + (open ? "block" : "none") + '">' + rows + '</div>' +
       '<button id="wvTt">' + (run.length ? '<i class="wvTd"></i>' : (fin.some(function (i) { return i.status === "error"; }) ? "⚠️ " : "✓ ")) + head + '</button>';

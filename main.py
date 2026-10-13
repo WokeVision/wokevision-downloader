@@ -1850,6 +1850,12 @@ class PlatformPostsRequest(BaseModel):
 
 class PlatformPostsGenerateRequest(BaseModel):
     platform: str | None = None
+    keep: list[str] = []      # hashtags the user locked; kept when only this platform's caption is rewritten
+
+
+class HashtagRerollRequest(BaseModel):
+    platform: str
+    keep: list[str] = []      # locked hashtags (or, for one chip, every other tag) to leave alone
 
 
 def _done_job(job_id: str) -> dict:
@@ -1915,6 +1921,7 @@ def generate_platform_posts_route(job_id: str, req: PlatformPostsGenerateRequest
     posts = generate_platform_posts(
         job.get("transcript", ""), job.get("meta", {}), job.get("on_screen_caption", ""),
         job.get("posting_caption", ""), only=only, current=job.get("platform_posts"),
+        keep=req.keep if only else None,
     )
     meta = job.get("meta", {})
     _set_job(
@@ -1923,6 +1930,44 @@ def generate_platform_posts_route(job_id: str, req: PlatformPostsGenerateRequest
     )
     _save_platform_posts(job_id, posts)
     return {"platform_posts": posts}
+
+
+_TAG_FIELD = {"instagram": "caption", "tiktok": "caption", "facebook": "description", "x": "text", "youtube": "description"}
+
+
+@app.post("/jobs/{job_id}/reroll-hashtags")
+def reroll_hashtags_route(job_id: str, req: HashtagRerollRequest):
+    """Swaps hashtags for fresh ones on ONE platform without touching the words.
+    Tags in `keep` stay; every other tag is replaced (the Threads topic is
+    re-picked from the approved list)."""
+    from caption import reroll_hashtags, reroll_topic, TAG_MAX, fit_chars, LIM
+    job = _done_job(job_id)
+    pid = req.platform
+    if pid not in PLATFORM_IDS:
+        raise HTTPException(status_code=400, detail="Unknown platform.")
+    posts = normalize_platform_posts(job.get("platform_posts") or {}, job.get("posting_caption", ""))
+    meta = job.get("meta", {})
+    theme = f"{meta.get('title', '')} {job.get('posting_caption', '')}"
+    if pid == "threads":
+        posts["threads"]["topic_tag"] = reroll_topic(posts["threads"].get("topic_tag"), theme)
+    else:
+        key = _TAG_FIELD[pid]
+        hold = list(req.keep or [])
+        if pid == "youtube":
+            hold.append("#Shorts")
+        new = reroll_hashtags(job.get("transcript", ""), meta, posts[pid].get(key, ""), theme, TAG_MAX[pid], keep=hold)
+        posts[pid][key] = fit_chars(new, LIM["x_text"]) if pid == "x" else new
+    posts = normalize_platform_posts(posts, job.get("posting_caption", ""))
+    _set_job(job_id, platform_posts=posts,
+             result=_result_for(job_id, meta, job.get("on_screen_caption", ""), job.get("posting_caption", ""), posts))
+    _save_platform_posts(job_id, posts)
+    return {"platform_posts": posts}
+
+
+@app.get("/api/threads-topics")
+def threads_topics():
+    from caption import THREADS_TOPICS
+    return {"topics": THREADS_TOPICS}
 
 
 class AngleRequest(BaseModel):
@@ -2194,6 +2239,8 @@ def publish(req: PublishRequest):
     with JOBS_LOCK:
         PUBLISH_JOBS[publish_job_id] = {
             "status": "running",
+            "job_id": req.job_id,
+            "title": (job.get("result") or {}).get("on_screen_caption") or job.get("title") or "Video",
             "results": {platform: {"status": "pending"} for platform in req.platforms},
         }
     threading.Thread(
@@ -3667,6 +3714,24 @@ def api_jobs_active():
                           "title": (j.get("result") or {}).get("on_screen_caption") or j.get("title") or "Video edit",
                           "progress": j.get("progress"), "eta": j.get("eta_seconds"), "error": (j.get("error") or "")[:160] if st == "error" else "",
                           "url": f"/editor#entry={jid}"})
+    with JOBS_LOCK:
+        for pid, pj in list(PUBLISH_JOBS.items()):
+            res = pj.get("results") or {}
+            st = "running" if pj.get("status") == "running" else "done"
+            if st == "done":
+                pj.setdefault("_done_at", now)
+                if now - pj["_done_at"] > 600:
+                    continue
+            bad = [k for k, v in res.items() if v.get("status") != "pending" and not v.get("ok")]
+            fin = sum(1 for v in res.values() if v.get("status") != "pending")
+            pending = [k for k, v in res.items() if v.get("status") == "pending"]
+            if st == "done" and bad:
+                st = "error"
+            items.append({"id": pid, "kind": "publish", "status": st,
+                          "label": ("Posting to " + ", ".join(pending)) if pending else "Posted",
+                          "title": pj.get("title") or "Upload", "progress": (fin / len(res)) if res else None, "eta": None,
+                          "error": ("Failed on " + ", ".join(bad) + ": " + "; ".join(str(res[k].get("error") or "")[:60] for k in bad))[:160] if st == "error" else "",
+                          "url": f"/editor#entry={pj.get('job_id')}"})
     with CLIPS_LOCK:
         for cid, c in list(CLIPS.items()):
             st = c.get("status")

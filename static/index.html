@@ -438,6 +438,14 @@
     border-radius: var(--radius-sm); padding: 11px 12px; font-size: 14.5px; font-family: inherit;
   }
   .platPanel textarea { min-height: 120px; }
+  .tagBar { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tagBar .chip { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; font-size: 13px; background: rgba(0,0,0,0.2); }
+  .tagBar .chip button { margin: 0; border: 0; background: transparent; color: var(--text); padding: 5px 9px; font-size: 13px; cursor: pointer; width: auto; min-height: 0; }
+  .tagBar .chip .rr { border-left: 1px solid var(--border); padding: 5px 8px; opacity: .75; }
+  .tagBar .chip.held { border-color: var(--accent); background: rgba(255,255,255,0.08); }
+  .tagBar .chip.held .lk { font-weight: 700; }
+  .tagBar .tbtn { margin: 0; width: auto; padding: 6px 11px; font-size: 12.5px; }
+  .tagBar .tnote { font-size: 12px; color: var(--text-dim); flex-basis: 100%; }
   .fold { margin-top: 8px; font-size: 12.5px; color: var(--text-dim); background: rgba(0,0,0,0.25); border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 8px 10px; white-space: pre-wrap; word-break: break-word; }
   .fold b { color: var(--text); font-weight: 600; }
   .optRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13.5px; }
@@ -1459,6 +1467,7 @@
   // Each platform gets its own native version of the caption (see
   // caption.py's PLATFORM_SYSTEM for the research behind the defaults).
   // Whatever is in these fields is exactly what /publish sends.
+  const THREADS_TOPICS = ["Politics", "US Politics", "Current Events", "News", "Memes", "Funny", "Comedy", "Humor", "Satire", "Culture", "Pop Culture", "Internet Culture", "Social Media", "Free Speech", "Media", "Society", "Opinion", "Debate", "Elections", "Government", "Law", "Immigration", "Economy", "Gender", "Celebrities", "Entertainment", "Music", "Movies", "TV", "Sports", "Tech", "AI", "Education", "Religion", "Philosophy", "History", "Crime", "Military", "Health", "Viral"];
   const YT_CATS = [["25", "News & Politics"], ["24", "Entertainment"], ["22", "People & Blogs"], ["23", "Comedy"], ["27", "Education"]];
   const PLAT = [
     { id: "instagram", label: "Instagram" }, { id: "threads", label: "Threads" },
@@ -1474,9 +1483,9 @@
     ],
     threads: [
       { k: "text", type: "area", label: "Post text", max: 500, tags: 0,
-        hint: "Conversational, ending on a question to start replies. End with 5 hashtags; the single topic tag below is what Threads actually indexes." },
-      { k: "topic_tag", type: "line", label: "Topic tag", max: 50,
-        hint: "One tag only. No #, “.” or “&”. People browsing that topic can find the post." },
+        hint: "Conversational, ending on a question to start replies. No hashtags here: Threads only uses the one topic below." },
+      { k: "topic_tag", type: "topic", label: "Topic", max: 50,
+        hint: "Threads allows one topic per post. Only topics that exist on Threads are offered, so the post is never refused over its topic." },
     ],
     youtube: [
       { k: "title", type: "line", label: "Title", max: 100, soft: 50,
@@ -1501,12 +1510,12 @@
       { k: "_note", type: "ttnote" },
     ],
     x: [
-      { k: "text", type: "area", label: "Post", max: 280, tags: 1,
-        hint: "Standard accounts are capped at 280 characters. Hashtags rarely help on X — none or one works best." },
+      { k: "text", type: "area", label: "Post", max: 280, tags: 2,
+        hint: "Standard accounts are capped at 280 characters. X recommends two hashtags at most, so that is what gets used." },
     ],
     facebook: [
       { k: "description", type: "area", label: "Description", max: 2200, tags: 3,
-        hint: "Hashtags barely help on Facebook — 1 to 3 at most. A hook first line and a closing question work best." },
+        hint: "Three hashtags: the most that tends to help on Facebook. A hook first line and a closing question work best." },
     ],
   };
 
@@ -1571,12 +1580,16 @@
         else if (f.type === "select") {
           el = document.createElement("select");
           YT_CATS.forEach(([v, n]) => { const o = document.createElement("option"); o.value = v; o.textContent = n; el.appendChild(o); });
+        } else if (f.type === "topic") {
+          el = document.createElement("select");
+          el.innerHTML = THREADS_TOPICS.map((t) => `<option value="${t}">${t}</option>`).join("");
         } else { el = document.createElement("input"); el.type = "text"; }
         el.id = id;
         el.addEventListener("input", () => { updateCounts(p.id); scheduleSave(); });
         el.addEventListener("change", () => { updateCounts(p.id); scheduleSave(); });
         panel.appendChild(el);
         if (f.fold) { const fd = document.createElement("div"); fd.className = "fold"; fd.id = id + "_fold"; panel.appendChild(fd); }
+        if (f.tags > 0 || f.type === "topic") { const tb = document.createElement("div"); tb.className = "tagBar"; tb.id = id + "_chips"; panel.appendChild(tb); }
         
       });
       const row = document.createElement("div");
@@ -1676,11 +1689,64 @@
     platTabs.querySelectorAll(".platTab").forEach((t) => t.classList.toggle("on", toggledOn.has(t.dataset.p)));
   }
 
+  // ---- Hashtag-only controls: hold (lock) tags, re-roll one, some or all, or rewrite the words around locked tags.
+  const held = {};   // platform -> Set of lowercase locked tags
+  const tagKey = (pid) => (FIELDS[pid].find((f) => f.tags > 0 || f.type === "topic") || {}).k;
+  function drawChips(pid) {
+    const f = FIELDS[pid].find((x) => x.tags > 0 || x.type === "topic"); if (!f) return;
+    const bar = document.getElementById(`pp_${pid}_${f.k}_chips`), el = document.getElementById(`pp_${pid}_${f.k}`);
+    if (!bar || !el) return;
+    const set = held[pid] = held[pid] || new Set();
+    bar.innerHTML = "";
+    if (f.type === "topic") {
+      const b = document.createElement("button"); b.type = "button"; b.className = "secondary tbtn"; b.textContent = "\u21BB Re-roll topic";
+      b.addEventListener("click", () => rerollTags(pid, [], b)); bar.appendChild(b);
+      return;
+    }
+    const tags = (el.value.match(/#\w+/g) || []).filter((t, i, a) => a.findIndex((u) => u.toLowerCase() === t.toLowerCase()) === i);
+    for (const k of Array.from(set)) if (!tags.some((t) => t.toLowerCase() === k)) set.delete(k);
+    tags.forEach((t) => {
+      const isHeld = set.has(t.toLowerCase()), fixed = pid === "youtube" && t.toLowerCase() === "#shorts";
+      const c = document.createElement("span"); c.className = "chip" + (isHeld || fixed ? " held" : "");
+      const lk = document.createElement("button"); lk.type = "button"; lk.className = "lk"; lk.textContent = (isHeld || fixed ? "\uD83D\uDD12 " : "") + t;
+      lk.title = fixed ? "Always kept on YouTube Shorts" : (isHeld ? "Locked: click to unlock" : "Click to lock this tag");
+      if (!fixed) lk.addEventListener("click", () => { isHeld ? set.delete(t.toLowerCase()) : set.add(t.toLowerCase()); drawChips(pid); });
+      c.appendChild(lk);
+      if (!fixed) {
+        const rr = document.createElement("button"); rr.type = "button"; rr.className = "rr"; rr.textContent = "\u21BB"; rr.title = "Re-roll just this tag";
+        rr.addEventListener("click", () => rerollTags(pid, tags.filter((u) => u !== t), rr)); c.appendChild(rr);
+      }
+      bar.appendChild(c);
+    });
+    const unl = tags.filter((t) => !set.has(t.toLowerCase()) && !(pid === "youtube" && t.toLowerCase() === "#shorts"));
+    const all = document.createElement("button"); all.type = "button"; all.className = "secondary tbtn";
+    all.textContent = set.size ? `\u21BB Re-roll the ${unl.length} unlocked` : "\u21BB Re-roll all hashtags";
+    all.addEventListener("click", () => rerollTags(pid, tags.filter((t) => set.has(t.toLowerCase())), all)); bar.appendChild(all);
+    const rw = document.createElement("button"); rw.type = "button"; rw.className = "secondary tbtn";
+    rw.textContent = "Rewrite caption, keep locked tags"; rw.disabled = !set.size;
+    rw.title = set.size ? "" : "Lock at least one tag first";
+    rw.addEventListener("click", () => rewritePosts(pid, rw, Array.from(set))); bar.appendChild(rw);
+    const n = document.createElement("div"); n.className = "tnote";
+    n.textContent = "Click a tag to lock it. \u21BB on a tag swaps only that one; the button swaps everything unlocked. Only the hashtags change.";
+    bar.appendChild(n);
+  }
+  async function rerollTags(pid, keep, btn) {
+    if (!currentJobId) return;
+    await flushAllSaves();
+    const old = btn.textContent; btn.disabled = true; btn.textContent = "\u2026";
+    try {
+      const r = await fetch(`/jobs/${currentJobId}/reroll-hashtags`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: pid, keep }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.detail || "Something went wrong.");
+      fillPosts(d.platform_posts); setSaveState("Saved \u2713");
+    } catch (e) { alert("Couldn\u2019t re-roll: " + e.message); btn.disabled = false; btn.textContent = old; }
+  }
+
   function updateCounts(pid) {
+    drawChips(pid);
     FIELDS[pid].forEach((f) => {
       const el = document.getElementById(`pp_${pid}_${f.k}`);
       const cnt = document.getElementById(`pp_${pid}_${f.k}_cnt`);
-      if (!el || !cnt || f.type === "select" || f.type === "ttprivacy") return;
+      if (!el || !cnt || f.type === "select" || f.type === "topic" || f.type === "ttprivacy") return;
       const v = el.value;
       let over = false, txt = "";
       if (f.type === "tags") {
@@ -1729,6 +1795,7 @@
         else if (f.type === "ttprivacy") { el.dataset.want = d[f.k] || ""; el.value = d[f.k] || ""; }
         else if (f.type === "tags") el.value = (d[f.k] || []).join(", ");
         else if (f.type === "select") el.value = String(d[f.k] || "25");
+        else if (f.type === "topic") { if (d[f.k] && !Array.from(el.options).some((o) => o.value === d[f.k])) el.add(new Option(d[f.k], d[f.k])); el.value = d[f.k] || "Memes"; }
         else el.value = d[f.k] || "";
       });
       updateCounts(p.id);
@@ -1805,7 +1872,7 @@
     }
   }
 
-  async function rewritePosts(platform, btn) {
+  async function rewritePosts(platform, btn, keep) {
     if (!currentJobId) return;
     await flushAllSaves();
     const spin = document.getElementById("rewriteSpinner");
@@ -1814,7 +1881,7 @@
     try {
       await flushAngle();
       const resp = await fetch(`/jobs/${currentJobId}/platform-posts/generate`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: platform || null }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: platform || null, keep: keep || [] }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
@@ -2169,13 +2236,27 @@
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
-      const finished = await pollPublishJob(data.publish_job_id);
-      // Fold this run's results into what's shown as "posted previously"
-      // right away (rather than waiting for a reload), and refresh History
-      // so the entry just published to shows it too.
-      currentPublishResults = { ...currentPublishResults, ...finished.results };
-      loadConnections();
-      loadHistory();
+      // Runs in the background: the job tray tracks it, and the editor is free
+      // for the next video. Results only repaint here if you're still on this video.
+      const startedFor = currentJobId;
+      publishResults.style.display = "block";
+      publishResults.innerHTML = '<div class="publishResultRow"><span class="r-ok">\u2713</span><span>Uploading in the background \u2014 follow it in the job tray (bottom corner). You can start your next video now.</span></div>';
+      (async () => {
+        try {
+          while (true) {
+            const r = await fetch(`/publish/${data.publish_job_id}`);
+            if (!r.ok) break;
+            const job = await r.json();
+            if (currentJobId === startedFor) renderPublishResults(job.results);
+            if (job.status === "done") {
+              if (currentJobId === startedFor) currentPublishResults = { ...currentPublishResults, ...job.results };
+              loadConnections(); loadHistory();
+              break;
+            }
+            await new Promise((r2) => setTimeout(r2, 2500));
+          }
+        } catch (e) {}
+      })();
     } catch (err) {
       publishResults.style.display = "block";
       publishResults.innerHTML = `<div class="publishResultRow"><span class="r-err">✗</span><span>${err.message}</span></div>`;

@@ -330,40 +330,182 @@ _POLITICS_WORDS = re.compile(r"politic|trump|biden|harris|election|vote|congress
 _CULTURE_WORDS = re.compile(r"woke|trans\b|lgbt|dei\b|feminis|activist|liberal|gender|onlyfans|degenera|pronoun|leftist|protest|brainwash", re.I)
 
 
-def enforce_tag_mix(text: str, theme_text: str = "", total: int = 5) -> str:
-    """Rewrites the trailing hashtag set of `text` so it has #WokeVision plus at
-    least two popular pool tags (themed to the clip), keeping the model's own
-    clip-specific tags, at most `total` tags. Hashtags are moved to the end."""
-    if not text:
-        return text
-    found, seen = [], set()
-    for t in _HASHTAG_RE.findall(text):
-        if t.lower() not in seen:
-            seen.add(t.lower()); found.append(t)
-    body = re.sub(r"[ \t]{2,}", " ", _HASHTAG_RE.sub("", text)).strip()
-    brand = "#WokeVision"
-    tags = [t for t in found if t.lower() != brand.lower()]
-    probe = f"{theme_text} {body}"
+# Extra high-traffic tags used only to top up a set that is still short.
+POOL_REACH = ["#viral", "#trending", "#memes", "#funny", "#news", "#politics"]
+
+# Most hashtags each platform will actually honour (see the research notes
+# further down). Threads takes ONE topic tag (set separately, not in the text).
+TAG_MAX = {"instagram": 5, "tiktok": 5, "youtube": 5, "x": 2, "facebook": 3, "threads": 0}
+
+
+def _theme_pool(probe: str) -> list:
     theme = []
     if _CULTURE_WORDS.search(probe):
         theme += POOL_CULTURE
     if _POLITICS_WORDS.search(probe):
         theme += POOL_POLITICS
     theme += POOL_HUMOUR
+    return theme
+
+
+def enforce_tag_mix(text: str, theme_text: str = "", total: int = 5, keep=None, exclude=None) -> str:
+    """Rewrites the trailing hashtag set of `text` so it holds exactly `total`
+    tags (when enough exist): any `keep` tags first (never dropped), the
+    model's clip-specific tags, and popular pool tags themed to the clip,
+    topped up from the reach pool. `exclude` tags are not added. Hashtags are
+    moved to the end."""
+    if not text:
+        return text
+    keep_l = []
+    for t in (keep or []):
+        t = "#" + str(t).strip().lstrip("#")
+        if len(t) > 1 and t.lower() not in [k.lower() for k in keep_l]:
+            keep_l.append(t)
+    excl = {("#" + str(t).strip().lstrip("#")).lower() for t in (exclude or [])}
+    found, seen = [], set()
+    for t in _HASHTAG_RE.findall(text):
+        if t.lower() not in seen:
+            seen.add(t.lower()); found.append(t)
+    body = re.sub(r"[ \t]{2,}", " ", _HASHTAG_RE.sub("", text)).strip()
+    brand = "#WokeVision"
+    held_l = {k.lower() for k in keep_l}
+    tags = [t for t in found if t.lower() != brand.lower() and t.lower() not in held_l]
+    probe = f"{theme_text} {body}"
+    theme = _theme_pool(probe)
     pool_have = [t for t in tags if t.lower() in _POOL_ALL]
     specific = [t for t in tags if t.lower() not in _POOL_ALL]
-    need = max(0, 2 - len(pool_have))
+    need = max(0, min(2, total // 2) - pool_have.__len__())
+    taken = held_l | seen | excl
     adds = []
     for t in theme:
         if len(adds) >= need:
             break
-        if t.lower() not in seen and t.lower() not in {a.lower() for a in adds}:
+        if t.lower() not in taken and t.lower() not in {a.lower() for a in adds}:
             adds.append(t)
-    keep_brand = [t for t in found if t.lower() == brand.lower()]
-    keep_specific = max(0, total - len(keep_brand) - len(pool_have) - len(adds))
-    final = keep_brand + specific[:keep_specific] + pool_have + adds
-    final = final[:total]
+    keep_brand = [t for t in found if t.lower() == brand.lower() and brand.lower() not in held_l]
+    keep_specific = max(0, total - len(keep_l) - len(keep_brand) - len(pool_have) - len(adds))
+    final = keep_l + keep_brand + specific[:keep_specific] + pool_have + adds
+    final = final[:max(total, len(keep_l))]
+    have = {t.lower() for t in final}
+    for pool_try in (True, False):
+        for t in theme + POOL_REACH:
+            if len(final) >= total:
+                break
+            if t.lower() in have or (pool_try and t.lower() in excl):
+                continue
+            final.append(t); have.add(t.lower())
     return f"{body}\n\n{' '.join(final)}" if body else " ".join(final)
+
+
+def tags_in(text: str) -> list:
+    out, seen = [], set()
+    for t in _HASHTAG_RE.findall(text or ""):
+        if t.lower() not in seen:
+            seen.add(t.lower()); out.append(t)
+    return out
+
+
+def fit_chars(text: str, limit: int) -> str:
+    """Trims the body (never the trailing hashtag line) so text fits `limit`."""
+    if len(text) <= limit:
+        return text
+    tags = tags_in(text)
+    body = re.sub(r"[ \t]{2,}", " ", _HASHTAG_RE.sub("", text)).strip()
+    tail = " ".join(tags)
+    budget = limit - len(tail) - (2 if tail else 0)
+    if budget < 20:
+        return text[:limit]
+    return f"{_trim_to_chars(body, budget)}\n\n{tail}" if tail else _trim_to_chars(body, limit)
+
+
+def reroll_hashtags(transcript: str, meta: dict, text: str, theme_text: str, total: int, keep=None) -> str:
+    """Returns `text` with every hashtag not in `keep` swapped for fresh ones
+    (same count as before, never the ones just dropped). The words are left
+    exactly as they are."""
+    cur = tags_in(text)
+    keep_l = [k for k in (keep or []) if k.lower() in {c.lower() for c in cur}]
+    if keep_l and len({k.lower() for k in keep_l}) >= total:
+        return text
+    avoid = [c for c in cur if c.lower() not in {k.lower() for k in keep_l}]
+    need = max(1, total - len(keep_l))
+    body = re.sub(r"[ \t]{2,}", " ", _HASHTAG_RE.sub("", text)).strip()
+    fresh = []
+    if OPENAI_API_KEY:
+        try:
+            note = (f"Return JSON {{\"hashtags\": [...]}} with EXACTLY {need} NEW hashtags (each starting with #) for this post. "
+                    f"Do NOT use any of: {' '.join(avoid + keep_l)}. Already fixed on the post: {' '.join(keep_l) or 'none'}. "
+                    "Pick tags people really browse and that fit this clip: a mix of clip-specific tags and popular reach tags. "
+                    "Never #fyp / #foryou. No spaces inside a tag.")
+            data = _call_openai(HASHTAG_STRATEGY, _build_context(transcript, meta, note + f"\nPost text:\n{body}"), temperature=1.0)
+            for t in (data.get("hashtags") or []):
+                t = "#" + re.sub(r"\W", "", str(t))
+                if len(t) > 1 and t.lower() not in {x.lower() for x in avoid + keep_l + fresh} and t.lower() not in ("#fyp", "#foryou"):
+                    fresh.append(t)
+        except Exception as e:
+            print(f"HASHTAG REROLL AI FAILED: {e}", flush=True)
+    theme = _theme_pool(f"{theme_text} {body}") + POOL_REACH
+    random.shuffle(theme)
+    blocked = {x.lower() for x in avoid + keep_l + fresh}
+    for t in theme:
+        if len(fresh) >= need:
+            break
+        if t.lower() not in blocked:
+            fresh.append(t); blocked.add(t.lower())
+    fresh = fresh[:need]
+    joined = (body + "\n\n" if body else "") + " ".join(keep_l + fresh)
+    return enforce_tag_mix(joined, theme_text, total, keep=keep_l, exclude=avoid)
+
+
+# Topics that exist on Threads and that this post type can sensibly use.
+# Threads has no endpoint that lists topics, so the choice is limited to this
+# fixed set of established, high-traffic ones (an invented topic would be an
+# empty feed, or be refused).
+THREADS_TOPICS = ["Politics", "US Politics", "Current Events", "News", "Memes", "Funny", "Comedy", "Humor", "Satire",
+                  "Culture", "Pop Culture", "Internet Culture", "Social Media", "Free Speech", "Media", "Society",
+                  "Opinion", "Debate", "Elections", "Government", "Law", "Immigration", "Economy", "Gender",
+                  "Celebrities", "Entertainment", "Music", "Movies", "TV", "Sports", "Tech", "AI", "Education",
+                  "Religion", "Philosophy", "History", "Crime", "Military", "Health", "Viral"]
+_TOPIC_LOWER = {t.lower(): t for t in THREADS_TOPICS}
+_TOPIC_SYN = {"politic": "Politics", "trump": "Politics", "biden": "Politics", "election": "Elections", "vote": "Elections",
+              "congress": "Government", "senate": "Government", "government": "Government", "police": "Law", "policing": "Law",
+              "court": "Law", "border": "Immigration", "ice": "Immigration", "woke": "Culture", "culture": "Culture",
+              "lgbt": "Culture", "trans": "Gender", "gender": "Gender", "feminis": "Gender", "meme": "Memes", "joke": "Funny",
+              "humour": "Humor", "humor": "Humor", "comed": "Comedy", "satir": "Satire", "news": "News", "speech": "Free Speech",
+              "censor": "Free Speech", "media": "Media", "war": "Military", "army": "Military", "military": "Military",
+              "economy": "Economy", "tax": "Economy", "tech": "Tech", "ai": "AI", "music": "Music", "movie": "Movies",
+              "film": "Movies", "tv": "TV", "sport": "Sports", "celeb": "Celebrities", "relig": "Religion", "church": "Religion",
+              "school": "Education", "universit": "Education", "crime": "Crime", "health": "Health", "viral": "Viral"}
+
+
+def _theme_topics(probe: str) -> list:
+    out = []
+    if _POLITICS_WORDS.search(probe):
+        out += ["Politics", "US Politics", "Current Events", "News"]
+    if _CULTURE_WORDS.search(probe):
+        out += ["Culture", "Free Speech", "Society", "Opinion"]
+    return out + ["Memes", "Funny", "Humor", "Comedy", "Satire", "Viral"]
+
+
+def pick_topic_tag(tag: str, theme_text: str = "", exclude=None) -> str:
+    """Always returns a Threads topic that is on the approved list: the given
+    tag if it is one (any case), else the closest match, else the best fit for
+    the clip. Never contains '.', '&', '#' and stays 1-50 chars."""
+    excl = {str(x).strip().lower() for x in (exclude or [])}
+    t = re.sub(r"[^A-Za-z0-9 '\-]", " ", str(tag or "").replace("&", " ")).strip().lower()
+    t = re.sub(r"\s+", " ", t)
+    if t in _TOPIC_LOWER and t not in excl:
+        return _TOPIC_LOWER[t]
+    if t:
+        for key, topic in _TOPIC_SYN.items():
+            if re.search(r"\b" + re.escape(key), t) and topic.lower() not in excl:
+                return topic
+    cands = [x for x in _theme_topics(theme_text or "") if x.lower() not in excl]
+    return cands[0] if cands else "Memes"
+
+
+def reroll_topic(current: str, theme_text: str = "") -> str:
+    pool = [x for x in _theme_topics(theme_text) if x.lower() != str(current or "").lower()]
+    return random.choice(pool[:6]) if pool else pick_topic_tag("", theme_text)
 
 
 def _clean_handle(h: str) -> str:
@@ -649,7 +791,7 @@ LIM = {
     "ig_caption": 2200, "ig_tags": 5,
     "threads_text": 500, "threads_tag": 50,
     "yt_title": 100, "yt_desc": 5000, "yt_tags_chars": 500, "yt_hashtags": 5,
-    "x_text": 280, "x_tags": 1,
+    "x_text": 280, "x_tags": 2,
     "tiktok_caption": 2200, "tiktok_tags": 5,
     "fb_desc": 2200, "fb_tags": 3,
 }
@@ -684,10 +826,8 @@ def _strip_hashtags(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
-def _clean_topic_tag(tag: str) -> str:
-    tag = (tag or "").strip().lstrip("#").replace(".", "").replace("&", "")
-    tag = re.sub(r"\s+", " ", tag).strip()
-    return tag[:LIM["threads_tag"]]
+def _clean_topic_tag(tag: str, theme: str = "") -> str:
+    return pick_topic_tag(tag, theme)[:LIM["threads_tag"]]
 
 
 def _clean_yt_tags(tags) -> list:
@@ -729,7 +869,7 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     th = base["threads"]["text"] if th is None else str(th)
     tt = g("threads", "topic_tag")
     tt = base["threads"]["topic_tag"] if tt is None else str(tt)
-    out["threads"] = {"text": _trim_to_chars(_limit_hashtags(th, 5).strip(), LIM["threads_text"]), "topic_tag": _clean_topic_tag(tt)}
+    out["threads"] = {"text": _trim_to_chars(_limit_hashtags(th, 0).strip(), LIM["threads_text"]), "topic_tag": _clean_topic_tag(tt, master)}
 
     yt_title = g("youtube", "title")
     yt_title = base["youtube"]["title"] if yt_title is None else str(yt_title)
@@ -779,13 +919,13 @@ def default_platform_posts(master: str) -> dict:
     tags5 = " ".join(tags[:5])
     return {
         "instagram": {"caption": (body + ("\n\n" + tags5 if tags5 else "")).strip()},
-        "threads": {"text": (body + ("\n\n" + tags5 if tags5 else "")).strip(), "topic_tag": tag_words[0] if tag_words else "WokeVision"},
+        "threads": {"text": body, "topic_tag": pick_topic_tag(tag_words[0] if tag_words else "", master)},
         "youtube": {
             "title": first_line[:100],
             "description": (body + "\n\n" + " ".join((tags[:4] + ["#Shorts"])[:5])).strip(),
             "tags": tag_words, "category": YT_DEFAULT_CATEGORY,
         },
-        "x": {"text": body},
+        "x": {"text": fit_chars((body + ("\n\n" + " ".join(tags[:2]) if tags else "")).strip(), LIM["x_text"])},
         "tiktok": {"caption": (body + ("\n\n" + tags5 if tags5 else "")).strip(),
                    "allow_comments": False, "allow_duet": False, "allow_stitch": False, "privacy_level": "",
                    "disclose": False, "your_brand": False, "branded_content": False},
@@ -815,10 +955,9 @@ tags and 2-3 popular pool tags (#WokeVision is optional, not required).
 
 threads -- "text" [max 500 chars] and "topic_tag" [1-50 chars, no "." or "&", \
 no leading #]. Conversational, like talking to followers, ends with a \
-genuine question to start replies (Threads rewards replies), then EXACTLY 5 \
-hashtags on their own line at the very end (same mix as Instagram: clip-specific \
-plus popular pool tags; keep the whole text under 500 chars). "topic_tag" is the single most specific topic people browse \
-(e.g. "Politics", "Free Speech", "Policing") -- one tag only.
+genuine question to start replies (Threads rewards replies). NO hashtags in the \
+text: Threads uses only the one topic tag. "topic_tag" must be ONE of these exact \
+approved topics, whichever fits the clip best: {THREADS_TOPIC_LIST}.
 
 youtube -- "title" [max 100 chars, no hashtags]: front-load the keyword and \
 hook in the first 40-50 characters (only ~50 show in the feed), curiosity or \
@@ -830,9 +969,8 @@ hashtags on their own line (the first three show above the title; include \
 #Shorts as one of them). "tags": 8-12 search keywords/phrases (no #, total \
 under 400 characters) people would actually search for this topic.
 
-x -- "text" [max 280 chars INCLUDING any hashtag]. One sharp, tight take. \
-Hashtags rarely help on X: use 0, and at most 1 only if it is a genuinely \
-trending topic tag. Lead with the punch, finish with a question or hot line \
+x -- "text" [max 280 chars INCLUDING the hashtags]. One sharp, tight take. \
+End with exactly 2 hashtags (X's own guidance is two at most): one specific to the clip, one popular reach tag. Lead with the punch, finish with a question or hot line \
 that invites replies and quote-posts. No emoji spam.
 
 tiktok -- "caption" [max 2,200 chars; EXACTLY 3-5 hashtags -- only the \
@@ -842,8 +980,8 @@ Instagram (max ~3 lines). End with a prompt that drives comments ("Agree or \
 nah?"), then the credit line if supplied. Hashtags at the end: exactly 5, \
 the same mix as Instagram (no #WokeVision required), no #fyp/#foryou.
 
-facebook -- "description" [max 2,200 chars]. Hashtags barely help on \
-Facebook: use 1-3 at most at the end. Slightly warmer and more explanatory \
+facebook -- "description" [max 2,200 chars]. End with exactly 3 hashtags \
+(Facebook's useful maximum): clip-specific plus a popular reach tag. Slightly warmer and more explanatory \
 than the others, 2-4 short lines (or one line for a quick reaction), a hook \
 first line, a closing question that drives comments and shares, then the \
 credit line if supplied.
@@ -862,10 +1000,11 @@ Respond ONLY with JSON in exactly this shape:
  "x": {"text": "..."},
  "tiktok": {"caption": "..."},
  "facebook": {"description": "..."}}"""
+PLATFORM_SYSTEM = PLATFORM_SYSTEM.replace("{THREADS_TOPIC_LIST}", ", ".join(THREADS_TOPICS))
 
 
 def generate_platform_posts(transcript: str, meta: dict, on_screen_caption: str = "",
-                            master_caption: str = "", only: str = None, current: dict = None) -> dict:
+                            master_caption: str = "", only: str = None, current: dict = None, keep=None) -> dict:
     """Builds the per-platform versions in one OpenAI call (so it costs one
     round trip, not six). `only` regenerates a single platform while leaving
     the rest of `current` exactly as the user has them. Always returns a
@@ -886,9 +1025,18 @@ def generate_platform_posts(transcript: str, meta: dict, on_screen_caption: str 
         except Exception as e:
             print(f"PLATFORM POSTS GEN FAILED: {e}", flush=True)
             generated = fallback
-    for pid, key in (("instagram", "caption"), ("tiktok", "caption"), ("threads", "text")):
+    theme_all = f"{(meta or {}).get('title','')} {master_caption}"
+    keep_all = [str(k) for k in (keep or [])]
+    for pid, key in (("instagram", "caption"), ("tiktok", "caption"), ("facebook", "description"), ("x", "text")):
         if isinstance(generated.get(pid), dict) and generated[pid].get(key):
-            generated[pid][key] = enforce_tag_mix(generated[pid][key], f"{(meta or {}).get('title','')} {master_caption}")
+            txt = enforce_tag_mix(generated[pid][key], theme_all, TAG_MAX[pid], keep=keep_all if pid == only else None)
+            generated[pid][key] = fit_chars(txt, LIM["x_text"]) if pid == "x" else txt
+    yt = generated.get("youtube")
+    if isinstance(yt, dict) and yt.get("description"):
+        hold = ["#Shorts"] + ([k for k in keep_all if k.lower() != "#shorts"] if only == "youtube" else [])
+        yt["description"] = enforce_tag_mix(yt["description"], theme_all, TAG_MAX["youtube"], keep=hold)
+    if isinstance(generated.get("threads"), dict):
+        generated["threads"]["topic_tag"] = pick_topic_tag(generated["threads"].get("topic_tag"), theme_all)
     handle = credit_handle(meta)
     if handle:
         for pid, key in (("instagram", "caption"), ("tiktok", "caption"), ("facebook", "description"), ("youtube", "description")):

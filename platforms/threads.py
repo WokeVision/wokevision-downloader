@@ -208,6 +208,10 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     actionable."""
     caption = (post or {}).get("text", caption)
     topic_tag = ((post or {}).get("topic_tag") or "").strip()
+    if topic_tag:
+        # Only an approved Threads topic is ever sent (never invented, never with '.', '&' or '#').
+        from caption import pick_topic_tag
+        topic_tag = pick_topic_tag(topic_tag, caption)
     conn = db.get_connection(PLATFORM)
     if not conn or not conn.get("access_token"):
         raise ThreadsError("Threads isn't connected.")

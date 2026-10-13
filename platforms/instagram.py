@@ -287,6 +287,39 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     return out
 
 
+def publish_story(video_url: str) -> dict:
+    """Posts a video to the Instagram Story. video_url must be a public URL
+    (9:16 works best; the app can pad it onto a plain black background first).
+    Raises InstagramError with the platform's message on failure."""
+    conn = db.get_connection(PLATFORM)
+    if not conn or not conn.get("access_token"):
+        raise InstagramError("Instagram isn't connected.")
+    refresh_if_needed()
+    conn = db.get_connection(PLATFORM)
+    token = conn["access_token"]
+    uid = conn["extra"].get("ig_user_id")
+    if not uid:
+        raise InstagramError("No Instagram account id on file -- try reconnecting.")
+    r = requests.post(f"{GRAPH_BASE}/{uid}/media", data={"media_type": "STORIES", "video_url": video_url, "access_token": token}, timeout=60)
+    if r.status_code != 200:
+        raise InstagramError(f"Could not start the Story upload: {r.text[:400]}")
+    cid = r.json().get("id")
+    deadline = time.time() + 5 * 60
+    while time.time() < deadline:
+        st = requests.get(f"{GRAPH_BASE}/{cid}", params={"fields": "status_code", "access_token": token}, timeout=20).json().get("status_code", "IN_PROGRESS")
+        if st == "FINISHED":
+            break
+        if st in ("ERROR", "EXPIRED"):
+            raise InstagramError(f"Instagram failed to process the Story (status: {st}).")
+        time.sleep(8)
+    else:
+        raise InstagramError("Timed out waiting for Instagram to process the Story.")
+    pr = requests.post(f"{GRAPH_BASE}/{uid}/media_publish", data={"creation_id": cid, "access_token": token}, timeout=30)
+    if pr.status_code != 200:
+        raise InstagramError(f"Could not publish the Story: {pr.text[:400]}")
+    return {"story_id": pr.json().get("id")}
+
+
 def publish_images(image_urls: list, caption: str, post: dict = None) -> dict:
     """Publishes one image, or a carousel of up to 10, as a feed post. URLs must
     be public JPEGs. Raises InstagramError with the platform's message on failure."""

@@ -2187,6 +2187,40 @@ def _run_publish(publish_job_id: str, history_id: str, platforms: list, video_ur
     others -- and the job's per-platform results are visible to a poller
     as soon as each one finishes, rather than all-at-once at the end."""
     import datetime
+    _story = {"url": None, "black": None, "lock": threading.Lock()}
+
+    def _story_url(black: bool) -> str:
+        """The video to use for a Story: padded onto plain black 1080x1920 when asked, else as is."""
+        if not black:
+            return video_url
+        with _story["lock"]:
+            if _story["url"]:
+                return _story["url"]
+            name = f"story_{uuid.uuid4().hex[:12]}.mp4"
+            src = os.path.join(DOWNLOAD_DIR, f"src_{name}")
+            dst = os.path.join(DOWNLOAD_DIR, name)
+            os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+            import requests as _rq2
+            with _rq2.get(video_url, stream=True, timeout=120) as r:
+                r.raise_for_status()
+                with open(src, "wb") as fh:
+                    for chunk in r.iter_content(1 << 20):
+                        fh.write(chunk)
+            cp = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-t", "60",
+                                 "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1",
+                                 "-r", "30", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+                                 "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", dst], capture_output=True, text=True, timeout=300)
+            try:
+                os.remove(src)
+            except OSError:
+                pass
+            if cp.returncode != 0 or not os.path.exists(dst):
+                raise RuntimeError("Couldn't build the black-background Story video: " + (cp.stderr or "")[-200:])
+            storage.upload_file(dst, name)
+            base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+            _story["url"] = storage.external_url(name, f"{base}/files/{name}")
+            return _story["url"]
+
     def _do(platform):
         module = PLATFORM_MODULES.get(platform)
         if not module:
@@ -2195,6 +2229,15 @@ def _run_publish(publish_job_id: str, history_id: str, platforms: list, video_ur
             try:
                 outcome = module.publish_video(video_url, caption, post=(platform_posts or {}).get(platform))
                 result = {"status": "done", "ok": True, **outcome}
+                _pp = (platform_posts or {}).get(platform) or {}
+                if _pp.get("story") and hasattr(module, "publish_story"):
+                    try:
+                        so = module.publish_story(_story_url(bool(_pp.get("story_black", True))))
+                        result["story"] = "posted"
+                        result.update({k: v for k, v in so.items() if k != "story"})
+                    except Exception as se:
+                        print(f"STORY FAILED ({platform}): {se}", flush=True)
+                        result["story"] = "failed: " + str(se)[:200]
             except Exception as e:
                 print(f"PUBLISH FAILED ({platform}): {e}", flush=True)
                 result = {"status": "done", "ok": False, "error": str(e)}

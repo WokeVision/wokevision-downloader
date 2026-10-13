@@ -340,6 +340,33 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
     return {"media_id": video_id}
 
 
+def publish_story(video_url: str) -> dict:
+    """Posts a video as a Facebook Page Story (start -> upload by URL -> finish)."""
+    conn = db.get_connection(PLATFORM)
+    if not conn or not conn.get("access_token"):
+        raise FacebookError("Facebook isn't connected.")
+    refresh_if_needed()
+    conn = db.get_connection(PLATFORM)
+    token = conn["access_token"]
+    page_id = (conn.get("extra") or {}).get("page_id")
+    if not page_id:
+        raise FacebookError("No Facebook Page id on file -- try reconnecting.")
+    st = requests.post(f"{GRAPH_BASE}/{page_id}/video_stories", data={"upload_phase": "start", "access_token": token}, timeout=30)
+    if st.status_code != 200:
+        raise FacebookError(f"Could not start the Story upload: {st.text[:400]}")
+    d = st.json()
+    vid, up = d.get("video_id"), d.get("upload_url")
+    if not vid or not up:
+        raise FacebookError("Facebook didn't return a Story upload session.")
+    u = requests.post(up, headers={"Authorization": f"OAuth {token}", "file_url": video_url}, timeout=60)
+    if u.status_code != 200:
+        raise FacebookError(f"Story video upload failed: {u.text[:400]}")
+    f = requests.post(f"{GRAPH_BASE}/{page_id}/video_stories", data={"upload_phase": "finish", "video_id": vid, "access_token": token}, timeout=30)
+    if f.status_code != 200:
+        raise FacebookError(f"Could not publish the Story: {f.text[:400]}")
+    return {"story_id": vid}
+
+
 # --- Comments ------------------------------------------------------------------
 # Needs pages_manage_engagement + pages_read_user_content (reconnect Facebook
 # once after they're added). Reads comments on the Page's latest posts/videos.

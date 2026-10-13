@@ -1481,6 +1481,8 @@
         hint: "Only the first ~125 characters show before “more”, so lead with the hook. Instagram allows at most 5 hashtags." },
       { k: "first_comment", type: "area", label: "First comment (optional)", max: 2200, tags: 0,
         hint: "Posted automatically right after the Reel goes live, e.g. extra hashtags or a link. Needs one Instagram reconnect to grant comment permission." },
+      { k: "story", type: "switch", label: "Also add to my Story" },
+      { k: "story_black", type: "switch", label: "Story: video on a plain black background", def: true },
     ],
     threads: [
       { k: "text", type: "area", label: "Post text", max: 500, tags: 5,
@@ -1517,6 +1519,8 @@
     facebook: [
       { k: "description", type: "area", label: "Description", max: 2200, tags: 3,
         hint: "Three hashtags: the most that tends to help on Facebook. A hook first line and a closing question work best." },
+      { k: "story", type: "switch", label: "Also add to my Page Story" },
+      { k: "story_black", type: "switch", label: "Story: video on a plain black background", def: true },
     ],
   };
 
@@ -1792,7 +1796,7 @@
       FIELDS[p.id].forEach((f) => {
         const el = document.getElementById(`pp_${p.id}_${f.k}`);
         if (!el) return;
-        if (f.type === "switch") el.checked = d[f.k] === undefined ? false : !!d[f.k];
+        if (f.type === "switch") el.checked = d[f.k] === undefined ? !!f.def : !!d[f.k];
         else if (f.type === "ttprivacy") { el.dataset.want = d[f.k] || ""; el.value = d[f.k] || ""; }
         else if (f.type === "tags") el.value = (d[f.k] || []).join(", ");
         else if (f.type === "select") el.value = String(d[f.k] || "25");
@@ -2076,6 +2080,7 @@
         row.innerHTML = result.ok
           ? `<span class="r-ok">✓</span><span>${platform}: posted</span>`
           : `<span class="r-err">✗</span><span>${platform}: ${result.error || "failed"}</span>`;
+        if (result.ok && result.story) row.lastChild.textContent += result.story === "posted" ? " \u00B7 Story posted" : " \u00B7 Story " + result.story;
       }
       publishResults.appendChild(row);
     });

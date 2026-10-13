@@ -861,6 +861,9 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     ig = g("instagram", "caption")
     ig = base["instagram"]["caption"] if ig is None else str(ig)
     out["instagram"] = {"caption": _trim_to_chars(_limit_hashtags(ig, LIM["ig_tags"]).strip(), LIM["ig_caption"])}
+    out["instagram"]["story"] = bool((raw.get("instagram") or {}).get("story")) if isinstance(raw.get("instagram"), dict) else False
+    _ib = (raw.get("instagram") or {}).get("story_black") if isinstance(raw.get("instagram"), dict) else None
+    out["instagram"]["story_black"] = True if _ib is None else bool(_ib)
     _fc = g("instagram", "first_comment")
     if _fc and str(_fc).strip():
         out["instagram"]["first_comment"] = str(_fc).strip()[:2200]
@@ -906,6 +909,9 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     fb = g("facebook", "description")
     fb = base["facebook"]["description"] if fb is None else str(fb)
     out["facebook"] = {"description": _trim_to_chars(_limit_hashtags(fb, LIM["fb_tags"]).strip(), LIM["fb_desc"])}
+    out["facebook"]["story"] = bool((raw.get("facebook") or {}).get("story")) if isinstance(raw.get("facebook"), dict) else False
+    _fbb = (raw.get("facebook") or {}).get("story_black") if isinstance(raw.get("facebook"), dict) else None
+    out["facebook"]["story_black"] = True if _fbb is None else bool(_fbb)
     return out
 
 

@@ -1482,8 +1482,8 @@
         hint: "Posted automatically right after the Reel goes live, e.g. extra hashtags or a link. Needs one Instagram reconnect to grant comment permission." },
     ],
     threads: [
-      { k: "text", type: "area", label: "Post text", max: 500, tags: 0,
-        hint: "Conversational, ending on a question to start replies. No hashtags here: Threads only uses the one topic below." },
+      { k: "text", type: "area", label: "Post text", max: 500, tags: 5,
+        hint: "Conversational, ending on a question to start replies. End with 5 hashtags; the single topic below is the one Threads indexes." },
       { k: "topic_tag", type: "topic", label: "Topic", max: 50,
         hint: "Threads allows one topic per post. Only topics that exist on Threads are offered, so the post is never refused over its topic." },
     ],
@@ -1692,15 +1692,15 @@
   // ---- Hashtag-only controls: hold (lock) tags, re-roll one, some or all, or rewrite the words around locked tags.
   const held = {};   // platform -> Set of lowercase locked tags
   const tagKey = (pid) => (FIELDS[pid].find((f) => f.tags > 0 || f.type === "topic") || {}).k;
-  function drawChips(pid) {
-    const f = FIELDS[pid].find((x) => x.tags > 0 || x.type === "topic"); if (!f) return;
+  function drawChips(pid) { FIELDS[pid].filter((x) => x.tags > 0 || x.type === "topic").forEach((f) => drawChipsFor(pid, f)); }
+  function drawChipsFor(pid, f) {
     const bar = document.getElementById(`pp_${pid}_${f.k}_chips`), el = document.getElementById(`pp_${pid}_${f.k}`);
     if (!bar || !el) return;
     const set = held[pid] = held[pid] || new Set();
     bar.innerHTML = "";
     if (f.type === "topic") {
       const b = document.createElement("button"); b.type = "button"; b.className = "secondary tbtn"; b.textContent = "\u21BB Re-roll topic";
-      b.addEventListener("click", () => rerollTags(pid, [], b)); bar.appendChild(b);
+      b.addEventListener("click", () => rerollTags(pid, [], b, true)); bar.appendChild(b);
       return;
     }
     const tags = (el.value.match(/#\w+/g) || []).filter((t, i, a) => a.findIndex((u) => u.toLowerCase() === t.toLowerCase()) === i);
@@ -1730,12 +1730,12 @@
     n.textContent = "Click a tag to lock it. \u21BB on a tag swaps only that one; the button swaps everything unlocked. Only the hashtags change.";
     bar.appendChild(n);
   }
-  async function rerollTags(pid, keep, btn) {
+  async function rerollTags(pid, keep, btn, topic) {
     if (!currentJobId) return;
     await flushAllSaves();
     const old = btn.textContent; btn.disabled = true; btn.textContent = "\u2026";
     try {
-      const r = await fetch(`/jobs/${currentJobId}/reroll-hashtags`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: pid, keep }) });
+      const r = await fetch(`/jobs/${currentJobId}/reroll-hashtags`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform: pid, keep, topic: !!topic }) });
       const d = await r.json(); if (!r.ok) throw new Error(d.detail || "Something went wrong.");
       fillPosts(d.platform_posts); setSaveState("Saved \u2713");
     } catch (e) { alert("Couldn\u2019t re-roll: " + e.message); btn.disabled = false; btn.textContent = old; }

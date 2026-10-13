@@ -335,7 +335,7 @@ POOL_REACH = ["#viral", "#trending", "#memes", "#funny", "#news", "#politics"]
 
 # Most hashtags each platform will actually honour (see the research notes
 # further down). Threads takes ONE topic tag (set separately, not in the text).
-TAG_MAX = {"instagram": 5, "tiktok": 5, "youtube": 5, "x": 2, "facebook": 3, "threads": 0}
+TAG_MAX = {"instagram": 5, "tiktok": 5, "youtube": 5, "x": 2, "facebook": 3, "threads": 5}
 
 
 def _theme_pool(probe: str) -> list:
@@ -869,7 +869,7 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     th = base["threads"]["text"] if th is None else str(th)
     tt = g("threads", "topic_tag")
     tt = base["threads"]["topic_tag"] if tt is None else str(tt)
-    out["threads"] = {"text": _trim_to_chars(_limit_hashtags(th, 0).strip(), LIM["threads_text"]), "topic_tag": _clean_topic_tag(tt, master)}
+    out["threads"] = {"text": _trim_to_chars(_limit_hashtags(th, 5).strip(), LIM["threads_text"]), "topic_tag": _clean_topic_tag(tt, master)}
 
     yt_title = g("youtube", "title")
     yt_title = base["youtube"]["title"] if yt_title is None else str(yt_title)
@@ -919,7 +919,7 @@ def default_platform_posts(master: str) -> dict:
     tags5 = " ".join(tags[:5])
     return {
         "instagram": {"caption": (body + ("\n\n" + tags5 if tags5 else "")).strip()},
-        "threads": {"text": body, "topic_tag": pick_topic_tag(tag_words[0] if tag_words else "", master)},
+        "threads": {"text": (body + ("\n\n" + tags5 if tags5 else "")).strip(), "topic_tag": pick_topic_tag(tag_words[0] if tag_words else "", master)},
         "youtube": {
             "title": first_line[:100],
             "description": (body + "\n\n" + " ".join((tags[:4] + ["#Shorts"])[:5])).strip(),
@@ -955,9 +955,10 @@ tags and 2-3 popular pool tags (#WokeVision is optional, not required).
 
 threads -- "text" [max 500 chars] and "topic_tag" [1-50 chars, no "." or "&", \
 no leading #]. Conversational, like talking to followers, ends with a \
-genuine question to start replies (Threads rewards replies). NO hashtags in the \
-text: Threads uses only the one topic tag. "topic_tag" must be ONE of these exact \
-approved topics, whichever fits the clip best: {THREADS_TOPIC_LIST}.
+genuine question to start replies (Threads rewards replies), then EXACTLY 5 \
+hashtags on their own line at the very end (same mix as Instagram: clip-specific \
+plus popular pool tags; keep the whole text under 500 chars). "topic_tag" is separate \
+from those and must be ONE of these exact approved topics, whichever fits the clip best: {THREADS_TOPIC_LIST}.
 
 youtube -- "title" [max 100 chars, no hashtags]: front-load the keyword and \
 hook in the first 40-50 characters (only ~50 show in the feed), curiosity or \
@@ -1027,7 +1028,7 @@ def generate_platform_posts(transcript: str, meta: dict, on_screen_caption: str 
             generated = fallback
     theme_all = f"{(meta or {}).get('title','')} {master_caption}"
     keep_all = [str(k) for k in (keep or [])]
-    for pid, key in (("instagram", "caption"), ("tiktok", "caption"), ("facebook", "description"), ("x", "text")):
+    for pid, key in (("instagram", "caption"), ("tiktok", "caption"), ("facebook", "description"), ("x", "text"), ("threads", "text")):
         if isinstance(generated.get(pid), dict) and generated[pid].get(key):
             txt = enforce_tag_mix(generated[pid][key], theme_all, TAG_MAX[pid], keep=keep_all if pid == only else None)
             generated[pid][key] = fit_chars(txt, LIM["x_text"]) if pid == "x" else txt

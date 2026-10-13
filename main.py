@@ -1856,6 +1856,7 @@ class PlatformPostsGenerateRequest(BaseModel):
 class HashtagRerollRequest(BaseModel):
     platform: str
     keep: list[str] = []      # locked hashtags (or, for one chip, every other tag) to leave alone
+    topic: bool = False       # Threads: re-roll the topic instead of the hashtags in the text
 
 
 def _done_job(job_id: str) -> dict:
@@ -1932,7 +1933,7 @@ def generate_platform_posts_route(job_id: str, req: PlatformPostsGenerateRequest
     return {"platform_posts": posts}
 
 
-_TAG_FIELD = {"instagram": "caption", "tiktok": "caption", "facebook": "description", "x": "text", "youtube": "description"}
+_TAG_FIELD = {"threads": "text", "instagram": "caption", "tiktok": "caption", "facebook": "description", "x": "text", "youtube": "description"}
 
 
 @app.post("/jobs/{job_id}/reroll-hashtags")
@@ -1948,7 +1949,7 @@ def reroll_hashtags_route(job_id: str, req: HashtagRerollRequest):
     posts = normalize_platform_posts(job.get("platform_posts") or {}, job.get("posting_caption", ""))
     meta = job.get("meta", {})
     theme = f"{meta.get('title', '')} {job.get('posting_caption', '')}"
-    if pid == "threads":
+    if pid == "threads" and req.topic:
         posts["threads"]["topic_tag"] = reroll_topic(posts["threads"].get("topic_tag"), theme)
     else:
         key = _TAG_FIELD[pid]

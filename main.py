@@ -2265,6 +2265,13 @@ def get_publish_job(publish_job_id: str):
 def list_history():
     entries = db.list_history()
     stored_keys = storage.list_keys()
+    sched = {}
+    try:
+        for r in db.sched_list(include_past=False):
+            if r.get("status") in ("scheduled", "publishing"):
+                sched.setdefault(str(r["history_id"]), {})[r["platform"]] = r["run_at"]
+    except Exception as ex:
+        print(f"HISTORY SCHEDULE LOOKUP FAILED: {ex}", flush=True)
     out = []
     for e in entries:
         out.append({
@@ -2276,6 +2283,7 @@ def list_history():
                 os.path.exists(os.path.join(DOWNLOAD_DIR, e["video_filename"])) or e["video_filename"] in stored_keys
             ),
             "publish_results": e.get("publish_results") or {},
+            "scheduled": sched.get(str(e["id"]), {}),
         })
     return {"history": out}
 

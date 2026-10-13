@@ -599,6 +599,7 @@
     background: rgba(255,255,255,0.08); color: var(--text-dim);
   }
   .historyBadge.ok { background: rgba(74, 222, 128, 0.16); color: #4ade80; }
+  .historyBadge.sched { background: rgba(251, 146, 60, 0.18); color: #fb923c; }
   .historyBadge.err { background: rgba(255, 43, 60, 0.16); color: var(--accent); }
   .historyEmpty { font-size: 13px; color: var(--text-faint); padding: 8px 2px; }
   .historyExpiredNote {
@@ -1936,6 +1937,12 @@
   // the Platforms list. Empty for a freshly-processed video.
   let currentPublishResults = {};
 
+  function syncPostAll(container) {
+    const sw = container.querySelector("#postAllSw"); if (!sw) return;
+    const ins = Array.from(container.querySelectorAll('.platformRow:not([data-platform="_all"]) .switch input'));
+    sw.checked = ins.length > 0 && ins.every((i) => i.checked);
+  }
+
   function renderPlatformList(container, connections) {
     container.innerHTML = "";
     connections.forEach((c) => {
@@ -1993,6 +2000,7 @@
           if (input.checked) toggledOn.add(c.platform);
           else toggledOn.delete(c.platform);
           refreshTabMarks();
+          syncPostAll(container);
         });
         const track = document.createElement("span");
         track.className = "track";
@@ -2017,6 +2025,19 @@
 
       container.appendChild(row);
     });
+    const eligible = connections.filter((c) => !c.checking && c.available && c.ok);
+    if (eligible.length > 1) {
+      const all = document.createElement("div");
+      all.className = "platformRow"; all.dataset.platform = "_all";
+      all.innerHTML = '<div class="platformInfo"><div class="pName">Post to all</div><div class="pStatus">Switches on every connected platform</div></div><label class="switch"><input type="checkbox" id="postAllSw"><span class="track"></span></label>';
+      all.querySelector("input").addEventListener("change", (ev) => {
+        eligible.forEach((c) => { if (ev.target.checked) toggledOn.add(c.platform); else toggledOn.delete(c.platform); });
+        container.querySelectorAll('.platformRow:not([data-platform="_all"]) .switch input').forEach((i) => { i.checked = ev.target.checked; });
+        refreshTabMarks();
+      });
+      container.insertBefore(all, container.firstChild);
+      syncPostAll(container);
+    }
     refreshTabMarks();
   }
 
@@ -2198,7 +2219,7 @@
       publishResults.style.display = "block";
       publishResults.innerHTML = (data.items || []).map((s) => `<div class="publishResultRow"><span class="r-ok">\u2713</span><span>${s.label} \u2014 ${fmtWhen(s.run_at)}</span></div>`).join("") +
         '<div class="publishResultRow"><span></span><a href="/schedule" style="color:var(--accent);font-weight:600;text-decoration:none">View schedule \u2192</a></div>';
-      await loadSchedules();
+      await loadSchedules(); loadHistory();
     } catch (err) {
       publishResults.style.display = "block";
       publishResults.innerHTML = `<div class="publishResultRow"><span class="r-err">\u2717</span><span>${err.message}</span></div>`;
@@ -2330,17 +2351,29 @@
         info.appendChild(title);
         info.appendChild(meta);
 
+        const sched = e.scheduled || {};
         const platformEntries = Object.entries(e.publish_results || {});
         if (platformEntries.length > 0) {
           const badges = document.createElement("div");
           badges.className = "historyPlatforms";
           platformEntries.forEach(([platform, result]) => {
+            if (sched[platform]) return;   // shown as scheduled instead, until it posts
             const b = document.createElement("span");
             b.className = "historyBadge " + (result.ok ? "ok" : "err");
             b.textContent = PLATFORM_LABELS_SHORT[platform] || platform;
             badges.appendChild(b);
           });
           info.appendChild(badges);
+        }
+        if (Object.keys(sched).length) {
+          let badges = info.querySelector(".historyPlatforms");
+          if (!badges) { badges = document.createElement("div"); badges.className = "historyPlatforms"; info.appendChild(badges); }
+          Object.entries(sched).forEach(([platform, at]) => {
+            const b = document.createElement("span");
+            b.className = "historyBadge sched";
+            b.textContent = (PLATFORM_LABELS_SHORT[platform] || platform) + " \u00B7 Scheduled " + fmtWhen(at);
+            badges.appendChild(b);
+          });
         }
 
         row.appendChild(info);

@@ -956,7 +956,16 @@ def _clean_link_url(u: str) -> str:
 
 @app.get("/links")
 def bio_public_page():
-    return FileResponse("static/links.html")
+    # The page's data is written into the HTML itself, so it draws complete on the
+    # first paint (no wait for a second request, no half-filled page).
+    try:
+        html = open("static/links.html", encoding="utf-8").read()
+        blob = json.dumps(bio_public_data()).replace("</", "<\\/")
+        html = html.replace("<script>\nfunction esc", "<script>window.__BIO=" + blob + ";</script>\n<script>\nfunction esc", 1)
+        return Response(html, media_type="text/html", headers={"Cache-Control": "no-cache"})
+    except Exception as e:
+        print(f"LINKS PREFILL FAILED: {e}", flush=True)
+        return FileResponse("static/links.html")
 
 
 _BIO_DEFAULTS = {"title": "WokeVision", "handle": "@wokevision_", "text": "", "contact_email": "contactwokevision@gmail.com",

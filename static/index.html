@@ -68,6 +68,7 @@
   body:not(.has-result) .resultPart textarea { caret-color: transparent; }
   .vidEmpty { display: flex; align-items: center; justify-content: center; width: 100%; max-width: 280px; aspect-ratio: 9/16; margin: 0 auto 14px; border-radius: var(--radius-md); border: 1.5px dashed var(--border); color: var(--text-faint); font-size: 13.5px; padding: 18px; box-sizing: border-box; }
   body.has-video .vidEmpty { display: none; }
+  body.finished-edit .osOnly, body.finished-edit #ccCard, body.finished-edit #polish, body.finished-edit #frApply, body.finished-edit #wmApply { display: none !important; }
   body:not(.has-video) #preview, body:not(.has-video) #downloadLink { display: none; }
   #statusCard { display: block; }
   #statusCard .progressFill { transition: width .3s ease; }
@@ -659,6 +660,7 @@
     <div class="segmented">
       <button type="button" class="segBtn active" data-panel="linkPanel">Paste a link</button>
       <button type="button" class="segBtn" data-panel="uploadPanel">Video file</button>
+      <button type="button" class="segBtn" data-panel="finishedPanel">Finished edit</button>
     </div>
 
     <div id="linkPanel" class="panel active">
@@ -676,6 +678,23 @@
           <input type="file" id="fileInput" accept="video/*" />
         </label>
         <button type="submit" id="uploadBtn" class="primary" disabled>Submit</button>
+      </form>
+    </div>
+
+    <div id="finishedPanel" class="panel">
+      <form id="finishedForm">
+        <div style="font-size:13px;opacity:.75;line-height:1.5;margin-bottom:10px">Already edited this yourself? Upload the finished video and it goes straight to captions and posting. Nothing is added to it: no crop, captions, logo or watermark.</div>
+        <label class="fileBtn" id="finDropLabel">
+          <span id="finDropText">Upload your finished video <span style="opacity:.55;font-weight:400">or drag &amp; drop</span></span>
+          <input type="file" id="finInput" accept="video/*" />
+        </label>
+        <label class="fieldLabel" for="finCaption" style="margin-top:12px">Your caption <small style="opacity:.6;font-weight:400">(optional if the AI writes it; include hashtags if you want them)</small></label>
+        <textarea id="finCaption" rows="3" placeholder="Write the caption you want to post with"></textarea>
+        <label class="optRow" style="padding-top:12px">
+          <span>Let AI make the platform versions<br><small style="opacity:.6;font-weight:400">On: your caption (or one written for you) is adapted for each platform, with hashtags. Off: your caption is used as you wrote it, only trimmed to each platform's limits.</small></span>
+          <span class="switch"><input type="checkbox" id="finAi" checked /><span class="track"></span></span>
+        </label>
+        <button type="submit" id="finBtn" class="primary" disabled>Add to editor</button>
       </form>
     </div>
   </div>
@@ -698,17 +717,17 @@
     </div>
   </div>
   <div class="card captionCard resultPart" id="onScreenCard">
-        <details class="moreOpts" id="seenBox" style="display:none"><summary>What the AI saw in the video</summary><div id="seenText" style="font-size:13px;line-height:1.55;white-space:pre-wrap;opacity:.85"></div><div style="font-size:12px;opacity:.6;margin-top:6px">Got it wrong? Put the right context in &ldquo;What&rsquo;s this clip about?&rdquo; at the top and change the caption.</div></details>
-        <h3 class="capSub">On-screen caption</h3>
-        <textarea id="onScreenBox"></textarea>
-        <div class="actionRow">
+        <details class="moreOpts osOnly" id="seenBox" style="display:none"><summary>What the AI saw in the video</summary><div id="seenText" style="font-size:13px;line-height:1.55;white-space:pre-wrap;opacity:.85"></div><div style="font-size:12px;opacity:.6;margin-top:6px">Got it wrong? Put the right context in &ldquo;What&rsquo;s this clip about?&rdquo; at the top and change the caption.</div></details>
+        <h3 class="capSub osOnly">On-screen caption</h3>
+        <textarea id="onScreenBox" class="osOnly"></textarea>
+        <div class="actionRow osOnly">
           <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
           <button class="secondary" id="saveOnScreenCaptionBtn" type="button">Save caption</button>
           <button class="secondary" id="hookOptsBtn" type="button">3 hook options</button>
           <span class="inlineSpinner" id="onScreenCaptionSpinner">Updating...</span>
         </div>
-        <div id="hookOpts" class="hookOpts"></div>
-        <div class="capDivider"></div>
+        <div id="hookOpts" class="hookOpts osOnly"></div>
+        <div class="capDivider osOnly"></div>
         <h3 class="capSub">Core caption</h3>
         <textarea id="captionBox"></textarea>
         <div class="charCount" id="captionCharCount"></div>
@@ -719,6 +738,7 @@
         </div>
       </div>
   <div class="card resultPart" id="videoCard" style="text-align:center;"><h3 style="margin:0 0 10px;font-size:14.5px;font-weight:700;text-align:left">Complete edit</h3>
+      <div id="finWarn" style="display:none;text-align:left;font-size:12.5px;line-height:1.5;padding:8px 10px;margin:0 0 10px;border-radius:8px;background:rgba(255,160,0,.12);border:1px solid rgba(255,160,0,.45)"></div>
       <div class="vidEmpty" id="vidEmpty">Your edited video appears here</div>
       <video id="preview" controls playsinline hidden></video>
       <a class="dl" id="downloadLink" download="wokevision.mp4">Download video</a>
@@ -871,6 +891,7 @@
   function resetUI() {
     setResult(false);
     document.body.classList.remove("has-video");
+    setFinished(null);
     const ve = document.getElementById("vidEmpty"); if (ve) ve.textContent = "Your edited video appears here";
     errorBox.style.display = "none";
     statusCard.classList.add("active");
@@ -890,6 +911,7 @@
     statusCard.classList.remove("active");
     stageLabel.textContent = "Ready"; progressFill.style.width = "0%"; pctLabel.textContent = ""; etaLabel.textContent = "";
     document.body.classList.add("has-video");
+    setFinished(data);
     const preview = document.getElementById("preview");
     // Cache-bust so a re-rendered video (same URL) actually reloads
     // instead of showing the browser's cached first render.
@@ -1151,6 +1173,62 @@
       showError(err.message);
     } finally {
       uploadBtn.disabled = !fileInput.files[0];
+    }
+  });
+
+  // --- Finished edit (the user's own, already-edited video) ------------
+  function setFinished(d) {
+    document.body.classList.toggle("finished-edit", !!(d && d.finished_edit));
+    const w = document.getElementById("finWarn");
+    const list = (d && d.finished_edit && d.warnings) || [];
+    w.style.display = list.length ? "" : "none";
+    w.textContent = list.join(" ");
+  }
+  const finInput = document.getElementById("finInput");
+  const finDropLabel = document.getElementById("finDropLabel");
+  const finDropText = document.getElementById("finDropText");
+  const finBtn = document.getElementById("finBtn");
+  function finSetFile(f) {
+    if (f) { finDropLabel.classList.add("hasFile"); finDropText.textContent = f.name; }
+    else { finDropLabel.classList.remove("hasFile"); finDropText.textContent = "Upload your finished video"; }
+    finBtn.disabled = !f;
+  }
+  finInput.addEventListener("change", () => finSetFile(finInput.files[0]));
+  ["dragenter", "dragover"].forEach((ev) => finDropLabel.addEventListener(ev, (e) => { e.preventDefault(); finDropLabel.classList.add("drag"); }));
+  ["dragleave", "drop"].forEach((ev) => finDropLabel.addEventListener(ev, (e) => { e.preventDefault(); finDropLabel.classList.remove("drag"); }));
+  finDropLabel.addEventListener("drop", (e) => {
+    const f = e.dataTransfer && e.dataTransfer.files[0];
+    if (!f) return;
+    if (f.type && !f.type.startsWith("video/")) { alert("That doesn't look like a video file."); return; }
+    const dt = new DataTransfer(); dt.items.add(f); finInput.files = dt.files; finSetFile(f);
+  });
+  document.getElementById("finishedForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const file = finInput.files[0];
+    if (!file) return;
+    const caption = document.getElementById("finCaption").value.trim();
+    const ai = document.getElementById("finAi").checked;
+    if (!ai && !caption) { alert("Add your caption, or switch on 'Let AI make the platform versions'."); return; }
+    finBtn.disabled = true;
+    resetUI();
+    stageLabel.textContent = "Uploading";
+    try {
+      let direct = await window.wvDirectUpload(file, (p) => { stageLabel.textContent = "Uploading " + p + "%"; progressFill.style.width = p + "%"; }, (t) => { stageLabel.textContent = t; });
+      let resp;
+      if (direct) {
+        resp = await fetch("/process-finished", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: direct.key, filename: file.name, caption, ai }) });
+      } else {
+        const fd = new FormData();
+        fd.append("file", file); fd.append("caption", caption); fd.append("ai", ai ? "1" : "0");
+        resp = await fetch("/process-finished-file", { method: "POST", body: fd });
+      }
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
+      await pollJob(data.job_id);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      finBtn.disabled = !finInput.files[0];
     }
   });
 
@@ -2426,6 +2504,7 @@
         document.getElementById("vidEmpty").textContent = "The video file for this edit has expired \u2014 captions and platform history are still here.";
       }
 
+      setFinished(e);
       document.getElementById("onScreenBox").value = e.on_screen_caption || "";
       document.getElementById("captionBox").value = e.posting_caption || "";
       document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";

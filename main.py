@@ -337,6 +337,8 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
         "campaign_id": (meta or {}).get("campaign_id", ""),
         "post": (meta or {}).get("post") or {},
         "cover_ms": (meta or {}).get("cover_ms"),
+        "finished_edit": bool((meta or {}).get("finished_edit")),
+        "warnings": (meta or {}).get("warnings") or [],
         "watermark": ({"pos": (meta.get("wm") or {}).get("pos", "right"),
                        "url": f"{base_url}/files/{(meta.get('wm') or {}).get('file')}"}
                       if (meta.get("wm") or {}).get("file") else None),
@@ -2364,7 +2366,7 @@ def get_history(entry_id: str):
         "publish_results": e.get("publish_results") or {},
         "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
         **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
-           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief", "crop", "video_read")},
+           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief", "crop", "video_read", "finished_edit", "warnings")},
     }
 
 
@@ -2979,6 +2981,175 @@ def process_upload(req: ProcessUpload):
         JOBS[job_id] = {"stage": "downloading", "stage_label": "Fetching your upload", "progress": 0.0, "status": "running",
                         "angle": (req.angle or "").strip()[:1500], "wm_token": req.wm_token, "wm_pos": req.wm_pos, "campaign_id": req.campaign_id}
     threading.Thread(target=_run_pulled_pipeline, args=(job_id, req.key, final_source_path, req.filename), daemon=True).start()
+    return {"job_id": job_id}
+
+
+# --- Finished edits: the user's own, already-edited video -----------------------
+# Skips the whole editing pipeline (no crop, burned-in captions, logo or
+# watermark). The file is only made safe for every platform (H.264/AAC MP4),
+# then it goes straight to the caption + Post screens like any other job.
+
+def _probe_video(path: str) -> dict:
+    info = {"vcodec": "", "acodec": "", "pix_fmt": "", "w": 0, "h": 0, "dur": 0.0}
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries",
+             "stream=codec_type,codec_name,width,height,pix_fmt:format=duration", "-of", "json", path],
+            capture_output=True, text=True, timeout=60)
+        d = json.loads(r.stdout or "{}")
+        for s in d.get("streams") or []:
+            if s.get("codec_type") == "video" and not info["vcodec"]:
+                info.update(vcodec=s.get("codec_name") or "", pix_fmt=s.get("pix_fmt") or "",
+                            w=int(s.get("width") or 0), h=int(s.get("height") or 0))
+            elif s.get("codec_type") == "audio" and not info["acodec"]:
+                info["acodec"] = s.get("codec_name") or ""
+        info["dur"] = float((d.get("format") or {}).get("duration") or 0)
+    except Exception as e:
+        print(f"PROBE FAILED: {e}", flush=True)
+    return info
+
+
+def _finished_warnings(info: dict) -> list:
+    out = []
+    if info.get("w") and info.get("h") and info["w"] >= info["h"]:
+        out.append("This video isn't vertical. It will post, but Reels, TikTok and YouTube Shorts are built for vertical 9:16 video and may show it small or cropped.")
+    if info.get("dur", 0) > 180:
+        out.append("This video is over 3 minutes, so YouTube will treat it as a normal video rather than a Short.")
+    return out
+
+
+def _normalise_finished(src: str, dst: str, info: dict):
+    """Remuxes untouched when the video is already H.264 (+AAC, 4:2:0) -- the
+    quality stays exactly as the user exported it -- otherwise converts to
+    that, which every platform accepts. Raises RuntimeError with a plain
+    message on failure."""
+    ok = (info.get("vcodec") == "h264" and info.get("pix_fmt") in ("yuv420p", "yuvj420p", "")
+          and info.get("acodec") in ("aac", ""))
+    if ok:
+        cmd = ["ffmpeg", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", dst]
+    else:
+        cmd = ["ffmpeg", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast",
+               "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", dst]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    if r.returncode != 0 or not os.path.exists(dst) or os.path.getsize(dst) == 0:
+        print(f"FINISHED NORMALISE FAILED: {r.stderr[-600:]}", flush=True)
+        raise RuntimeError("That file couldn't be read as a video. Try exporting it again as an MP4.")
+
+
+def _run_finished_pipeline(job_id: str, source_path: str, filename: str, own_caption: str, use_ai: bool):
+    output_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_final.mp4")
+    try:
+        with JOBS_LOCK:
+            _angle = (JOBS.get(job_id) or {}).get("angle", "")
+        own_caption = (own_caption or "").strip()
+        title = (own_caption.splitlines() or [""])[0][:120] if own_caption else os.path.splitext(filename or "")[0]
+        _set_stage(job_id, "rendering", 0.1)
+        _set_job(job_id, stage_label="Preparing your video")
+        info = _probe_video(source_path)
+        if not info.get("vcodec"):
+            raise RuntimeError("That file doesn't look like a video.")
+        _normalise_finished(source_path, output_path, info)
+        meta = {"title": title or "My edit", "description": own_caption, "method": "finished edit", "angle": _angle,
+                "finished_edit": True, "cues": [], "captions_on": False, "credit_override": "", "credit_ok": False,
+                "warnings": _finished_warnings(info), "duration": round(info.get("dur", 0), 1)}
+        transcript = ""
+        if use_ai:
+            _set_stage(job_id, "transcribing")
+            sp = speech.transcribe_words(output_path, vocab=app_settings().get("vocab", ""))
+            transcript = sp.get("text", "")
+            _set_stage(job_id, "captioning")
+            if own_caption:
+                posting_caption = own_caption
+            else:
+                _os, posting_caption = generate_captions(transcript, meta)
+            platform_posts = generate_platform_posts(transcript, meta, "", posting_caption)
+        else:
+            posting_caption = own_caption
+            platform_posts = normalize_platform_posts({}, posting_caption)
+        _set_job(job_id, transcript=transcript, meta=meta, platform_posts=platform_posts)
+        try:
+            os.remove(source_path)
+        except OSError:
+            pass
+        _cleanup_later(output_path, delay=KEEP_ALIVE_SECONDS)
+        _set_job(
+            job_id, stage="done", stage_label="Done", progress=1.0, status="done", eta_seconds=0,
+            on_screen_caption="", posting_caption=posting_caption, platform_posts=platform_posts,
+            result=_result_for(job_id, meta, "", posting_caption, platform_posts),
+        )
+        _save_history(job_id, meta, "", posting_caption, transcript)
+        _save_platform_posts(job_id, platform_posts)
+        _b = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        notify.notify("Edit ready", (posting_caption or title)[:120], f"{_b}/editor#entry={job_id}" if _b else None)
+        storage.upload_many_async([(output_path, os.path.basename(output_path))])
+    except Exception as e:
+        print("FINISHED PIPELINE FAILED:", traceback.format_exc(), flush=True)
+        for p in (source_path, output_path):
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
+
+
+def _new_finished_job(angle: str = "") -> str:
+    job_id = str(uuid.uuid4())
+    with JOBS_LOCK:
+        JOBS[job_id] = {"stage": "downloading", "stage_label": "Receiving your video", "progress": 0.0, "status": "running",
+                        "angle": (angle or "").strip()[:1500], "wm_token": "", "wm_pos": "right", "campaign_id": "",
+                        "finished_edit": True}
+    return job_id
+
+
+def _finished_check(caption: str, use_ai: bool):
+    if not use_ai and not (caption or "").strip():
+        raise HTTPException(status_code=400, detail="Add your caption, or let the AI write platform versions for you.")
+
+
+class ProcessFinished(BaseModel):
+    key: str
+    filename: str = ""
+    caption: str = ""
+    ai: bool = True
+
+
+def _run_finished_pulled(job_id: str, key: str, path: str, filename: str, caption: str, use_ai: bool):
+    try:
+        _set_stage(job_id, "downloading", 0.0)
+        _pull_upload(key, path, lambda f: _set_stage(job_id, "downloading", f))
+    except Exception as e:
+        _set_job(job_id, stage="error", stage_label="Error", status="error", error=f"Couldn't fetch the uploaded file: {e}")
+        return
+    _run_finished_pipeline(job_id, path, filename, caption, use_ai)
+
+
+@app.post("/process-finished")
+def process_finished(req: ProcessFinished):
+    if not req.key.startswith("uploads/") or ".." in req.key:
+        raise HTTPException(status_code=400, detail="Bad key.")
+    _finished_check(req.caption, req.ai)
+    job_id = _new_finished_job()
+    path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
+    threading.Thread(target=_run_finished_pulled, args=(job_id, req.key, path, req.filename, req.caption, req.ai), daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.post("/process-finished-file")
+async def process_finished_file(file: UploadFile = File(...), caption: str = Form(""), ai: str = Form("1")):
+    use_ai = ai not in ("0", "false", "")
+    _finished_check(caption, use_ai)
+    job_id = _new_finished_job()
+    path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
+    try:
+        with open(path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+    finally:
+        await file.close()
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        _set_job(job_id, stage="error", stage_label="Error", status="error", error="Upload failed: no file data received.")
+        return {"job_id": job_id}
+    threading.Thread(target=_run_finished_pipeline, args=(job_id, path, file.filename or "", caption, use_ai), daemon=True).start()
     return {"job_id": job_id}
 
 

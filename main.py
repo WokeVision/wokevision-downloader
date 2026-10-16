@@ -3831,6 +3831,7 @@ class ExploreCfg(BaseModel):
     keywords: str = ""
     channels: str = ""
     subreddits: str = ""
+    hashtags: str = ""
     handles: str = ""
     outlets: str = ""
     push_min_score: int = 35

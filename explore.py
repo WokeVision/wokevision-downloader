@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import db
 
+MAX_DUR = 180   # seconds: the longest a clip can be and still post to every platform (YouTube Shorts / Reels / TikTok)
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 DEFAULT_SUBS = "PublicFreakout,nextfuckinglevel,funny,Unexpected,interestingasfuck,TikTokCringe,oddlysatisfying,Damnthatsinteresting"
 
@@ -121,6 +122,14 @@ def _insert(it):
                      it.get("embed"), it.get("duration"), json.dumps(it.get("stats") or {}), it["score"], it.get("topic")))
 
 
+def purge_unpostable():
+    """Drops waiting suggestions that are too long (or have no known length) to post on every platform."""
+    with db._conn() as conn:
+        cur = conn.cursor()
+        _init(cur)
+        cur.execute("DELETE FROM explore_items WHERE status='new' AND (duration IS NULL OR duration > %s)", (MAX_DUR,))
+
+
 def prune(days=30):
     """Old undecided/skipped suggestions don't pile up forever."""
     with db._conn() as conn:
@@ -153,6 +162,7 @@ DEFAULT_CFG = {
     "channels": ["@GBNEWS", "@FoxNews", "@DailyWire", "@PragerU", "@TuckerCarlson", "@TheBlaze", "@spikedonline", "@UnHerd",
                  "@piersmorganuncensored", "@triggerpod", "@SkyNews", "@RebelNewsOnline"],
     "subreddits": ["Conservative", "ukpolitics", "PublicFreakout", "Libertarian", "walkaway", "TikTokCringe", "AskUK"],
+    "hashtags": ["politics", "conservative", "ukpolitics", "woke", "immigration"],   # TikTok hashtags (best effort)
     "handles": [],            # full URLs: https://www.tiktok.com/@name, https://x.com/name, https://rumble.com/c/name ...
     "outlets": [],            # extra RSS feed URLs
     "push_min_score": 35,
@@ -201,7 +211,7 @@ def get_cfg():
 
 def save_cfg(new):
     cfg = {}
-    for k in ("keywords", "channels", "subreddits", "handles", "outlets"):
+    for k in ("keywords", "channels", "subreddits", "hashtags", "handles", "outlets"):
         v = new.get(k)
         if isinstance(v, str):
             v = [x.strip() for x in re.split(r"[\n,]", v) if x.strip()]
@@ -298,13 +308,15 @@ def _flat(url, n=8):
     return (info or {}).get("entries") or ([info] if info else [])
 
 
-def _yt_item(e, topic, source, base=0.0, extra_stats=None, need_niche=True):
+def _yt_item(e, topic, source, base=0.0, extra_stats=None, need_niche=True, assume_short=False):
     """Turns a yt-dlp flat entry into a candidate, or None if it's too long / off-niche."""
     vid = e.get("id")
     if not vid or e.get("_type") == "playlist":
         return None
     dur = e.get("duration")
-    if dur and dur > 600:
+    if dur is None and assume_short:
+        dur = 60          # Shorts-tab listings don't carry a length, but Shorts are at most 3 minutes
+    if not dur or dur > MAX_DUR:
         return None
     title = e.get("title") or ""
     rel = relevance(title + " " + topic)
@@ -419,7 +431,7 @@ def src_channels(cfg):
         for suffix in ("/shorts", "/videos"):
             try:
                 for e in _flat(url.rstrip("/") + suffix, 6):
-                    it = _yt_item(e, ch, "channels", base=12, need_niche=False)
+                    it = _yt_item(e, ch, "channels", base=12 + (6 if suffix == "/shorts" else 0), need_niche=False, assume_short=(suffix == "/shorts"))
                     if it:
                         res.append(it)
             except Exception:
@@ -438,7 +450,10 @@ def src_keywords(cfg):
     kws = cfg["keywords"][:14]
 
     def one(k):
-        return [i for i in (_yt_item(e, k, "keywords", base=6) for e in _yt_search(k, 6)) if i]
+        res = []
+        for q in (k + " #shorts", k):
+            res += [i for i in (_yt_item(e, k, "keywords", base=6) for e in _yt_search(q, 6)) if i]
+        return res
 
     out, errs = _parallel(one, kws, 4)
     if not out and errs:
@@ -464,6 +479,8 @@ def src_reddit(cfg):
                 last = f"HTTP {r.status_code}"
             if r is None or r.status_code != 200:
                 errors += 1; continue
+            if "json" not in (r.headers.get("content-type") or ""):
+                errors += 1; last = "blocked (sent a web page instead of data)"; continue
             for c in r.json().get("data", {}).get("children", []):
                 d = c.get("data") or {}
                 if d.get("stickied") or d.get("over_18"):
@@ -472,7 +489,7 @@ def src_reddit(cfg):
                 if not (d.get("is_video") and media):
                     continue
                 dur = media.get("duration")
-                if dur and dur > 300:
+                if not dur or dur > MAX_DUR:
                     continue
                 age_h = max(0.5, (now - (d.get("created_utc") or now)) / 3600)
                 ups = d.get("score") or 0
@@ -495,7 +512,7 @@ def src_reddit(cfg):
         except Exception as e:
             errors += 1; last = str(e)[:100]
     if subs and errors == len(subs):
-        raise RuntimeError(f"Reddit refused every request ({last})")
+        raise RuntimeError(f"Reddit blocks this server ({last})")
     return out
 
 
@@ -547,7 +564,61 @@ def src_handles(cfg):
     return out
 
 
-SOURCES = {"news": src_news, "channels": src_channels, "keywords": src_keywords, "reddit": src_reddit, "handles": src_handles}
+def src_dailymotion(cfg):
+    kws = cfg["keywords"][:10]
+
+    def one(k):
+        r = _get("https://api.dailymotion.com/videos", params={
+            "search": k, "sort": "trending", "limit": 10, "shorter_than": 3, "flags": "no_live,exportable",
+            "fields": "id,title,thumbnail_480_url,duration,views_total,url,owner.screenname"})
+        if r.status_code != 200:
+            raise RuntimeError(f"Dailymotion HTTP {r.status_code}")
+        res = []
+        for v in r.json().get("list", []):
+            dur = v.get("duration")
+            if not dur or dur > MAX_DUR:
+                continue
+            title = v.get("title") or ""
+            rel = relevance(title + " " + k)
+            if rel == 0:
+                continue
+            views = v.get("views_total") or 0
+            res.append({"source": "dailymotion", "ext_id": v["id"], "url": v.get("url") or f"https://www.dailymotion.com/video/{v['id']}",
+                        "title": title, "thumb": v.get("thumbnail_480_url"), "embed": None, "duration": dur, "topic": k,
+                        "stats": {"views": views, "channel": v.get("owner.screenname")},
+                        "_raw": 100 * (0.40 * _log_score(views, 5.5) + 0.30 * min(rel, 3) / 3) + 4})
+        return res
+
+    out, errs = _parallel(one, kws, 4)
+    if not out and errs:
+        raise RuntimeError(errs[0])
+    return out
+
+
+def src_hashtags(cfg):
+    tags = [t.strip().lstrip("#") for t in cfg.get("hashtags", []) if t.strip()][:10]
+    if not tags:
+        raise RuntimeError("no hashtags set (optional)")
+
+    def one(t):
+        res = []
+        for e in _flat(f"https://www.tiktok.com/tag/{t}", 12):
+            e = dict(e)
+            e.setdefault("webpage_url", e.get("url"))
+            it = _yt_item(e, "#" + t, "hashtags", base=8, need_niche=False)
+            if it:
+                res.append(it)
+        if not res:
+            raise RuntimeError(f"#{t}: nothing readable")
+        return res
+
+    out, errs = _parallel(one, tags, 3)
+    if not out:
+        raise RuntimeError("TikTok blocks this server (" + (errs[0] if errs else "no data") + ")")
+    return out
+
+
+SOURCES = {"news": src_news, "channels": src_channels, "keywords": src_keywords, "reddit": src_reddit, "dailymotion": src_dailymotion, "hashtags": src_hashtags, "handles": src_handles}
 
 
 # ---------------------------------------------------------------- scan
@@ -583,10 +654,17 @@ def scan():
         known_ids, known_urls = _known_ids_and_urls()
         seen_titles = set()
         added = 0
-        cands = [c for name in list(results) for c in list(results[name])]
-        cands.sort(key=lambda c: c.get("_raw", 0), reverse=True)
+        by_src = {}
+        for name in list(results):
+            by_src[name] = sorted(list(results[name]), key=lambda c: c.get("_raw", 0), reverse=True)
+        # Round-robin across sources so one big source (YouTube) can't crowd the rest out of the 60 slots.
+        cands, i = [], 0
+        while any(i < len(v) for v in by_src.values()):
+            for v in by_src.values():
+                if i < len(v):
+                    cands.append(v[i])
+            i += 1
         floor = 15
-        kept_below = 0
         for c in cands:
             iid = _mk_id(c["source"], c["ext_id"])
             norm = re.sub(r"\W+", " ", (c["title"] or "").lower()).strip()[:60]
@@ -604,6 +682,7 @@ def scan():
             if added >= 60:
                 break
         try:
+            purge_unpostable()
             prune()
         except Exception:
             pass

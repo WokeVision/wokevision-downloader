@@ -1,6 +1,8 @@
 import os
+import re
 import shutil
 import subprocess
+import requests
 import yt_dlp
 
 DOWNLOAD_DIR = "/tmp/downloads"
@@ -86,6 +88,46 @@ def _finish(raw_path: str, final_path: str):
         raise DownloadError("ffmpeg finished but no output file was produced")
 
 
+def _download_vreddit(url: str, final_path: str, progress_cb=None) -> dict:
+    """Reddit-hosted video (v.redd.it): yt-dlp wants a Reddit login for these, but the video and audio streams are public.
+    Reads the stream list, takes the best video up to 720p plus the audio track and joins them."""
+    m = re.search(r"v\.redd\.it/([a-z0-9]+)", url)
+    if not m:
+        raise DownloadError("Not a v.redd.it link")
+    base = f"https://v.redd.it/{m.group(1)}/"
+    hdr = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
+    mpd = requests.get(base + "DASHPlaylist.mpd", headers=hdr, timeout=20)
+    if mpd.status_code != 200:
+        raise DownloadError(f"Reddit video list HTTP {mpd.status_code}")
+    names = re.findall(r"<BaseURL>([^<]+)</BaseURL>", mpd.text)
+    vids = sorted(((int(re.search(r"DASH_(\d+)", n).group(1)), n) for n in names if re.match(r"DASH_\d+", n)), key=lambda t: t[0])
+    best = [n for h, n in vids if h <= 720] or [n for h, n in vids]
+    if not best:
+        raise DownloadError("No video stream found for this Reddit post")
+    audio = [n for n in names if "audio" in n.lower()]
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    vpath, apath = final_path + ".v.mp4", final_path + ".a.mp4"
+    try:
+        for name, path in ((best[-1], vpath),) + (((audio[0], apath),) if audio else ()):
+            r = requests.get(base + name, headers=hdr, timeout=60)
+            if r.status_code != 200:
+                if path == apath:
+                    audio = []
+                    continue
+                raise DownloadError(f"Reddit video HTTP {r.status_code}")
+            with open(path, "wb") as f:
+                f.write(r.content)
+        cmd = ["ffmpeg", "-y", "-i", vpath] + (["-i", apath] if audio and os.path.exists(apath) else []) + ["-c", "copy", "-movflags", "+faststart", final_path]
+        subprocess.run(cmd, check=True, capture_output=True)
+    finally:
+        for p in (vpath, apath):
+            if os.path.exists(p):
+                os.remove(p)
+    if progress_cb:
+        progress_cb(1.0)
+    return {"title": "", "description": "", "uploader": "", "uploader_id": "", "channel": "", "source_url": url, "method": "reddit-direct"}
+
+
 def download_video(url: str, final_path: str, progress_cb=None) -> dict:
     """Downloads `url` to `final_path` as a faststart mp4. Returns a metadata
     dict with 'title', 'description' and 'method' (whichever attempt
@@ -98,6 +140,12 @@ def download_video(url: str, final_path: str, progress_cb=None) -> dict:
     several times across different fallback attempts if earlier ones fail
     partway through."""
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    if "v.redd.it/" in url:
+        try:
+            return _download_vreddit(url, final_path, progress_cb)
+        except Exception as e:
+            print(f"REDDIT DIRECT FAILED: {e}", flush=True)
+            raise DownloadError(f"Reddit video: {e}")
     raw_path = final_path + ".raw.mp4"
     cookies = _writable_cookies()
     is_youtube = "youtube.com" in url or "youtu.be" in url

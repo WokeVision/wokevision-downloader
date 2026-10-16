@@ -104,7 +104,7 @@ document.getElementById("grid").addEventListener("click",function(e){
     var b="/api/explore/"+i.id;fetch(b+"/preview",{method:"POST"});
     var tm=setInterval(function(){fetch(b+"/preview-status").then(function(r){return r.json();}).then(function(s){
       if(s.state==="ready"){clearInterval(tm);p.innerHTML='<video src="'+b+'/preview.mp4" controls autoplay playsinline></video>';}
-      else if(s.state==="error"){clearInterval(tm);delete p.dataset.busy;lab.textContent="Preview failed — open original";}});},2500);}
+      else if(s.state==="error"){clearInterval(tm);delete p.dataset.busy;if(i.embed==="youtube"){var id=i.url.split("v=")[1];p.innerHTML='<iframe src="https://www.youtube.com/embed/'+encodeURIComponent(id)+'?autoplay=1" allow="autoplay; encrypted-media" allowfullscreen></iframe>';}else lab.textContent="Preview failed — open original";}});},2500);}
 });
 var CFG_KEYS=["keywords","channels","subreddits","hashtags","telegram","handles","outlets"];
 document.getElementById("tune").onclick=function(){var c=document.getElementById("cfg");if(c.style.display==="block"){c.style.display="none";return;}

@@ -162,6 +162,7 @@ DEFAULT_CFG = {
     "channels": ["@GBNEWS", "@FoxNews", "@DailyWire", "@PragerU", "@TuckerCarlson", "@TheBlaze", "@spikedonline", "@UnHerd",
                  "@piersmorganuncensored", "@triggerpod", "@SkyNews", "@RebelNewsOnline"],
     "subreddits": ["Conservative", "ukpolitics", "PublicFreakout", "Libertarian", "walkaway", "TikTokCringe", "AskUK"],
+    "telegram": [],           # public Telegram channel names (t.me/s/<name>) -- optional
     "hashtags": ["politics", "conservative", "ukpolitics", "woke", "immigration"],   # TikTok hashtags (best effort)
     "handles": [],            # full URLs: https://www.tiktok.com/@name, https://x.com/name, https://rumble.com/c/name ...
     "outlets": [],            # extra RSS feed URLs
@@ -211,7 +212,7 @@ def get_cfg():
 
 def save_cfg(new):
     cfg = {}
-    for k in ("keywords", "channels", "subreddits", "hashtags", "handles", "outlets"):
+    for k in ("keywords", "channels", "subreddits", "hashtags", "telegram", "handles", "outlets"):
         v = new.get(k)
         if isinstance(v, str):
             v = [x.strip() for x in re.split(r"[\n,]", v) if x.strip()]
@@ -392,8 +393,12 @@ def news_stories(cfg):
     return clusters, errs, len(heads)
 
 
+_NEWS = {"v": None}
+RADAR = {"topics": []}
+
+
 def src_news(cfg):
-    clusters, errs, nheads = news_stories(cfg)
+    clusters, errs, nheads = _NEWS["v"] or news_stories(cfg)
     if not nheads:
         raise RuntimeError("no news feeds answered: " + "; ".join(errs[:3]))
     clusters = [c for c in clusters if c["rel"] > 0 or c["n"] >= 3]
@@ -418,6 +423,124 @@ def src_news(cfg):
     if not out and e2:
         raise RuntimeError("YouTube search failed: " + e2[0])
     return out
+
+
+
+# ---------------------------------------------------------------- trend radar: what is hot right now in the niche
+
+def _niche_text(t):
+    return relevance(t) > 0
+
+
+def radar(cfg):
+    """Polls Google Trends, Wikipedia's most-read list, Google search suggestions and the news clusters, keeps only
+    what is on-niche, and returns [{topic, strength, via}] strongest first. Used to widen the searches and to boost
+    clips that match what is being talked about today."""
+    found, status = [], {}
+    clusters, _e, nheads = _NEWS["v"] or ([], [], 0)
+    news_blob = " ".join(" ".join(c["titles"]) for c in clusters).lower()
+
+    # a) Google Trends (GB + US daily RSS)
+    try:
+        n = 0
+        for geo in ("GB", "US"):
+            r = _get(f"https://trends.google.com/trending/rss?geo={geo}")
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code}")
+            root = ET.fromstring(r.content)
+            for item in root.iter("item"):
+                t = (item.findtext("title") or "").strip()
+                traffic, newst = "", []
+                for ch in item.iter():
+                    tag = ch.tag.split("}")[-1]
+                    if tag == "approx_traffic":
+                        traffic = (ch.text or "").strip()
+                    elif tag == "news_item_title":
+                        newst.append(ch.text or "")
+                if t and (_niche_text(t + " " + " ".join(newst)) or t.lower() in news_blob):
+                    digits = re.sub(r"\D", "", traffic) or "0"
+                    found.append({"topic": t, "strength": 30 + min(25, 5 * math.log10(max(10, int(digits)))), "via": "Google Trends"})
+                    n += 1
+        status["trends"] = n
+    except Exception as e:
+        status["trends"] = f"failed: {str(e)[:60]}"
+
+    # b) Wikipedia most-read (names in today's news that people look up)
+    try:
+        n = 0
+        for back in (1, 2, 3):
+            d = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=back)
+            r = _get(f"https://wikimedia.org/api/rest_v1/metrics/pageviews/top/en.wikipedia/all-access/{d:%Y/%m/%d}")
+            if r.status_code == 200:
+                for a in r.json()["items"][0]["articles"][:120]:
+                    title = a["article"].replace("_", " ")
+                    if title.startswith(("Main Page", "Special:", "Wikipedia:", "Portal:", "File:", "Category:")):
+                        continue
+                    if _niche_text(title) or (len(title) > 5 and title.lower() in news_blob):
+                        found.append({"topic": title, "strength": 25 + min(20, 4 * math.log10(max(10, a["views"]))), "via": "Wikipedia"})
+                        n += 1
+                break
+        status["wikipedia"] = n
+    except Exception as e:
+        status["wikipedia"] = f"failed: {str(e)[:60]}"
+
+    # c) Google search suggestions = what people are typing about the seed topics right now
+    try:
+        n = 0
+
+        def sug(k):
+            r = _get("https://suggestqueries.google.com/complete/search", params={"client": "firefox", "q": k, "hl": "en-GB", "gl": "gb"})
+            return [(k, x) for x in r.json()[1][:4] if _niche_text(x)]
+
+        res, _ = _parallel(sug, cfg["keywords"][:10], 5)
+        for k, x in res:
+            found.append({"topic": x, "strength": 18, "via": "Google searches"})
+            n += 1
+        status["suggest"] = n
+    except Exception as e:
+        status["suggest"] = f"failed: {str(e)[:60]}"
+
+    # d) stories many outlets are running
+    for c in sorted(clusters, key=lambda c: -c["n"])[:8]:
+        if c["n"] >= 2 and (c["rel"] > 0 or c["n"] >= 3):
+            found.append({"topic": c["title"][:90], "strength": 22 + 8 * min(c["n"], 5), "via": f"{c['n']} outlets"})
+
+    # merge near-duplicates (same name/words), add strengths, keep the best 15
+    merged = []
+    for f in sorted(found, key=lambda f: -f["strength"]):
+        tk = _tokens(f["topic"])
+        for m in merged:
+            if tk and (len(tk & m["_tk"]) >= 2 or tk <= m["_tk"] or m["_tk"] <= tk):
+                m["strength"] += 8; m["via"] += " + " + f["via"] if f["via"] not in m["via"] else ""
+                break
+        else:
+            merged.append({**f, "_tk": tk})
+    merged.sort(key=lambda m: -m["strength"])
+    out = [{"topic": m["topic"], "strength": min(100, round(m["strength"])), "via": m["via"]} for m in merged[:15]]
+    return out, status
+
+
+def radar_hit(title):
+    """The hot topic this title is about (needs 2 shared words, or 1 for a one-word topic), else None."""
+    tk = _tokens(title)
+    best = None
+    for r in RADAR["topics"]:
+        rt = _tokens(r["topic"])
+        if not rt:
+            continue
+        need = 1 if len(rt) == 1 else 2
+        if len(tk & rt) >= need and (best is None or r["strength"] > best["strength"]):
+            best = r
+    return best
+
+
+def _search_terms(cfg):
+    """Your fixed topics plus today's hottest radar topics."""
+    terms = list(cfg["keywords"][:14])
+    for r in RADAR["topics"][:8]:
+        if r["topic"] not in terms:
+            terms.append(r["topic"][:70])
+    return terms
 
 
 def src_channels(cfg):
@@ -447,7 +570,7 @@ def src_channels(cfg):
 
 
 def src_keywords(cfg):
-    kws = cfg["keywords"][:14]
+    kws = _search_terms(cfg)[:22]
 
     def one(k):
         res = []
@@ -565,7 +688,7 @@ def src_handles(cfg):
 
 
 def src_dailymotion(cfg):
-    kws = cfg["keywords"][:10]
+    kws = _search_terms(cfg)[:14]
 
     def one(k):
         r = _get("https://api.dailymotion.com/videos", params={
@@ -618,7 +741,86 @@ def src_hashtags(cfg):
     return out
 
 
-SOURCES = {"news": src_news, "channels": src_channels, "keywords": src_keywords, "reddit": src_reddit, "dailymotion": src_dailymotion, "hashtags": src_hashtags, "handles": src_handles}
+def src_odysee(cfg):
+    """Odysee has an open search API and is popular with centre-right / free-speech creators."""
+    kws = _search_terms(cfg)[:12]
+
+    def one(k):
+        res = []
+        for extra in ({"release_time": ">" + str(int(time.time()) - 4 * 86400)}, {}):
+            r = requests.post("https://api.na-backend.odysee.com/api/v1/proxy?m=claim_search", headers={"User-Agent": UA}, timeout=15, json={
+                "jsonrpc": "2.0", "method": "claim_search", "id": 1,
+                "params": {"text": k, "claim_type": ["stream"], "stream_types": ["video"], "order_by": ["trending_group", "trending_mixed"],
+                           "page_size": 20, "no_totals": True, "has_source": True, **extra}})
+            if r.status_code != 200:
+                raise RuntimeError(f"Odysee HTTP {r.status_code}")
+            items = (r.json().get("result") or {}).get("items") or []
+            if items:
+                break
+        for it in items:
+            v = it.get("value") or {}
+            dur = (v.get("video") or {}).get("duration")
+            if not dur or dur > MAX_DUR:
+                continue
+            title = v.get("title") or ""
+            rel = relevance(title + " " + k)
+            if rel == 0:
+                continue
+            canon = (it.get("canonical_url") or "").replace("lbry://", "").replace("#", ":")
+            if not canon:
+                continue
+            support = float((it.get("meta") or {}).get("effective_amount") or 0)
+            res.append({"source": "odysee", "ext_id": it["claim_id"], "url": "https://odysee.com/" + canon, "title": title,
+                        "thumb": (v.get("thumbnail") or {}).get("url"), "embed": None, "duration": dur, "topic": k,
+                        "stats": {"channel": (it.get("signing_channel") or {}).get("name")},
+                        "_raw": 100 * (0.30 * min(rel, 3) / 3 + 0.25 * _log_score(support * 10, 4)) + 6})
+        return res
+
+    out, errs = _parallel(one, kws, 4)
+    if not out and errs:
+        raise RuntimeError(errs[0])
+    return out
+
+
+def src_telegram(cfg):
+    chans = [c.strip().lstrip("@").replace("https://t.me/", "").replace("s/", "") for c in cfg.get("telegram", []) if c.strip()][:15]
+    if not chans:
+        raise RuntimeError("no Telegram channels added (optional)")
+
+    def one(ch):
+        r = _get(f"https://t.me/s/{ch}")
+        if r.status_code != 200:
+            raise RuntimeError(f"{ch}: HTTP {r.status_code}")
+        res = []
+        for blk in r.text.split('class="tgme_widget_message_wrap')[1:]:
+            post = re.search(r'data-post="([^"]+)"', blk)
+            vid = re.search(r'<video[^>]+src="([^"]+)"', blk)
+            if not post or not vid:
+                continue
+            dm = re.search(r'message_video_duration[^>]*>(\d+):(\d+)', blk)
+            dur = int(dm.group(1)) * 60 + int(dm.group(2)) if dm else None
+            if not dur or dur > MAX_DUR:
+                continue
+            txt = re.sub(r"<[^>]+>", " ", (re.search(r'tgme_widget_message_text[^>]*>(.*?)</div>', blk, re.S) or [None, ""])[1])
+            title = re.sub(r"\s+", " ", txt).strip()[:200] or f"Video from {ch}"
+            th = re.search(r"background-image:url\('([^']+)'\)", blk)
+            vw = re.search(r'message_views">([\d.,KM]+)<', blk)
+            v = 0
+            if vw:
+                x = vw.group(1).replace(",", "")
+                v = int(float(x[:-1]) * (1000 if x[-1] == "K" else 1000000)) if x[-1] in "KM" else int(float(x))
+            res.append({"source": "telegram", "ext_id": post.group(1), "url": "https://t.me/" + post.group(1), "title": title,
+                        "thumb": th.group(1) if th else None, "preview_url": vid.group(1), "embed": "video", "duration": dur, "topic": "t.me/" + ch,
+                        "stats": {"views": v}, "_raw": 100 * (0.35 * _log_score(v, 5.5) + 0.25 * min(relevance(title), 3) / 3) + 10})
+        return res
+
+    out, errs = _parallel(one, chans, 4)
+    if not out:
+        raise RuntimeError("; ".join(errs[:2]) or "no short videos found")
+    return out
+
+
+SOURCES = {"news": src_news, "channels": src_channels, "keywords": src_keywords, "reddit": src_reddit, "dailymotion": src_dailymotion, "odysee": src_odysee, "telegram": src_telegram, "hashtags": src_hashtags, "handles": src_handles}
 
 
 # ---------------------------------------------------------------- scan
@@ -631,6 +833,19 @@ def scan():
     try:
         cfg = get_cfg()
         results, status = {}, {}
+        try:
+            _NEWS["v"] = news_stories(cfg)
+        except Exception:
+            _NEWS["v"] = None
+        try:
+            RADAR["topics"], rstat = radar(cfg)
+            status["radar"] = {"ok": any(isinstance(v, int) and v for v in rstat.values()) or bool(RADAR["topics"]), "found": len(RADAR["topics"]),
+                               "detail": ", ".join(f"{k} {v}" for k, v in rstat.items())}
+            if not status["radar"]["ok"]:
+                status["radar"]["error"] = status["radar"]["detail"]
+        except Exception as e:
+            RADAR["topics"] = []
+            status["radar"] = {"ok": False, "error": str(e)[:160]}
 
         def _run(name, fn):
             t0 = time.time()
@@ -674,6 +889,10 @@ def scan():
             if iid in known_ids or c["url"] in known_urls or dup_title:
                 continue
             c["id"] = iid
+            hot = radar_hit(c["title"])
+            if hot:
+                c["_raw"] = c.get("_raw", 0) + 15
+                c.setdefault("stats", {})["hot"] = hot["topic"][:60]
             c["score"] = round(max(0.0, min(100.0, c.get("_raw", 0))), 1)
             if c["score"] < floor:
                 continue
@@ -689,7 +908,8 @@ def scan():
         LAST_SCAN.update({"at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "sources": status, "added": added,
                           "candidates": len(cands)})
         try:
-            _kv_set("explore_last_scan", json.dumps({k: LAST_SCAN[k] for k in ("at", "sources", "added", "candidates")}))
+            LAST_SCAN["radar"] = RADAR["topics"]
+            _kv_set("explore_last_scan", json.dumps({k: LAST_SCAN[k] for k in ("at", "sources", "added", "candidates", "radar")}))
         except Exception:
             pass
         return LAST_SCAN

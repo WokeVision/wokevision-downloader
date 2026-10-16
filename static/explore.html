@@ -37,6 +37,7 @@
     <div class="meta" style="margin-bottom:8px">One item per line (or comma separated). Changes apply on the next scan.</div>
     <label class="meta">Topics / search terms (YouTube + Google News)</label><textarea id="c_keywords"></textarea>
     <label class="meta">YouTube channels to watch (@handle or URL)</label><textarea id="c_channels"></textarea>
+    <label class="meta">Public Telegram channels to watch (names)</label><textarea id="c_telegram"></textarea>
     <label class="meta">TikTok hashtags (best effort)</label><textarea id="c_hashtags"></textarea>
     <label class="meta">Subreddits</label><textarea id="c_subreddits"></textarea>
     <label class="meta">Other accounts: full links to TikTok / X / Instagram / Rumble profiles (best effort — those sites often block servers)</label><textarea id="c_handles"></textarea>
@@ -44,7 +45,7 @@
     <label class="meta">Only send a phone alert for clips scoring at least</label><input id="c_push" type="number" min="0" max="100" style="width:90px">
     <div style="margin-top:10px"><button class="btn accent" id="cfgSave">Save</button> <span class="meta" id="cfgMsg"></span></div>
   </div>
-  <div id="warn"></div><div class="src" id="src"></div>
+  <div id="warn"></div><div id="radar" class="src"></div><div class="src" id="src"></div>
   <div class="grid" id="grid"></div>
 </div>
 <script>
@@ -55,7 +56,7 @@ function nfmt(n){n=+n||0;return n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?Math.round(
 function plat(u){var d=(u||'').toLowerCase();return d.indexOf('youtu')>-1?'YouTube':d.indexOf('reddit')>-1?'Reddit':d.indexOf('dailymotion')>-1?'Dailymotion':d.indexOf('tiktok')>-1?'TikTok':d.indexOf('rumble')>-1?'Rumble':d.indexOf('x.com')>-1||d.indexOf('twitter')>-1?'X':d.indexOf('instagram')>-1?'Instagram':'Web';}
 function statLine(i){var s=i.stats||{},p=[plat(i.url)];
   if(s.upvotes)p.push(nfmt(s.upvotes)+" upvotes");if(s.per_hour)p.push(nfmt(s.per_hour)+"/hr");if(s.views)p.push(nfmt(s.views)+" views");
-  if(s.trend_traffic)p.push("trend "+s.trend_traffic);if(s.channel)p.push(s.channel);return p.join(" · ");}
+  if(s.hot)p.push("🔥 "+s.hot);if(s.trend_traffic)p.push("trend "+s.trend_traffic);if(s.channel)p.push(s.channel);return p.join(" · ");}
 function card(i){
   var bg=i.thumb?' style="background-image:url(\''+esc(i.thumb)+'\')"':"";
   var acts=i.status==="new"?'<button class="btn accent" data-a="approve" data-id="'+i.id+'">Send to editor</button><button class="btn" data-a="skip" data-id="'+i.id+'">Skip</button>'
@@ -72,6 +73,7 @@ function load(){
     var ls=d.last_scan||{},src=ls.sources||{},h=[];
     Object.keys(src).forEach(function(k){var s=src[k];h.push(s.ok?'<b>'+k+'</b> '+s.found+' found':'<span class="bad"><b>'+k+'</b> '+esc(s.error)+'</span>');});
     document.getElementById("src").innerHTML=ls.running?"Scanning…":(ls.at?"Last scan "+new Date(ls.at).toLocaleString()+" · "+ls.added+" new"+(ls.candidates!=null?" of "+ls.candidates+" candidates":"")+"<br>"+h.join(" · "):"No scan since the server started. It scans automatically every few hours.");
+    document.getElementById("radar").innerHTML=(ls.radar&&ls.radar.length)?'<b>Hot right now:</b> '+ls.radar.slice(0,10).map(function(r){return '<span style="display:inline-block;background:rgba(255,255,255,.08);border-radius:999px;padding:2px 10px;margin:2px 4px 2px 0" title="'+esc(r.via)+'">🔥 '+esc(r.topic)+'</span>';}).join(""):"";
     var w="";
     if(!d.push)w+='<div class="warn">Phone notifications are off — set NTFY_TOPIC (or Telegram) on the server to get approve / skip alerts.</div>';
     if(!d.timer_configured)w+='<div class="warn">Automatic scans need the outside timer (CRON_SECRET) that also drives scheduled posts — it isn\'t set, so only Scan now works.</div>';
@@ -98,7 +100,7 @@ document.getElementById("grid").addEventListener("click",function(e){
       if(s.state==="ready"){clearInterval(tm);p.innerHTML='<video src="'+b+'/preview.mp4" controls autoplay playsinline></video>';}
       else if(s.state==="error"){clearInterval(tm);delete p.dataset.busy;lab.textContent="Preview failed — open original";}});},2500);}
 });
-var CFG_KEYS=["keywords","channels","subreddits","hashtags","handles","outlets"];
+var CFG_KEYS=["keywords","channels","subreddits","hashtags","telegram","handles","outlets"];
 document.getElementById("tune").onclick=function(){var c=document.getElementById("cfg");if(c.style.display==="block"){c.style.display="none";return;}
   fetch("/api/explore/config").then(function(r){return r.json();}).then(function(d){CFG_KEYS.forEach(function(k){document.getElementById("c_"+k).value=(d.config[k]||[]).join("\n");});
     document.getElementById("c_push").value=d.config.push_min_score;c.style.display="block";});};

@@ -100,7 +100,7 @@ def _download_vreddit(url: str, final_path: str, progress_cb=None) -> dict:
     if mpd.status_code != 200:
         raise DownloadError(f"Reddit video list HTTP {mpd.status_code}")
     names = re.findall(r"<BaseURL>([^<]+)</BaseURL>", mpd.text)
-    vids = sorted(((int(re.search(r"DASH_(\d+)", n).group(1)), n) for n in names if re.match(r"DASH_\d+", n)), key=lambda t: t[0])
+    vids = sorted(((int(re.search(r"(?:DASH|CMAF)_(\d+)", n).group(1)), n) for n in names if re.match(r"(?:DASH|CMAF)_\d+", n)), key=lambda t: t[0])
     best = [n for h, n in vids if h <= 720] or [n for h, n in vids]
     if not best:
         raise DownloadError("No video stream found for this Reddit post")

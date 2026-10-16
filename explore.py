@@ -193,7 +193,7 @@ NICHE_WORDS = [
     "conservative", "republican", "democrat", "trump", "biden", "harris", "vance", "left-wing", "leftist", "liberal", "progressive", "marxist", "socialis",
     "net zero", "climate", "bbc", "mainstream media", "msm", "fact check", "propaganda", "protest", "antisemit", "palestin", "hamas", "israel",
     "feminis", "masculin", "men ", "family", "birth rate", "tax", "welfare", "benefits", "nhs", "university", "campus", "teacher", "school",
-    "mayor", "sadiq", "khan", "supreme court", "judge", "arrest", "jail", "prison", "free speech", "online safety", "lucy connolly", "tommy robinson",
+    "mayor of london", "sadiq khan", "supreme court", "judge", "arrest", "jail", "prison", "free speech", "online safety", "lucy connolly", "tommy robinson",
 ]
 STOP = set("the a an and or of to in on for with at by from is are was were be been it its this that these those as but not no yes after over about into out up "
            "says said say will would could should may might has have had having more most than then just also new news latest live video watch how why what who "
@@ -332,7 +332,7 @@ def _yt_item(e, topic, source, base=0.0, extra_stats=None, need_niche=True, assu
     if not dur or dur > MAX_DUR:
         return None
     title = e.get("title") or ""
-    rel = relevance(title + " " + topic)
+    rel = relevance(title)
     if need_niche and rel == 0 and base < 10:
         return None
     views = e.get("view_count") or 0
@@ -650,11 +650,11 @@ def src_reddit(cfg):
                 if dur > MAX_DUR:
                     dbg["long"] += 1
                     continue
-                rel = relevance(title + " " + sub)
+                rel = relevance(title)
                 out.append({
                     "source": "reddit", "ext_id": vid, "url": link, "title": title, "thumb": th.get("url") if th is not None else None,
                     "embed": None, "duration": round(dur), "topic": f"r/{sub}",
-                    "stats": {"top_rank": rank, "subreddit": sub},
+                    "stats": {"top_rank": rank, "subreddit": sub, "dl": f"https://v.redd.it/{vid}"},
                     "_raw": 100 * (0.30 * max(0, 1 - rank / 50) + 0.30 * min(rel, 3) / 3) + 8,
                 })
         except Exception as e:
@@ -730,7 +730,7 @@ def src_dailymotion(cfg):
             if not dur or dur > MAX_DUR:
                 continue
             title = v.get("title") or ""
-            rel = relevance(title + " " + k)
+            rel = relevance(title)
             if rel == 0:
                 continue
             views = v.get("views_total") or 0
@@ -791,7 +791,7 @@ def src_odysee(cfg):
             if not dur or dur > MAX_DUR:
                 continue
             title = v.get("title") or ""
-            rel = relevance(title + " " + k)
+            rel = relevance(title)
             if rel == 0:
                 continue
             canon = (it.get("canonical_url") or "").replace("lbry://", "").replace("#", ":")

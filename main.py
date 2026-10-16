@@ -3915,7 +3915,7 @@ def _preview_start(iid: str):
         _PREVIEW[iid] = {"state": "ready"}
     elif _PREVIEW.get(iid, {}).get("state") != "running":
         _PREVIEW[iid] = {"state": "running"}
-        threading.Thread(target=_build_preview, args=(iid, it["url"]), daemon=True).start()
+        threading.Thread(target=_build_preview, args=(iid, (it.get("stats") or {}).get("dl") or it["url"]), daemon=True).start()
     return _PREVIEW.get(iid)
 
 
@@ -3966,7 +3966,7 @@ def _explore_decide(iid: str, action: str):
         return {"ok": True, "job_id": it.get("job_id"), "already": True}
     if action == "approve":
         angle = f"Found trending ({it.get('topic') or it.get('source')}): {it.get('title') or ''}"
-        job_id = _start_edit_job(it["url"], angle)
+        job_id = _start_edit_job((it.get("stats") or {}).get("dl") or it["url"], angle)
         explore.set_status(iid, "approved", job_id)
         db.audit("explore_approve", (it.get("title") or "")[:120])
         return {"ok": True, "job_id": job_id}

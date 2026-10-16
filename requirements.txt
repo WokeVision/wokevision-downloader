@@ -1,7 +1,7 @@
 fastapi
 python-multipart
 uvicorn[standard]
-yt-dlp
+yt-dlp[curl-cffi]
 pytubefix
 pydantic
 requests

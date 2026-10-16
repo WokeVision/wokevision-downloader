@@ -53,7 +53,7 @@ var status = "new", timer = null, platFilter = "";
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
 function fmtDur(s){if(!s)return"";s=Math.round(s);return Math.floor(s/60)+":"+("0"+s%60).slice(-2);}
 function nfmt(n){n=+n||0;return n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?Math.round(n/1e3)+"k":""+n;}
-function plat(u){var d=(u||'').toLowerCase();return d.indexOf('youtu')>-1?'YouTube':d.indexOf('reddit')>-1?'Reddit':d.indexOf('dailymotion')>-1?'Dailymotion':d.indexOf('tiktok')>-1?'TikTok':d.indexOf('rumble')>-1?'Rumble':d.indexOf('x.com')>-1||d.indexOf('twitter')>-1?'X':d.indexOf('instagram')>-1?'Instagram':'Web';}
+function plat(u){var d=(u||'').toLowerCase();return d.indexOf('youtu')>-1?'YouTube':d.indexOf('reddit')>-1?'Reddit':d.indexOf('dailymotion')>-1?'Dailymotion':d.indexOf('odysee')>-1?'Odysee':d.indexOf('t.me')>-1?'Telegram':d.indexOf('tiktok')>-1?'TikTok':d.indexOf('rumble')>-1?'Rumble':d.indexOf('x.com')>-1||d.indexOf('twitter')>-1?'X':d.indexOf('instagram')>-1?'Instagram':'Web';}
 function statLine(i){var s=i.stats||{},p=[plat(i.url)];
   if(s.upvotes)p.push(nfmt(s.upvotes)+" upvotes");if(s.per_hour)p.push(nfmt(s.per_hour)+"/hr");if(s.views)p.push(nfmt(s.views)+" views");
   if(s.hot)p.push("🔥 "+s.hot);if(s.trend_traffic)p.push("trend "+s.trend_traffic);if(s.channel)p.push(s.channel);return p.join(" · ");}
@@ -77,7 +77,7 @@ function load(){
     var ls=d.last_scan||{},src=ls.sources||{},h=[];
     Object.keys(src).forEach(function(k){var s=src[k];h.push(s.ok?'<b>'+k+'</b> '+s.found+' found':(/optional/.test(s.error||'')?'<span style="opacity:.6"><b>'+k+'</b> off</span>':'<span class="bad"><b>'+k+'</b> '+esc(s.error)+'</span>'));});
     document.getElementById("src").innerHTML=ls.running?"Scanning…":(ls.at?"Last scan "+new Date(ls.at).toLocaleString()+" · "+ls.added+" new"+(ls.candidates!=null?" of "+ls.candidates+" candidates":"")+"<br>"+h.join(" · "):"No scan since the server started. It scans automatically every few hours.");
-    document.getElementById("radar").innerHTML=(ls.radar&&ls.radar.length)?'<b>Hot right now:</b> '+ls.radar.slice(0,10).map(function(r){return '<span style="display:inline-block;background:rgba(255,255,255,.08);border-radius:999px;padding:2px 10px;margin:2px 4px 2px 0" title="'+esc(r.via)+'">🔥 '+esc(r.topic)+'</span>';}).join(""):"";
+    document.getElementById("radar").innerHTML=(ls.radar&&ls.radar.length)?'<b>Hot right now:</b> '+ls.radar.slice(0,10).map(function(r){return '<span style="display:inline-block;background:rgba(255,255,255,.08);border-radius:999px;padding:2px 10px;margin:2px 4px 2px 0" title="'+esc(r.via)+'">🔥 '+esc(r.topic.length>55?r.topic.slice(0,55)+'…':r.topic)+'</span>';}).join(""):"";
     var w="";
     if(!d.push)w+='<div class="warn">Phone notifications are off — set NTFY_TOPIC (or Telegram) on the server to get approve / skip alerts.</div>';
     if(!d.timer_configured)w+='<div class="warn">Automatic scans need the outside timer (CRON_SECRET) that also drives scheduled posts — it isn\'t set, so only Scan now works.</div>';

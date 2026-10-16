@@ -31,6 +31,7 @@ import storage
 import insights
 import scheduler
 import accounts
+import explore
 from platforms import instagram, threads, youtube, x, tiktok, facebook
 
 try:
@@ -3790,6 +3791,167 @@ def clip_watch_remove(wid: str):
     return {"ok": True}
 
 
+# --- Explore: clips the app finds by itself -------------------------------------
+
+def _start_edit_job(url: str, angle: str = "") -> str:
+    job_id = str(uuid.uuid4())
+    final_source_path = os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
+    with JOBS_LOCK:
+        JOBS[job_id] = {"stage": "queued", "stage_label": "Queued", "progress": 0.0, "status": "running", "angle": (angle or "").strip()[:1500],
+                        "wm_token": "", "wm_pos": "right", "campaign_id": ""}
+    threading.Thread(target=_run_download_then_pipeline, args=(job_id, url, final_source_path), daemon=True).start()
+    return job_id
+
+
+def _explore_public(it):
+    return {k: it.get(k) for k in ("id", "source", "url", "title", "thumb", "preview_url", "embed", "duration", "stats", "score", "topic", "status", "job_id", "created_at")}
+
+
+@app.get("/explore")
+def explore_page():
+    return FileResponse("static/explore.html")
+
+
+@app.get("/api/explore")
+def explore_list(status: str = "new"):
+    if status not in ("new", "approved", "skipped", "all"):
+        status = "new"
+    return {"items": [_explore_public(i) for i in explore.list_items(status)], "last_scan": explore.LAST_SCAN,
+            "push": notify.configured()}
+
+
+@app.post("/api/explore/scan")
+def explore_scan_now():
+    if explore.LAST_SCAN.get("running"):
+        return {"ok": True, "running": True}
+    threading.Thread(target=_explore_scan_and_notify, kwargs={"notify_phone": False}, daemon=True).start()
+    return {"ok": True, "running": True}
+
+
+def _explore_decide(iid: str, action: str):
+    it = explore.get_item(iid)
+    if not it:
+        raise HTTPException(status_code=404, detail="That suggestion no longer exists.")
+    if it["status"] == "approved" and action == "approve":
+        return {"ok": True, "job_id": it.get("job_id"), "already": True}
+    if action == "approve":
+        angle = f"Found trending ({it.get('topic') or it.get('source')}): {it.get('title') or ''}"
+        job_id = _start_edit_job(it["url"], angle)
+        explore.set_status(iid, "approved", job_id)
+        db.audit("explore_approve", (it.get("title") or "")[:120])
+        return {"ok": True, "job_id": job_id}
+    explore.set_status(iid, "skipped")
+    return {"ok": True}
+
+
+@app.post("/api/explore/{iid}/{action}")
+def explore_decide(iid: str, action: str):
+    if action not in ("approve", "skip"):
+        raise HTTPException(status_code=404, detail="Unknown action.")
+    return _explore_decide(iid, action)
+
+
+@app.post("/api/public/explore/{iid}/{action}")
+def explore_decide_public(iid: str, action: str, t: str = ""):
+    """Target of the phone notification buttons -- no login cookie there, so each link carries its own signed token."""
+    if action not in ("approve", "skip") or not explore.token_ok(iid, action, t):
+        raise HTTPException(status_code=403, detail="Bad or expired link.")
+    return _explore_decide(iid, action)
+
+
+@app.get("/api/public/explore/{iid}")
+def explore_review_page(iid: str, t: str = ""):
+    """What the notification opens: a one-clip preview with Yes / No. (Buttons POST, so link previewers can't approve by accident.)"""
+    if not explore.token_ok(iid, "view", t):
+        raise HTTPException(status_code=403, detail="Bad or expired link.")
+    it = explore.get_item(iid)
+    if not it:
+        return Response("<p style='font-family:sans-serif;padding:24px'>That suggestion is gone.</p>", media_type="text/html")
+    import html as _html
+    e = _html.escape
+    vid = ""
+    if it.get("embed") == "youtube":
+        vid = f'<iframe src="https://www.youtube.com/embed/{e(it["url"].split("v=")[-1])}" allowfullscreen style="width:100%;aspect-ratio:16/9;border:0;border-radius:12px"></iframe>'
+    elif it.get("preview_url"):
+        vid = f'<video src="{e(it["preview_url"])}" poster="{e(it.get("thumb") or "")}" controls playsinline muted style="width:100%;border-radius:12px;background:#000"></video>'
+    elif it.get("thumb"):
+        vid = f'<img src="{e(it["thumb"])}" style="width:100%;border-radius:12px">'
+    done = it["status"] != "new"
+    ta, ts = explore.token(iid, "approve"), explore.token(iid, "skip")
+    page = f"""<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Suggested clip</title>
+<style>body{{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0A0A0C;color:#F5F5F7;margin:0;padding:18px;max-width:560px;margin:auto}}
+h1{{font-size:18px;line-height:1.3}}.m{{color:#999;font-size:13px;margin:6px 0 14px}}button,a.b{{font:inherit;font-weight:700;border:0;border-radius:999px;padding:14px 0;width:100%;font-size:16px;margin-top:10px;cursor:pointer;text-align:center;display:block;text-decoration:none;box-sizing:border-box}}
+.y{{background:#FF2B3C;color:#fff}}.n{{background:#2a2a2e;color:#fff}}</style></head><body>
+{vid}<h1>{e(it.get("title") or "")}</h1><div class=m>{e(it.get("topic") or it.get("source") or "")} · score {int(it.get("score") or 0)} · <a style="color:#999" href="{e(it["url"])}">original</a></div>
+<div id=out>{"Already " + e(it["status"]) + "." if done else ""}</div>
+{"" if done else f'<button class=y id=ya>Yes — send to editor</button><button class=n id=no>No — skip</button>'}
+<script>
+function go(a,t){{fetch("/api/public/explore/{e(iid)}/"+a+"?t="+t,{{method:"POST"}}).then(function(r){{return r.json();}}).then(function(d){{
+ document.getElementById("out").innerHTML=a==="approve"?"Sent to the editor. You'll get a notification when the edit is ready.":"Skipped.";
+ document.querySelectorAll("button").forEach(function(b){{b.remove();}});}}).catch(function(){{document.getElementById("out").textContent="Something went wrong.";}});}}
+var y=document.getElementById("ya"),n=document.getElementById("no");
+if(y){{y.onclick=function(){{go("approve","{ta}");}};n.onclick=function(){{go("skip","{ts}");}};}}
+</script></body></html>"""
+    return Response(page, media_type="text/html")
+
+
+def _explore_quiet_now() -> bool:
+    try:
+        from zoneinfo import ZoneInfo
+        h = _dt.datetime.now(ZoneInfo("Europe/London")).hour
+    except Exception:
+        h = _dt.datetime.now(_dt.timezone.utc).hour
+    return h >= 23 or h < 8
+
+
+def _explore_notify_new():
+    if not notify.configured() or _explore_quiet_now():
+        return
+    base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+    if not base:
+        return
+    per = int(os.environ.get("EXPLORE_PUSH_COUNT", "3"))
+    items = explore.unnotified(per, float(os.environ.get("EXPLORE_PUSH_MIN_SCORE", "35")))
+    for it in items:
+        iid = it["id"]
+        review = f"{base}/api/public/explore/{iid}?t={explore.token(iid, 'view')}"
+        acts = [
+            {"label": "Yes, edit it", "url": f"{base}/api/public/explore/{iid}/approve?t={explore.token(iid, 'approve')}", "post": True},
+            {"label": "No", "url": f"{base}/api/public/explore/{iid}/skip?t={explore.token(iid, 'skip')}", "post": True},
+            {"label": "Preview", "url": review},
+        ]
+        thumb = it.get("thumb") if str(it.get("thumb") or "").startswith("https://") else None
+        notify.notify("Clip to edit? " + (it.get("topic") or ""), (it.get("title") or "")[:160], review, acts, thumb)
+        time.sleep(1)
+    explore.mark_notified([i["id"] for i in items])
+
+
+def _explore_scan_and_notify(notify_phone: bool = True):
+    try:
+        explore.scan()
+        if notify_phone:
+            _explore_notify_new()
+    except Exception as e:
+        print(f"EXPLORE SCAN FAILED: {e}", flush=True)
+
+
+def _maybe_explore_scan():
+    """Called by the outside timer: scans every EXPLORE_EVERY_HOURS (default 4), then pings the phone about the best new finds."""
+    try:
+        if not db.configured() or os.environ.get("EXPLORE_OFF") == "1":
+            return
+        every = float(os.environ.get("EXPLORE_EVERY_HOURS", "4")) * 3600
+        last = float(insights.kv_get("explore_last") or 0)
+        if time.time() - last < every:
+            # Items found while it was quiet hours (or by a manual scan) still get their ping later.
+            _explore_notify_new()
+            return
+        insights.kv_set("explore_last", str(time.time()))
+        _explore_scan_and_notify(True)
+    except Exception as e:
+        print(f"EXPLORE TICK FAILED: {e}", flush=True)
+
+
 # --- Database backups ---------------------------------------------------------
 import gzip as _gzip, re as _re
 
@@ -4026,6 +4188,7 @@ def cron_tick(request: Request, key: str = ""):
     _maybe_weekly_digest()
     threading.Thread(target=_maybe_daily_backup, daemon=True).start()
     threading.Thread(target=_check_watched, daemon=True).start()
+    threading.Thread(target=_maybe_explore_scan, daemon=True).start()
     threading.Thread(target=_auto_hide_comments, daemon=True).start()
     threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
     return {"ok": True}

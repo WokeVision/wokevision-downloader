@@ -11,13 +11,24 @@ def configured() -> bool:
     return bool(os.environ.get("NTFY_TOPIC") or (os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")))
 
 
-def _send(title: str, message: str, url: str = None):
+def _send(title: str, message: str, url: str = None, actions: list = None, attach: str = None):
     topic = os.environ.get("NTFY_TOPIC")
     if topic:
         try:
             headers = {"Title": title.encode("utf-8")}
             if url:
                 headers["Click"] = url
+            if attach:
+                headers["Attach"] = attach
+            if actions:
+                # ntfy action buttons: [{"label","url","post":bool}] -> "view, Label, url; http, Label, url, method=POST, clear=true"
+                parts = []
+                for a in actions[:3]:
+                    if a.get("post"):
+                        parts.append(f"http, {a['label']}, {a['url']}, method=POST, clear=true")
+                    else:
+                        parts.append(f"view, {a['label']}, {a['url']}, clear=true")
+                headers["Actions"] = "; ".join(parts)
             r = requests.post(f"{os.environ.get('NTFY_SERVER', 'https://ntfy.sh').rstrip('/')}/{topic}",
                               data=message.encode("utf-8"), headers=headers, timeout=10)
             print(f"NTFY sent: HTTP {r.status_code}", flush=True)
@@ -27,6 +38,7 @@ def _send(title: str, message: str, url: str = None):
     if tok and chat:
         try:
             text = f"{title}\n{message}" + (f"\n{url}" if url else "")
+            # (Telegram can't call back into the app, so action buttons are skipped there; the link opens the review page.)
             requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
                           json={"chat_id": chat, "text": text}, timeout=10)
         except Exception as e:
@@ -57,10 +69,10 @@ def send_sync(title: str, message: str) -> dict:
     return {"ok": ok, "detail": "; ".join(res)}
 
 
-def notify(title: str, message: str, url: str = None):
+def notify(title: str, message: str, url: str = None, actions: list = None, attach: str = None):
     if not configured():
         return
-    threading.Thread(target=_send, args=(title, message, url), daemon=True).start()
+    threading.Thread(target=_send, args=(title, message, url, actions, attach), daemon=True).start()
 
 
 def email_configured() -> bool:

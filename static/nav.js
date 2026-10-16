@@ -12,7 +12,7 @@
   function active(p) { return p === "/" ? path === "/" : path === p || path.indexOf(p + "/") === 0; }
   // Five top-level sections; pages inside a section show as a second row of tabs.
   var GROUPS = [
-    { id: "create", label: "Create", pages: [["/editor", "Editor"], ["/clipping", "Clipper"], ["/ideas", "Ideas"]] },
+    { id: "create", label: "Create", pages: [["/editor", "Editor"], ["/explore", "Explore"], ["/clipping", "Clipper"], ["/ideas", "Ideas"]] },
     { id: "schedule", label: "Schedule", pages: [["/schedule", "Schedule"]] },
     { id: "inbox", label: "Inbox", pages: [["/requests", "Requests"], ["/comments", "Comments"]] },
     { id: "analytics", label: "Analytics", pages: [["/dashboards", "Analytics"], ["/campaigns", "Campaigns"]] },
@@ -137,7 +137,7 @@
 // Keyboard shortcuts: press ? for the list; "g" then a letter jumps to a page.
 (function () {
   if (location.pathname.indexOf("/login") === 0 || location.pathname === "/" || location.pathname.indexOf("/links") === 0) return;
-  var MAP = { e: ["/editor", "Editor"], c: ["/clipping", "Clipper"], r: ["/requests", "Requests"], b: ["/bio", "Bio link"], s: ["/schedule", "Schedule"], a: ["/dashboards", "Analytics"], i: ["/ideas", "Ideas"], p: ["/campaigns", "Campaigns"], o: ["/sources", "Sources"], m: ["/comments", "Comments"], t: ["/settings", "Settings"] };
+  var MAP = { e: ["/editor", "Editor"], c: ["/clipping", "Clipper"], r: ["/requests", "Requests"], b: ["/bio", "Bio link"], s: ["/schedule", "Schedule"], a: ["/dashboards", "Analytics"], i: ["/ideas", "Ideas"], x: ["/explore", "Explore"], p: ["/campaigns", "Campaigns"], o: ["/sources", "Sources"], m: ["/comments", "Comments"], t: ["/settings", "Settings"] };
   var armed = 0, ov = null;
   function typing(e) { var t = e.target, n = t && t.tagName; return n === "INPUT" || n === "TEXTAREA" || n === "SELECT" || (t && t.isContentEditable); }
   function help() {

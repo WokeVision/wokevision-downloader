@@ -161,7 +161,7 @@ DEFAULT_CFG = {
                  "Trump", "border crisis", "campus protests", "BBC bias", "mainstream media", "masculinity", "migrant crime"],
     "channels": ["@GBNEWS", "@FoxNews", "@DailyWire", "@PragerU", "@TuckerCarlson", "@TheBlaze", "@spikedonline", "@UnHerd",
                  "@piersmorganuncensored", "@triggerpod", "@SkyNews", "@RebelNewsOnline"],
-    "subreddits": [],          # Reddit blocks cloud servers; add subreddits here only if that changes
+    "subreddits": ["Conservative", "ukpolitics", "PublicFreakout", "Libertarian", "walkaway", "ConservativeMemes"],
     "telegram": [],           # public Telegram channel names (t.me/s/<name>) -- optional
     "hashtags": [],           # TikTok hashtags (TikTok blocks cloud servers; best effort if you add some)
     "handles": [],            # full URLs: https://www.tiktok.com/@name, https://x.com/name, https://rumble.com/c/name ...
@@ -595,59 +595,58 @@ def src_keywords(cfg):
 
 
 def src_reddit(cfg):
-    subs = cfg["subreddits"][:12]
+    """Reddit's JSON is blocked for servers, but its RSS feeds answer. RSS has no vote counts or lengths, so rank in the
+    day's top list stands in for popularity, and each v.redd.it video's length is read from its stream manifest."""
+    subs = cfg["subreddits"][:10]
     if not subs:
-        raise RuntimeError("off (optional) - Reddit blocks cloud servers")
+        raise RuntimeError("off (optional) - no subreddits set")
+    A = "{http://www.w3.org/2005/Atom}"
+    M = "{http://search.yahoo.com/mrss/}"
     out, last, errors = [], "", 0
-    now = time.time()
-    for sub in subs:
+    for si, sub in enumerate(subs):
         try:
             r = None
-            for host in ("www.reddit.com", "old.reddit.com", "api.reddit.com"):
-                u = f"https://{host}/r/{sub}/hot.json?limit=40&raw_json=1" if host != "api.reddit.com" else f"https://api.reddit.com/r/{sub}/hot?limit=40&raw_json=1"
-                try:
-                    r = _get(u)
-                except Exception as e:
-                    last = str(e)[:80]; continue
-                if r.status_code == 200:
+            for attempt in range(2):
+                r = _get(f"https://www.reddit.com/r/{sub}/top/.rss?t=day&limit=50")
+                if r.status_code != 429:
                     break
-                last = f"HTTP {r.status_code}"
-            if r is None or r.status_code != 200:
-                errors += 1; continue
-            if "json" not in (r.headers.get("content-type") or ""):
-                errors += 1; last = "blocked (sent a web page instead of data)"; continue
-            for c in r.json().get("data", {}).get("children", []):
-                d = c.get("data") or {}
-                if d.get("stickied") or d.get("over_18"):
+                time.sleep(4)
+            if r.status_code != 200:
+                errors += 1; last = f"HTTP {r.status_code}"; continue
+            root = ET.fromstring(r.content)
+            rank = 0
+            for ent in root.iter(A + "entry"):
+                rank += 1
+                body = ent.findtext(A + "content") or ""
+                m = re.search(r"v\.redd\.it/([a-z0-9]+)", body)
+                if not m:
                     continue
-                media = (d.get("secure_media") or d.get("media") or {}).get("reddit_video") or {}
-                if not (d.get("is_video") and media):
-                    continue
-                dur = media.get("duration")
-                if not dur or dur > MAX_DUR:
-                    continue
-                age_h = max(0.5, (now - (d.get("created_utc") or now)) / 3600)
-                ups = d.get("score") or 0
-                if age_h > 48 or ups < 150:
-                    continue
-                velocity = ups / (age_h ** 0.8)
-                thumb = d.get("thumbnail") if str(d.get("thumbnail", "")).startswith("http") else None
+                vid = m.group(1)
+                link = (ent.find(A + "link").get("href") if ent.find(A + "link") is not None else "")
+                title = (ent.findtext(A + "title") or "").strip()
+                th = ent.find(M + "thumbnail")
+                dur = None
                 try:
-                    thumb = (d.get("preview", {}).get("images", [{}])[0].get("source", {}).get("url")) or thumb
+                    mp = _get(f"https://v.redd.it/{vid}/DASHPlaylist.mpd")
+                    dm = re.search(r'mediaPresentationDuration="PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?"', mp.text)
+                    if dm:
+                        dur = int(dm.group(1) or 0) * 3600 + int(dm.group(2) or 0) * 60 + float(dm.group(3) or 0)
                 except Exception:
                     pass
-                title = d.get("title") or ""
+                if not dur or dur > MAX_DUR:
+                    continue
                 rel = relevance(title + " " + sub)
                 out.append({
-                    "source": "reddit", "ext_id": d["id"], "url": "https://www.reddit.com" + d["permalink"], "title": title, "thumb": thumb,
-                    "preview_url": media.get("fallback_url"), "embed": "video", "duration": dur, "topic": f"r/{sub}",
-                    "stats": {"upvotes": ups, "comments": d.get("num_comments"), "age_hours": round(age_h, 1), "per_hour": int(velocity)},
-                    "_raw": 100 * (0.30 * _log_score(velocity, 3.8) + 0.12 * _log_score(ups, 5) + 0.30 * min(rel, 3) / 3) + 6,
+                    "source": "reddit", "ext_id": vid, "url": link, "title": title, "thumb": th.get("url") if th is not None else None,
+                    "embed": None, "duration": round(dur), "topic": f"r/{sub}",
+                    "stats": {"top_rank": rank, "subreddit": sub},
+                    "_raw": 100 * (0.30 * max(0, 1 - rank / 50) + 0.30 * min(rel, 3) / 3) + 8,
                 })
         except Exception as e:
             errors += 1; last = str(e)[:100]
-    if subs and errors == len(subs):
-        raise RuntimeError(f"Reddit blocks this server ({last})")
+        time.sleep(1.2)
+    if errors == len(subs):
+        raise RuntimeError(f"Reddit refused ({last})")
     return out
 
 

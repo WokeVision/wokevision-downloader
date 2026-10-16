@@ -431,7 +431,7 @@ def src_news(cfg):
                 res.append(it)
         return res
 
-    out, e2 = _parallel(one, clusters[:12], 4)
+    out, e2 = _parallel(one, clusters[:8], 3)
     if not out and e2:
         raise RuntimeError("YouTube search failed: " + e2[0])
     return out
@@ -581,22 +581,24 @@ def src_channels(cfg):
             raise RuntimeError(f"{ch}: nothing readable")
         return res
 
-    out, errs = _parallel(one, chans, 5)
+    out, errs = _parallel(one, chans, 3)
     if not out:
         raise RuntimeError("; ".join(errs[:3]) or "nothing")
     return out
 
 
 def src_keywords(cfg):
-    kws = _search_terms(cfg)[:22]
+    kws = _search_terms(cfg)[:14]
 
     def one(k):
-        res = []
-        for q in (k + " #shorts", k):
-            res += [i for i in (_yt_item(e, k, "keywords", base=6) for e in _yt_search(q, 6)) if i]
+        # One search per term (kept deliberately light: heavy scanning gets the server's IP throttled by YouTube,
+        # which also breaks downloads). Shorts-flavoured first; a plain search only if that found nothing.
+        res = [i for i in (_yt_item(e, k, "keywords", base=6) for e in _yt_search(k + " #shorts", 6)) if i]
+        if not res:
+            res = [i for i in (_yt_item(e, k, "keywords", base=6) for e in _yt_search(k, 6)) if i]
         return res
 
-    out, errs = _parallel(one, kws, 4)
+    out, errs = _parallel(one, kws, 3)
     if not out and errs:
         raise RuntimeError(errs[0])
     return out

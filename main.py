@@ -3849,6 +3849,94 @@ def explore_scan_now():
     return {"ok": True, "running": True}
 
 
+PREVIEW_DIR = os.path.join(DOWNLOAD_DIR, "explore_prev")
+_PREVIEW = {}
+
+
+def _prune_previews():
+    try:
+        for fn in os.listdir(PREVIEW_DIR):
+            p = os.path.join(PREVIEW_DIR, fn)
+            if time.time() - os.path.getmtime(p) > 24 * 3600:
+                os.remove(p)
+    except Exception:
+        pass
+
+
+def _build_preview(iid: str, url: str):
+    """Downloads the clip with the same proven downloader the editor uses, then makes a small 480p (max 75 s) copy to watch in the browser."""
+    raw = os.path.join(PREVIEW_DIR, f"{iid}_raw.mp4")
+    out = os.path.join(PREVIEW_DIR, f"{iid}.mp4")
+    try:
+        os.makedirs(PREVIEW_DIR, exist_ok=True)
+        _prune_previews()
+        download_video(url, raw)
+        subprocess.run(["ffmpeg", "-y", "-i", raw, "-t", "75", "-vf", "scale=-2:480", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", out], check=True, capture_output=True)
+        _PREVIEW[iid] = {"state": "ready"}
+    except Exception as e:
+        print(f"EXPLORE PREVIEW FAILED {url}: {e}", flush=True)
+        _PREVIEW[iid] = {"state": "error", "error": str(e)[:160]}
+    finally:
+        try:
+            if os.path.exists(raw):
+                os.remove(raw)
+        except Exception:
+            pass
+
+
+def _preview_start(iid: str):
+    it = explore.get_item(iid)
+    if not it:
+        raise HTTPException(status_code=404, detail="That suggestion no longer exists.")
+    out = os.path.join(PREVIEW_DIR, f"{iid}.mp4")
+    if os.path.exists(out):
+        _PREVIEW[iid] = {"state": "ready"}
+    elif _PREVIEW.get(iid, {}).get("state") != "running":
+        _PREVIEW[iid] = {"state": "running"}
+        threading.Thread(target=_build_preview, args=(iid, it["url"]), daemon=True).start()
+    return _PREVIEW.get(iid)
+
+
+@app.post("/api/explore/{iid}/preview")
+def explore_preview_start(iid: str):
+    return _preview_start(iid)
+
+
+@app.get("/api/explore/{iid}/preview-status")
+def explore_preview_status(iid: str):
+    return _PREVIEW.get(iid) or {"state": "none"}
+
+
+@app.get("/api/explore/{iid}/preview.mp4")
+def explore_preview_file(iid: str):
+    p = os.path.join(PREVIEW_DIR, f"{os.path.basename(iid)}.mp4")
+    if not os.path.exists(p):
+        raise HTTPException(status_code=404, detail="Preview not ready.")
+    return FileResponse(p, media_type="video/mp4")
+
+
+@app.post("/api/public/explore/{iid}/preview")
+def explore_preview_start_public(iid: str, t: str = ""):
+    if not explore.token_ok(iid, "view", t):
+        raise HTTPException(status_code=403, detail="Bad or expired link.")
+    return _preview_start(iid)
+
+
+@app.get("/api/public/explore/{iid}/preview-status")
+def explore_preview_status_public(iid: str, t: str = ""):
+    if not explore.token_ok(iid, "view", t):
+        raise HTTPException(status_code=403, detail="Bad or expired link.")
+    return _PREVIEW.get(iid) or {"state": "none"}
+
+
+@app.get("/api/public/explore/{iid}/preview.mp4")
+def explore_preview_file_public(iid: str, t: str = ""):
+    if not explore.token_ok(iid, "view", t):
+        raise HTTPException(status_code=403, detail="Bad or expired link.")
+    return explore_preview_file(iid)
+
+
 def _explore_decide(iid: str, action: str):
     it = explore.get_item(iid)
     if not it:
@@ -3890,19 +3978,18 @@ def explore_review_page(iid: str, t: str = ""):
         return Response("<p style='font-family:sans-serif;padding:24px'>That suggestion is gone.</p>", media_type="text/html")
     import html as _html
     e = _html.escape
-    vid = ""
-    if it.get("embed") == "youtube":
-        vid = f'<iframe src="https://www.youtube.com/embed/{e(it["url"].split("v=")[-1])}" allowfullscreen style="width:100%;aspect-ratio:16/9;border:0;border-radius:12px"></iframe>'
-    elif it.get("preview_url"):
+    tv = explore.token(iid, "view")
+    poster = f' style="background-image:url(\'{e(it.get("thumb") or "")}\')"' if it.get("thumb") else ""
+    if it.get("preview_url"):
         vid = f'<video src="{e(it["preview_url"])}" poster="{e(it.get("thumb") or "")}" controls playsinline muted style="width:100%;border-radius:12px;background:#000"></video>'
-    elif it.get("thumb"):
-        vid = f'<img src="{e(it["thumb"])}" style="width:100%;border-radius:12px">'
+    else:
+        vid = f'<div id=pv class=pv{poster}><span id=pt>&#9654; Tap to preview</span></div>'
     done = it["status"] != "new"
     ta, ts = explore.token(iid, "approve"), explore.token(iid, "skip")
     page = f"""<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Suggested clip</title>
 <style>body{{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0A0A0C;color:#F5F5F7;margin:0;padding:18px;max-width:560px;margin:auto}}
 h1{{font-size:18px;line-height:1.3}}.m{{color:#999;font-size:13px;margin:6px 0 14px}}button,a.b{{font:inherit;font-weight:700;border:0;border-radius:999px;padding:14px 0;width:100%;font-size:16px;margin-top:10px;cursor:pointer;text-align:center;display:block;text-decoration:none;box-sizing:border-box}}
-.y{{background:#FF2B3C;color:#fff}}.n{{background:#2a2a2e;color:#fff}}</style></head><body>
+.pv{{position:relative;aspect-ratio:16/10;background:#000 center/cover;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;cursor:pointer}}.pv span{{background:rgba(0,0,0,.65);padding:10px 16px;border-radius:999px}}.y{{background:#FF2B3C;color:#fff}}.n{{background:#2a2a2e;color:#fff}}</style></head><body>
 {vid}<h1>{e(it.get("title") or "")}</h1><div class=m>{e(it.get("topic") or it.get("source") or "")} · score {int(it.get("score") or 0)} · <a style="color:#999" href="{e(it["url"])}">original</a></div>
 <div id=out>{"Already " + e(it["status"]) + "." if done else ""}</div>
 {"" if done else f'<button class=y id=ya>Yes — send to editor</button><button class=n id=no>No — skip</button>'}
@@ -3910,6 +3997,11 @@ h1{{font-size:18px;line-height:1.3}}.m{{color:#999;font-size:13px;margin:6px 0 1
 function go(a,t){{fetch("/api/public/explore/{e(iid)}/"+a+"?t="+t,{{method:"POST"}}).then(function(r){{return r.json();}}).then(function(d){{
  document.getElementById("out").innerHTML=a==="approve"?"Sent to the editor. You'll get a notification when the edit is ready.":"Skipped.";
  document.querySelectorAll("button").forEach(function(b){{b.remove();}});}}).catch(function(){{document.getElementById("out").textContent="Something went wrong.";}});}}
+var pv=document.getElementById("pv");
+if(pv){{pv.onclick=function(){{if(pv.dataset.go)return;pv.dataset.go=1;var q="?t={tv}",b="/api/public/explore/{e(iid)}",pt=document.getElementById("pt");pt.textContent="Loading preview… (up to a minute)";
+ fetch(b+"/preview"+q,{{method:"POST"}});var tm=setInterval(function(){{fetch(b+"/preview-status"+q).then(function(r){{return r.json();}}).then(function(s){{
+  if(s.state==="ready"){{clearInterval(tm);pv.outerHTML='<video src="'+b+'/preview.mp4'+q+'" controls autoplay playsinline style="width:100%;border-radius:12px;background:#000"></video>';}}
+  else if(s.state==="error"){{clearInterval(tm);pt.textContent="Couldn't load a preview — open the original instead.";}}}});}},2500);}};}}
 var y=document.getElementById("ya"),n=document.getElementById("no");
 if(y){{y.onclick=function(){{go("approve","{ta}");}};n.onclick=function(){{go("skip","{ts}");}};}}
 </script></body></html>"""

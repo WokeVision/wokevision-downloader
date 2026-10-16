@@ -88,10 +88,13 @@ document.getElementById("grid").addEventListener("click",function(e){
   if(a){a.disabled=true;fetch("/api/explore/"+a.dataset.id+"/"+a.dataset.a,{method:"POST"}).then(function(r){return r.json();}).then(function(d){
     load();});return;}
   var p=e.target.closest("[data-play]");
-  if(p&&!p.querySelector("video,iframe")){var i=ITEMS[p.dataset.play];if(!i)return;
-    if(i.embed==="youtube"){var id=i.url.split("v=")[1];p.innerHTML='<iframe src="https://www.youtube.com/embed/'+encodeURIComponent(id)+'?autoplay=1" allow="autoplay; encrypted-media" allowfullscreen></iframe>';}
-    else if(i.preview_url){p.innerHTML='<video src="'+esc(i.preview_url)+'" controls autoplay playsinline loop></video>';}
-    else window.open(i.url,"_blank");}
+  if(p&&!p.querySelector("video,iframe")&&!p.dataset.busy){var i=ITEMS[p.dataset.play];if(!i)return;
+    if(i.preview_url){p.innerHTML='<video src="'+esc(i.preview_url)+'" controls autoplay playsinline loop></video>';return;}
+    p.dataset.busy=1;var lab=p.querySelector(".play");lab.textContent="Loading…";lab.style.width="auto";lab.style.padding="0 14px";lab.style.borderRadius="999px";
+    var b="/api/explore/"+i.id;fetch(b+"/preview",{method:"POST"});
+    var tm=setInterval(function(){fetch(b+"/preview-status").then(function(r){return r.json();}).then(function(s){
+      if(s.state==="ready"){clearInterval(tm);p.innerHTML='<video src="'+b+'/preview.mp4" controls autoplay playsinline></video>';}
+      else if(s.state==="error"){clearInterval(tm);delete p.dataset.busy;lab.textContent="Preview failed — open original";}});},2500);}
 });
 var CFG_KEYS=["keywords","channels","subreddits","handles","outlets"];
 document.getElementById("tune").onclick=function(){var c=document.getElementById("cfg");if(c.style.display==="block"){c.style.display="none";return;}

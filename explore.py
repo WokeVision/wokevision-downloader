@@ -10,7 +10,7 @@ ones answered. Nothing here needs a platform account:
   channels  -- newest uploads from a list of YouTube channels you trust
   keywords  -- your niche search terms searched on YouTube
   reddit    -- hot video posts from political / culture subreddits
-  rumble    -- Rumble's most-viewed-today list (best effort)
+  (Rumble's public list is behind Cloudflare and refuses servers; add Rumble channels under 'other accounts' instead.)
   handles   -- any TikTok / X / Instagram / Rumble / YouTube accounts you add
                (best effort: those platforms often block servers)
 Everything is editable from the Explore page (stored in the database)."""
@@ -274,11 +274,20 @@ def _tokens(text):
 
 
 def _yt_search(query, n=6):
+    """Newest-first search; if this yt-dlp build doesn't know ytsearchdate, falls back to normal relevance search."""
     import yt_dlp
     opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True, "socket_timeout": 15}
-    with yt_dlp.YoutubeDL(opts) as y:
-        info = y.extract_info(f"ytsearchdate{n}:{query}", download=False)
-    return (info or {}).get("entries") or []
+    last = None
+    for key in ("ytsearchdate", "ytsearch"):
+        try:
+            with yt_dlp.YoutubeDL(opts) as y:
+                info = y.extract_info(f"{key}{n}:{query}", download=False)
+            return (info or {}).get("entries") or []
+        except Exception as e:
+            last = e
+            if "Unsupported url" not in str(e) and "scheme" not in str(e):
+                break
+    raise last
 
 
 def _flat(url, n=8):
@@ -443,9 +452,18 @@ def src_reddit(cfg):
     now = time.time()
     for sub in subs:
         try:
-            r = _get(f"https://www.reddit.com/r/{sub}/hot.json?limit=40&raw_json=1")
-            if r.status_code != 200:
-                errors += 1; last = f"HTTP {r.status_code}"; continue
+            r = None
+            for host in ("www.reddit.com", "old.reddit.com", "api.reddit.com"):
+                u = f"https://{host}/r/{sub}/hot.json?limit=40&raw_json=1" if host != "api.reddit.com" else f"https://api.reddit.com/r/{sub}/hot?limit=40&raw_json=1"
+                try:
+                    r = _get(u)
+                except Exception as e:
+                    last = str(e)[:80]; continue
+                if r.status_code == 200:
+                    break
+                last = f"HTTP {r.status_code}"
+            if r is None or r.status_code != 200:
+                errors += 1; continue
             for c in r.json().get("data", {}).get("children", []):
                 d = c.get("data") or {}
                 if d.get("stickied") or d.get("over_18"):
@@ -529,7 +547,7 @@ def src_handles(cfg):
     return out
 
 
-SOURCES = {"news": src_news, "channels": src_channels, "keywords": src_keywords, "reddit": src_reddit, "rumble": src_rumble, "handles": src_handles}
+SOURCES = {"news": src_news, "channels": src_channels, "keywords": src_keywords, "reddit": src_reddit, "handles": src_handles}
 
 
 # ---------------------------------------------------------------- scan

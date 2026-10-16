@@ -46,10 +46,10 @@
     <div style="margin-top:10px"><button class="btn accent" id="cfgSave">Save</button> <span class="meta" id="cfgMsg"></span></div>
   </div>
   <div id="warn"></div><div id="radar" class="src"></div><div class="src" id="src"></div>
-  <div class="grid" id="grid"></div>
+  <div class="bar" id="plats" style="margin-bottom:10px"></div><div class="grid" id="grid"></div>
 </div>
 <script>
-var status = "new", timer = null;
+var status = "new", timer = null, platFilter = "";
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
 function fmtDur(s){if(!s)return"";s=Math.round(s);return Math.floor(s/60)+":"+("0"+s%60).slice(-2);}
 function nfmt(n){n=+n||0;return n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?Math.round(n/1e3)+"k":""+n;}
@@ -69,9 +69,13 @@ var ITEMS = {};
 function load(){
   fetch("/api/explore?status="+status).then(function(r){return r.json();}).then(function(d){
     ITEMS={};(d.items||[]).forEach(function(i){ITEMS[i.id]=i;});
-    document.getElementById("grid").innerHTML=(d.items||[]).map(card).join("")||'<div class="empty" style="grid-column:1/-1">'+(status==="new"?"Nothing new yet — press Scan now.":"Nothing here.")+'</div>';
+    var counts={};(d.items||[]).forEach(function(i){var p=plat(i.url);counts[p]=(counts[p]||0)+1;});
+    if(platFilter&&!counts[platFilter])platFilter="";
+    document.getElementById("plats").innerHTML=Object.keys(counts).length>1?['<button class="btn'+(platFilter?'':' on')+'" data-p="">All '+(d.items||[]).length+'</button>'].concat(Object.keys(counts).sort().map(function(p){return '<button class="btn'+(platFilter===p?' on':'')+'" data-p="'+p+'">'+p+' '+counts[p]+'</button>';})).join(""):"";
+    var shown=(d.items||[]).filter(function(i){return !platFilter||plat(i.url)===platFilter;});
+    document.getElementById("grid").innerHTML=shown.map(card).join("")||'<div class="empty" style="grid-column:1/-1">'+(status==="new"?"Nothing new yet — press Scan now.":"Nothing here.")+'</div>';
     var ls=d.last_scan||{},src=ls.sources||{},h=[];
-    Object.keys(src).forEach(function(k){var s=src[k];h.push(s.ok?'<b>'+k+'</b> '+s.found+' found':'<span class="bad"><b>'+k+'</b> '+esc(s.error)+'</span>');});
+    Object.keys(src).forEach(function(k){var s=src[k];h.push(s.ok?'<b>'+k+'</b> '+s.found+' found':(/optional/.test(s.error||'')?'<span style="opacity:.6"><b>'+k+'</b> off</span>':'<span class="bad"><b>'+k+'</b> '+esc(s.error)+'</span>'));});
     document.getElementById("src").innerHTML=ls.running?"Scanning…":(ls.at?"Last scan "+new Date(ls.at).toLocaleString()+" · "+ls.added+" new"+(ls.candidates!=null?" of "+ls.candidates+" candidates":"")+"<br>"+h.join(" · "):"No scan since the server started. It scans automatically every few hours.");
     document.getElementById("radar").innerHTML=(ls.radar&&ls.radar.length)?'<b>Hot right now:</b> '+ls.radar.slice(0,10).map(function(r){return '<span style="display:inline-block;background:rgba(255,255,255,.08);border-radius:999px;padding:2px 10px;margin:2px 4px 2px 0" title="'+esc(r.via)+'">🔥 '+esc(r.topic)+'</span>';}).join(""):"";
     var w="";
@@ -87,6 +91,7 @@ function load(){
 }
 document.querySelectorAll("[data-s]").forEach(function(b){b.onclick=function(){status=b.dataset.s;document.querySelectorAll("[data-s]").forEach(function(x){x.classList.toggle("on",x===b);});load();};});
 document.getElementById("scan").onclick=function(){this.disabled=true;fetch("/api/explore/scan",{method:"POST"}).then(function(){setTimeout(load,1500);});};
+document.getElementById("plats").addEventListener("click",function(e){var b=e.target.closest("[data-p]");if(b){platFilter=b.dataset.p;load();}});
 document.getElementById("grid").addEventListener("click",function(e){
   var a=e.target.closest("[data-a]");
   if(a){a.disabled=true;fetch("/api/explore/"+a.dataset.id+"/"+a.dataset.a,{method:"POST"}).then(function(r){return r.json();}).then(function(d){

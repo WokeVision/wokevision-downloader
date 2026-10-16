@@ -3822,6 +3822,19 @@ def explore_list(status: str = "new"):
             "last_tick_seconds_ago": None if at is None else int(time.time() - at)}
 
 
+@app.get("/api/explore/probe")
+def explore_probe(url: str):
+    """Owner-only diagnostic: fetches a URL from the server's own network and reports what came back (is a site reachable from here?)."""
+    if not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Give a full URL.")
+    import requests as _rq
+    try:
+        r = _rq.get(url, headers={"User-Agent": explore.UA, "Accept-Language": "en-GB,en;q=0.9"}, timeout=15)
+        return {"status": r.status_code, "type": r.headers.get("content-type"), "bytes": len(r.content), "head": r.text[:300]}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
 @app.get("/api/explore/config")
 def explore_config_get():
     return {"config": explore.get_cfg(), "defaults": explore.DEFAULT_CFG}

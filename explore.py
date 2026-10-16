@@ -57,7 +57,7 @@ def _row(r):
     return r
 
 
-def list_items(status="new", limit=60):
+def list_items(status="new", limit=200):
     import psycopg2.extras
     with db._conn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -161,9 +161,9 @@ DEFAULT_CFG = {
                  "Trump", "border crisis", "campus protests", "BBC bias", "mainstream media", "masculinity", "migrant crime"],
     "channels": ["@GBNEWS", "@FoxNews", "@DailyWire", "@PragerU", "@TuckerCarlson", "@TheBlaze", "@spikedonline", "@UnHerd",
                  "@piersmorganuncensored", "@triggerpod", "@SkyNews", "@RebelNewsOnline"],
-    "subreddits": ["Conservative", "ukpolitics", "PublicFreakout", "Libertarian", "walkaway", "TikTokCringe", "AskUK"],
+    "subreddits": [],          # Reddit blocks cloud servers; add subreddits here only if that changes
     "telegram": [],           # public Telegram channel names (t.me/s/<name>) -- optional
-    "hashtags": ["politics", "conservative", "ukpolitics", "woke", "immigration"],   # TikTok hashtags (best effort)
+    "hashtags": [],           # TikTok hashtags (TikTok blocks cloud servers; best effort if you add some)
     "handles": [],            # full URLs: https://www.tiktok.com/@name, https://x.com/name, https://rumble.com/c/name ...
     "outlets": [],            # extra RSS feed URLs
     "push_min_score": 35,
@@ -285,20 +285,24 @@ def _tokens(text):
 
 
 def _yt_search(query, n=6):
-    """Newest-first search; if this yt-dlp build doesn't know ytsearchdate, falls back to normal relevance search."""
+    """YouTube search limited to the last week (so old viral videos don't resurface). Tries the filtered results page,
+    then newest-first search, then plain search."""
     import yt_dlp
-    opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True, "socket_timeout": 15}
+    from urllib.parse import quote
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True, "socket_timeout": 15, "playlistend": n}
     last = None
-    for key in ("ytsearchdate", "ytsearch"):
+    for target in (f"https://www.youtube.com/results?search_query={quote(query)}&sp=EgQIAxAB", f"ytsearchdate{n}:{query}"):
         try:
             with yt_dlp.YoutubeDL(opts) as y:
-                info = y.extract_info(f"{key}{n}:{query}", download=False)
-            return (info or {}).get("entries") or []
+                info = y.extract_info(target, download=False)
+            ents = [e for e in ((info or {}).get("entries") or []) if e]
+            if ents:
+                return ents[:n]
         except Exception as e:
             last = e
-            if "Unsupported url" not in str(e) and "scheme" not in str(e):
-                break
-    raise last
+    if last:
+        raise last
+    return []
 
 
 def _flat(url, n=8):
@@ -476,7 +480,7 @@ def radar(cfg):
                     title = a["article"].replace("_", " ")
                     if title.startswith(("Main Page", "Special:", "Wikipedia:", "Portal:", "File:", "Category:")):
                         continue
-                    if _niche_text(title) or (len(title) > 5 and title.lower() in news_blob):
+                    if len(title) > 5 and (_niche_text(title) or title.lower() in news_blob):
                         found.append({"topic": title, "strength": 25 + min(20, 4 * math.log10(max(10, a["views"]))), "via": "Wikipedia"})
                         n += 1
                 break
@@ -490,7 +494,7 @@ def radar(cfg):
 
         def sug(k):
             r = _get("https://suggestqueries.google.com/complete/search", params={"client": "firefox", "q": k, "hl": "en-GB", "gl": "gb"})
-            return [(k, x) for x in r.json()[1][:4] if _niche_text(x)]
+            return [(k, x) for x in r.json()[1][:4] if _niche_text(x) and len(x.split()) >= 2 and x.lower() != k.lower()]
 
         res, _ = _parallel(sug, cfg["keywords"][:10], 5)
         for k, x in res:
@@ -503,7 +507,12 @@ def radar(cfg):
     # d) stories many outlets are running
     for c in sorted(clusters, key=lambda c: -c["n"])[:8]:
         if c["n"] >= 2 and (c["rel"] > 0 or c["n"] >= 3):
-            found.append({"topic": c["title"][:90], "strength": 22 + 8 * min(c["n"], 5), "via": f"{c['n']} outlets"})
+            freq = {}
+            for t in c["titles"]:
+                for w in _tokens(t):
+                    freq[w] = freq.get(w, 0) + 1
+            q = " ".join(w for w, _ in sorted(freq.items(), key=lambda kv: -kv[1])[:4])
+            found.append({"topic": c["title"][:90], "q": q, "strength": 22 + 8 * min(c["n"], 5), "via": f"{c['n']} outlets"})
 
     # merge near-duplicates (same name/words), add strengths, keep the best 15
     merged = []
@@ -516,7 +525,7 @@ def radar(cfg):
         else:
             merged.append({**f, "_tk": tk})
     merged.sort(key=lambda m: -m["strength"])
-    out = [{"topic": m["topic"], "strength": min(100, round(m["strength"])), "via": m["via"]} for m in merged[:15]]
+    out = [{"topic": m["topic"], "q": m.get("q") or m["topic"], "strength": min(100, round(m["strength"])), "via": m["via"]} for m in merged[:15]]
     return out, status
 
 
@@ -538,8 +547,9 @@ def _search_terms(cfg):
     """Your fixed topics plus today's hottest radar topics."""
     terms = list(cfg["keywords"][:14])
     for r in RADAR["topics"][:8]:
-        if r["topic"] not in terms:
-            terms.append(r["topic"][:70])
+        q = (r.get("q") or r["topic"])[:70]
+        if q not in terms:
+            terms.append(q)
     return terms
 
 
@@ -586,6 +596,8 @@ def src_keywords(cfg):
 
 def src_reddit(cfg):
     subs = cfg["subreddits"][:12]
+    if not subs:
+        raise RuntimeError("off (optional) - Reddit blocks cloud servers")
     out, last, errors = [], "", 0
     now = time.time()
     for sub in subs:
@@ -693,7 +705,7 @@ def src_dailymotion(cfg):
     def one(k):
         r = _get("https://api.dailymotion.com/videos", params={
             "search": k, "sort": "trending", "limit": 10, "shorter_than": 3, "flags": "no_live,exportable",
-            "fields": "id,title,thumbnail_480_url,duration,views_total,url,owner.screenname"})
+            "created_after": int(time.time()) - 7 * 86400, "fields": "id,title,thumbnail_480_url,duration,views_total,url,owner.screenname"})
         if r.status_code != 200:
             raise RuntimeError(f"Dailymotion HTTP {r.status_code}")
         res = []
@@ -721,7 +733,7 @@ def src_dailymotion(cfg):
 def src_hashtags(cfg):
     tags = [t.strip().lstrip("#") for t in cfg.get("hashtags", []) if t.strip()][:10]
     if not tags:
-        raise RuntimeError("no hashtags set (optional)")
+        raise RuntimeError("off (optional) - TikTok blocks cloud servers")
 
     def one(t):
         res = []
@@ -747,7 +759,7 @@ def src_odysee(cfg):
 
     def one(k):
         res = []
-        for extra in ({"release_time": ">" + str(int(time.time()) - 4 * 86400)}, {}):
+        for extra in ({"release_time": ">" + str(int(time.time()) - 4 * 86400)}, {"release_time": ">" + str(int(time.time()) - 14 * 86400)}):
             r = requests.post("https://api.na-backend.odysee.com/api/v1/proxy?m=claim_search", headers={"User-Agent": UA}, timeout=15, json={
                 "jsonrpc": "2.0", "method": "claim_search", "id": 1,
                 "params": {"text": k, "claim_type": ["stream"], "stream_types": ["video"], "order_by": ["trending_group", "trending_mixed"],
@@ -869,6 +881,12 @@ def scan():
         known_ids, known_urls = _known_ids_and_urls()
         seen_titles = set()
         added = 0
+        for name in list(results):
+            mx = max([c.get("_raw", 0) for c in results[name]] or [0])
+            if mx > 0:
+                for c in results[name]:
+                    # blend: half the raw score, half "how it ranks within its own platform" so no platform is buried
+                    c["_raw"] = 0.5 * c.get("_raw", 0) + 0.5 * (c.get("_raw", 0) / mx * 85)
         by_src = {}
         for name in list(results):
             by_src[name] = sorted(list(results[name]), key=lambda c: c.get("_raw", 0), reverse=True)

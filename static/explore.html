@@ -23,6 +23,7 @@
   .acts { display: flex; gap: 8px; margin-top: auto; } .acts .btn { flex: 1; text-align: center; padding: 10px 8px; }
   .empty { color: var(--faint); padding: 30px 0; text-align: center; }
   .src { font-size: 12px; color: var(--faint); margin-bottom: 14px; line-height: 1.7; } .src b { color: var(--text); font-weight: 600; } .bad { color: #ff8a8a; }
+  textarea,input[type=number]{width:100%;background:rgba(0,0,0,.35);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px;font:inherit;font-size:13px;margin:4px 0 10px}textarea{min-height:64px}.card .meta{display:block}.card#cfg{padding:14px;margin-bottom:14px}
   .warn { background: rgba(255,170,0,.1); border: 1px solid rgba(255,170,0,.3); border-radius: 12px; padding: 10px 12px; font-size: 12.5px; margin-bottom: 14px; }
 </style></head><body>
 <script src="/static/nav.js"></script>
@@ -30,7 +31,17 @@
   <h1>Explore</h1><div class="sub">Clips the app found by itself in the news, Reddit and YouTube trends. Approve one and it goes straight into the editor.</div>
   <div class="bar">
     <button class="btn on" data-s="new">New</button><button class="btn" data-s="approved">Sent to editor</button><button class="btn" data-s="skipped">Skipped</button>
-    <span style="flex:1"></span><button class="btn accent" id="scan">Scan now</button>
+    <span style="flex:1"></span><button class="btn" id="tune">Tune sources</button><button class="btn accent" id="scan">Scan now</button>
+  </div>
+  <div id="cfg" class="card" style="display:none">
+    <div class="meta" style="margin-bottom:8px">One item per line (or comma separated). Changes apply on the next scan.</div>
+    <label class="meta">Topics / search terms (YouTube + Google News)</label><textarea id="c_keywords"></textarea>
+    <label class="meta">YouTube channels to watch (@handle or URL)</label><textarea id="c_channels"></textarea>
+    <label class="meta">Subreddits</label><textarea id="c_subreddits"></textarea>
+    <label class="meta">Other accounts: full links to TikTok / X / Instagram / Rumble profiles (best effort — those sites often block servers)</label><textarea id="c_handles"></textarea>
+    <label class="meta">Extra news RSS feeds</label><textarea id="c_outlets"></textarea>
+    <label class="meta">Only send a phone alert for clips scoring at least</label><input id="c_push" type="number" min="0" max="100" style="width:90px">
+    <div style="margin-top:10px"><button class="btn accent" id="cfgSave">Save</button> <span class="meta" id="cfgMsg"></span></div>
   </div>
   <div id="warn"></div><div class="src" id="src"></div>
   <div class="grid" id="grid"></div>
@@ -58,8 +69,14 @@ function load(){
     document.getElementById("grid").innerHTML=(d.items||[]).map(card).join("")||'<div class="empty" style="grid-column:1/-1">'+(status==="new"?"Nothing new yet — press Scan now.":"Nothing here.")+'</div>';
     var ls=d.last_scan||{},src=ls.sources||{},h=[];
     Object.keys(src).forEach(function(k){var s=src[k];h.push(s.ok?'<b>'+k+'</b> '+s.found+' found':'<span class="bad"><b>'+k+'</b> '+esc(s.error)+'</span>');});
-    document.getElementById("src").innerHTML=ls.running?"Scanning…":(ls.at?"Last scan "+new Date(ls.at).toLocaleString()+" · "+ls.added+" new · "+h.join(" · "):"No scan since the server started. It scans automatically every few hours.");
-    document.getElementById("warn").innerHTML=d.push?"":'<div class="warn">Phone notifications are off — set NTFY_TOPIC (or Telegram) on the server to get approve / skip alerts.</div>';
+    document.getElementById("src").innerHTML=ls.running?"Scanning…":(ls.at?"Last scan "+new Date(ls.at).toLocaleString()+" · "+ls.added+" new"+(ls.candidates!=null?" of "+ls.candidates+" candidates":"")+"<br>"+h.join(" · "):"No scan since the server started. It scans automatically every few hours.");
+    var w="";
+    if(!d.push)w+='<div class="warn">Phone notifications are off — set NTFY_TOPIC (or Telegram) on the server to get approve / skip alerts.</div>';
+    if(!d.timer_configured)w+='<div class="warn">Automatic scans need the outside timer (CRON_SECRET) that also drives scheduled posts — it isn\'t set, so only Scan now works.</div>';
+    else if(d.last_tick_seconds_ago==null)w+='<div class="warn">The outside timer hasn\'t pinged the app since it last restarted — automatic scans start with the next ping.</div>';
+    else if(d.last_tick_seconds_ago>900)w+='<div class="warn">The outside timer last pinged '+Math.round(d.last_tick_seconds_ago/60)+' min ago — automatic scans are paused until it does.</div>';
+    if(ls.at&&!ls.running&&!ls.added&&Object.keys(src).length&&Object.keys(src).every(function(k){return !src[k].ok;}))w+='<div class="warn">Every source failed on the last scan — details in the line below.</div>';
+    document.getElementById("warn").innerHTML=w;
     var b=document.getElementById("scan");b.disabled=!!ls.running;b.textContent=ls.running?"Scanning…":"Scan now";
     clearTimeout(timer);if(ls.running)timer=setTimeout(load,4000);
   });
@@ -76,5 +93,12 @@ document.getElementById("grid").addEventListener("click",function(e){
     else if(i.preview_url){p.innerHTML='<video src="'+esc(i.preview_url)+'" controls autoplay playsinline loop></video>';}
     else window.open(i.url,"_blank");}
 });
+var CFG_KEYS=["keywords","channels","subreddits","handles","outlets"];
+document.getElementById("tune").onclick=function(){var c=document.getElementById("cfg");if(c.style.display==="block"){c.style.display="none";return;}
+  fetch("/api/explore/config").then(function(r){return r.json();}).then(function(d){CFG_KEYS.forEach(function(k){document.getElementById("c_"+k).value=(d.config[k]||[]).join("\n");});
+    document.getElementById("c_push").value=d.config.push_min_score;c.style.display="block";});};
+document.getElementById("cfgSave").onclick=function(){var body={push_min_score:+document.getElementById("c_push").value||35};
+  CFG_KEYS.forEach(function(k){body[k]=document.getElementById("c_"+k).value;});
+  fetch("/api/explore/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(){document.getElementById("cfgMsg").textContent="Saved ✓";setTimeout(function(){document.getElementById("cfgMsg").textContent="";},2500);});};
 load();
 </script></body></html>

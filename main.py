@@ -3816,8 +3816,29 @@ def explore_page():
 def explore_list(status: str = "new"):
     if status not in ("new", "approved", "skipped", "all"):
         status = "new"
-    return {"items": [_explore_public(i) for i in explore.list_items(status)], "last_scan": explore.LAST_SCAN,
-            "push": notify.configured()}
+    at = _LAST_TICK["at"]
+    return {"items": [_explore_public(i) for i in explore.list_items(status)], "last_scan": explore.last_scan(),
+            "push": notify.configured(), "timer_configured": bool(os.environ.get("CRON_SECRET")),
+            "last_tick_seconds_ago": None if at is None else int(time.time() - at)}
+
+
+@app.get("/api/explore/config")
+def explore_config_get():
+    return {"config": explore.get_cfg(), "defaults": explore.DEFAULT_CFG}
+
+
+class ExploreCfg(BaseModel):
+    keywords: str = ""
+    channels: str = ""
+    subreddits: str = ""
+    handles: str = ""
+    outlets: str = ""
+    push_min_score: int = 35
+
+
+@app.post("/api/explore/config")
+def explore_config_set(req: ExploreCfg):
+    return {"config": explore.save_cfg(req.dict())}
 
 
 @app.post("/api/explore/scan")
@@ -3911,7 +3932,7 @@ def _explore_notify_new():
     if not base:
         return
     per = int(os.environ.get("EXPLORE_PUSH_COUNT", "3"))
-    items = explore.unnotified(per, float(os.environ.get("EXPLORE_PUSH_MIN_SCORE", "35")))
+    items = explore.unnotified(per, float(explore.get_cfg().get("push_min_score", 35)))
     for it in items:
         iid = it["id"]
         review = f"{base}/api/public/explore/{iid}?t={explore.token(iid, 'view')}"

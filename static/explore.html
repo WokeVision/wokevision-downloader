@@ -31,7 +31,7 @@
   <h1>Explore</h1><div class="sub">Clips the app found by itself in the news, Reddit and YouTube trends. Approve one and it goes straight into the editor.</div>
   <div class="bar">
     <button class="btn on" data-s="new">New</button><button class="btn" data-s="approved">Sent to editor</button><button class="btn" data-s="skipped">Skipped</button>
-    <span style="flex:1"></span><button class="btn" id="tune">Tune sources</button><button class="btn accent" id="scan">Scan now</button>
+    <span style="flex:1"></span><button class="btn" id="clearNew">Clear list</button><button class="btn" id="tune">Tune sources</button><button class="btn accent" id="scan">Scan now</button>
   </div>
   <div id="cfg" class="card" style="display:none">
     <div class="meta" style="margin-bottom:8px">One item per line (or comma separated). Changes apply on the next scan.</div>
@@ -90,6 +90,7 @@ function load(){
   });
 }
 document.querySelectorAll("[data-s]").forEach(function(b){b.onclick=function(){status=b.dataset.s;document.querySelectorAll("[data-s]").forEach(function(x){x.classList.toggle("on",x===b);});load();};});
+document.getElementById("clearNew").onclick=function(){if(confirm("Remove everything waiting in New? (Sent / skipped stay.)"))fetch("/api/explore/clear",{method:"POST"}).then(load);};
 document.getElementById("scan").onclick=function(){this.disabled=true;fetch("/api/explore/scan",{method:"POST"}).then(function(){setTimeout(load,1500);});};
 document.getElementById("plats").addEventListener("click",function(e){var b=e.target.closest("[data-p]");if(b){platFilter=b.dataset.p;load();}});
 document.getElementById("grid").addEventListener("click",function(e){

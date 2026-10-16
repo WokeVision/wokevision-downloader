@@ -3856,6 +3856,12 @@ def explore_config_set(req: ExploreCfg):
     return {"config": explore.save_cfg(req.dict())}
 
 
+@app.post("/api/explore/clear")
+def explore_clear():
+    explore.clear_new()
+    return {"ok": True}
+
+
 @app.post("/api/explore/scan")
 def explore_scan_now():
     if explore.LAST_SCAN.get("running"):

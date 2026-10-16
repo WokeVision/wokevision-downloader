@@ -130,12 +130,20 @@ def purge_unpostable():
         cur.execute("DELETE FROM explore_items WHERE status='new' AND (duration IS NULL OR duration > %s)", (MAX_DUR,))
 
 
+def clear_new():
+    with db._conn() as conn:
+        cur = conn.cursor()
+        _init(cur)
+        cur.execute("DELETE FROM explore_items WHERE status='new'")
+
+
 def prune(days=30):
     """Old undecided/skipped suggestions don't pile up forever."""
     with db._conn() as conn:
         cur = conn.cursor()
         _init(cur)
         cur.execute("DELETE FROM explore_items WHERE created_at < now() - (%s || ' days')::interval AND status <> 'approved'", (str(days),))
+        cur.execute("DELETE FROM explore_items WHERE status='new' AND created_at < now() - interval '3 days'")
 
 
 # ---------------------------------------------------------------- tokens (for phone buttons, which carry no login cookie)
@@ -603,6 +611,7 @@ def src_reddit(cfg):
     A = "{http://www.w3.org/2005/Atom}"
     M = "{http://search.yahoo.com/mrss/}"
     out, last, errors = [], "", 0
+    dbg = {"entries": 0, "video": 0, "nomanifest": 0, "long": 0, "http": []}
     for si, sub in enumerate(subs):
         try:
             r = None
@@ -612,16 +621,18 @@ def src_reddit(cfg):
                     break
                 time.sleep(4)
             if r.status_code != 200:
-                errors += 1; last = f"HTTP {r.status_code}"; continue
+                errors += 1; last = f"HTTP {r.status_code}"; dbg["http"].append(f"{sub}:{r.status_code}"); continue
             root = ET.fromstring(r.content)
             rank = 0
             for ent in root.iter(A + "entry"):
                 rank += 1
+                dbg["entries"] += 1
                 body = ent.findtext(A + "content") or ""
                 m = re.search(r"v\.redd\.it/([a-z0-9]+)", body)
                 if not m:
                     continue
                 vid = m.group(1)
+                dbg["video"] += 1
                 link = (ent.find(A + "link").get("href") if ent.find(A + "link") is not None else "")
                 title = (ent.findtext(A + "title") or "").strip()
                 th = ent.find(M + "thumbnail")
@@ -633,7 +644,11 @@ def src_reddit(cfg):
                         dur = int(dm.group(1) or 0) * 3600 + int(dm.group(2) or 0) * 60 + float(dm.group(3) or 0)
                 except Exception:
                     pass
-                if not dur or dur > MAX_DUR:
+                if not dur:
+                    dbg["nomanifest"] += 1
+                    continue
+                if dur > MAX_DUR:
+                    dbg["long"] += 1
                     continue
                 rel = relevance(title + " " + sub)
                 out.append({
@@ -647,6 +662,8 @@ def src_reddit(cfg):
         time.sleep(1.2)
     if errors == len(subs):
         raise RuntimeError(f"Reddit refused ({last})")
+    if not out:
+        raise RuntimeError(f"Reddit: {dbg['entries']} posts, {dbg['video']} videos, {dbg['nomanifest']} no length, {dbg['long']} too long, http {dbg['http']}")
     return out
 
 

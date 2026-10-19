@@ -56,24 +56,7 @@ the real event the joke is about (name it if the clip does) but never be \
 earnest, preachy or sympathetic-corporate about it. Don't over-explain.
 - Real victims/tragedies: the joke targets the situation, the system, or \
 the absurdity -- never celebrate harm to an innocent victim.
-- CAPTION MODES -- the owner's real captions vary with the clip, so first \
-pick the mode that fits, then write in it:
-  (1) QUICK REACTION -- funny/meme/viral clips: one short punchy line (a \
-reaction or a joke) + one emoji, e.g. "Johnny took no prisoners 🤣". \
-  (2) FACT DROP -- a claim or clip that "people don't realise": a short \
-hook + one line saying what it shows, e.g. "Crazy how many people don't \
-realise this 💀".
-  (3) NEWS / STORY -- a real event or controversy: 2-3 plain sentences of \
-context (who, what, the ironic twist), then an engagement question, e.g. "What \
-do you think about this debacle? 🤔👇".
-  (4) RANT / COMMENTARY -- opinion or culture-war clips (woke activists, \
-street arguments, education, politicians): a longer, passionate, sarcastic \
-paragraph in the owner's voice -- big stakes language ("the matrix is \
-glitching", "clown world", "rules for thee but not for me", "the audacity"), \
-a few emoji (🤡😂🤯💀), ending on a punch line. Never a dry essay.
-  Satire/dark-humour clips use mode 1 or a deadpan version of 3.
-- Match the length to the mode. Don't write a rant for a quick joke, and \
-don't write one line for a clip that needs context.
+- Captions are deliberately SIMPLE (see the caption format rules). Never write essays, rants or jokes unless asked.
 - Never attack people for protected traits. Target ideas, hypocrisy, \
 institutions and public figures' actions.""")
 
@@ -95,30 +78,24 @@ def _clean_example(cap: str) -> str:
     return cap.strip()
 
 
-CURATED_EXAMPLES = """REAL @wokevision_ CAPTIONS THE OWNER LIKES (match the voice, length and hashtag style for the matching mode):
+CURATED_EXAMPLES = """EXAMPLES OF THE CORE CAPTION STYLE (one short line, then ONE emoji):
+Do you agree with her? \U0001f447
+Do you agree with him? \U0001f914
+Is this valid? \U0001f928
+Have they got a point? \U0001f440
+What do you think about this? \U0001f914
+What would you do in this situation? \U0001f605
+How would you handle this? \U0001f440
+How would you react? \U0001f928
+This is crazy! \U0001f92f
+Mad props to this guy \U0001f44f
+He did well to stand up for himself like that \U0001f4af
 
-[QUICK REACTION]
-Johnny took no prisoners \U0001f923
-#funnymemes #wokememes #running #race #genders
-
-[FACT DROP]
-Crazy how many people don't realise this \U0001f480
-On a podcast, Andrew Tate explains how our phones are being surveyed without our knowledge or consent
-#redpill #surveillance #phones #truth #exposed
-
-[NEWS / STORY]
-Billie Eilish has gone viral recently for her Anti ICE speech, suggesting that no one can be illegal on 'stolen land'. Much of mainstream media hasn't taken kindly to the singers comments, with a native tribe recently claiming that her 3 million dollar mansion itself is situated on their stolen land. What do you think about this debacle? \U0001f914\U0001f447
-#billieeilish #stolenland #grammys #speech #politics
-
-[RANT / COMMENTARY]
-The absolute AUDACITY on display here is unreal. \U0001f92f This street preacher is out here minding his own business and spreading his message when he gets completely blindsided by a woke activist who thinks physical harassment is an acceptable response to speech. Notice how they immediately try to switch up the narrative and play the victim card the second they get called out? The matrix is glitching in real-time. \U0001f602 They want total validation for their identity but refuse to grant basic human respect to anyone else. Rules for thee but not for me! \U0001f921
-Credit: @clark_flipper
-#Woke #WokeCulture #ClownWorld #MatrixGlitch #DoubleStandards
-
-[RANT / COMMENTARY]
-We are officially witnessing the final boss of the matrix. The absolute collapse of basic cognitive functioning is on full display here. Decades of institutional captured education have produced adults who can't even identify foundational geography or human biology, yet they speak with absolute, unearned moral authority. The simulation is officially broken.
-Credit: @prageru
-#Brainwashed #Matrix #VirtueSignaling #ObjectiveTruth #antiwoke"""
+EXAMPLES OF THE ON-SCREEN TOP LINE (simple, shocked at what is literally happening):
+Wait, did she really just say that? \U0001f633
+He actually walked up and did it \U0001f62e
+The way he just stood there and took it \U0001f633
+She came in swinging with zero warning \U0001f62f"""
 
 
 def style_examples() -> str:
@@ -147,15 +124,18 @@ Then write everything to match that read."""
 # combined (fast, single-call) generator and the standalone regenerate-only
 # one. Emoji placement is spelled out explicitly because this is the part
 # that was quietly getting dropped/misplaced before.
-ON_SCREEN_RULES = """Write ONE short line of text to overlay directly on top of a video, in \
-the white space above it. Under 12 words. This is the hook -- it should \
-land as a single punch, not a summary. No hashtags, no quotation marks \
-around the line itself.
+ON_SCREEN_RULES = """Write ONE short line of text to overlay on top of a video. It must be \
+SIMPLE and plain: sound genuinely shocked, surprised or stunned at what is \
+literally happening in the video itself (e.g. "Wait, did she really just say that?", \
+"He actually walked up and did it", "The way he just took it"). Describe the \
+real moment on screen -- who did what -- using plain everyday words. No jokes, \
+no sarcasm, no politics, no clever wordplay, no opinions, no slogans. Do not \
+mention things that are not in the video. Under 10 words, no hashtags, no \
+quotation marks around the line.
 
-End the line with exactly ONE emoji that fits the tone -- it must be the \
-very last character. Do not put a full stop, period, or any other \
-punctuation between the last word and the emoji (e.g. "Libs are shaking \
-🤡" not "Libs are shaking. 🤡"). Do not use more than one emoji."""
+End the line with exactly ONE emoji that fits (😳 😮 😯 🤯 😬 are typical) -- it \
+must be the very last character. Do not put a full stop, period, or any other \
+punctuation between the last word and the emoji. Do not use more than one emoji."""
 
 # Platform minimums the posting caption is built against, so ONE caption
 # works unedited on every platform it goes out to (Instagram, YouTube, X,
@@ -190,53 +170,50 @@ generic ones. Never attack people over protected traits (race, religion, \
 sexuality, disability, etc.) -- the target is ideas, hypocrisy and public \
 figures' actions, not who someone is.""")
 
-POSTING_RULES = f"""Write the caption/description that goes out with this video when it's \
-posted simultaneously to Instagram, YouTube, X, TikTok, Threads and \
-Facebook. Properly formatted, genuinely engaging, on-brand -- not generic.
+POSTING_RULES = f"""Write the CORE caption that goes out with this video on Instagram, \
+YouTube, X, TikTok, Threads and Facebook. It is deliberately SIMPLE: ONE single \
+short line, nothing else (no paragraphs, no context, no jokes, no rant).
 
-End the caption with exactly ONE short line that is either a question or a \
-statement built to drive engagement -- for example (don't just reuse these \
-verbatim every time): "Do you agree with them?", "What do you think about \
-this?", "Is this a bit too far?", "Should we all be thinking like this?", \
-"What would you do in their situation?", "This is too cold.", "Protect \
-this person at all costs.", "I wouldn't want to get into it with them." \
-That line is immediately followed by exactly ONE emoji that amplifies it \
--- the very last character, no punctuation between the line and the emoji.
+Pick ONE of two forms:
+A) A question that makes people comment, using typical engagement questions that fit \
+what is on screen, for example: "Do you agree with her?", "Do you agree with him?", \
+"Is this valid?", "Have they got a point?", "What do you think about this?", \
+"What would you do in this situation?", "How would you handle this?", \
+"How would you react?" Make sure the pronoun / subject matches who is actually in the \
+video (her / him / them / this guy / this woman). Vary your choice.
+B) Only if no question fits the clip: ONE short statement about what is happening on \
+screen, for example "This is crazy!", "Mad props to this guy", "He did well to stand \
+up for himself like that". Plain and punchy, not a joke.
 
-Include exactly {POSTING_HASHTAG_COUNT} hashtags, each a separate \
-#WokeVision-style tag relevant to the content -- this count works unedited \
-on every platform this goes out to.
+The line is followed by exactly ONE emoji, the very last character, with no \
+punctuation between the line and the emoji besides the ? or ! that belongs to it. For \
+questions use a comment-prompting emoji such as 👇 🤔 🤨 😅 👀 ; for statements use one \
+that matches the feeling. Never more than one emoji.
 
-The ENTIRE caption -- body, the question/statement line, and the hashtags \
-all included -- must fit within {POSTING_CAPTION_MAX_CHARS} characters \
-total. Hashtags take about 55 of those, so the text before them MUST be \
-under {POSTING_CAPTION_MAX_CHARS - 65} characters INCLUDING the closing \
-question and emoji -- count carefully and finish the sentence; never run \
-long and get cut off. That's X's standard post limit, the shortest of any platform this \
-goes out to, so nothing needs trimming per platform."""
+Give exactly {POSTING_HASHTAG_COUNT} hashtags in the separate "hashtags" field (not inside \
+"caption"). The caption line itself must be under 100 characters."""
 
-COMBINED_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + HASHTAG_STRATEGY + "\n\n" + READ_THE_CLIP + f"""
+COMBINED_SYSTEM = STANCE_GUIDE + "\n\n" + HASHTAG_STRATEGY + "\n\n" + READ_THE_CLIP + f"""
 
 You have two things to write for the same video, in one response.
 
 1) ON-SCREEN HOOK: {ON_SCREEN_RULES}
 
-2) POSTING CAPTION: {POSTING_VOICE}
+2) POSTING CAPTION:
 
 {POSTING_RULES}
 
 Respond ONLY with JSON: {{"angle_read": "...", "on_screen": "...", "caption": "...", "hashtags": ["#...", "#..."]}}"""
 
-ON_SCREEN_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"\n\nYour job right now: {ON_SCREEN_RULES}\n\nRespond ONLY with JSON: {{\"angle_read\": \"...\", \"on_screen\": \"...\"}}"
+ON_SCREEN_SYSTEM = STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"\n\nYour job right now: {ON_SCREEN_RULES}\n\nRespond ONLY with JSON: {{\"angle_read\": \"...\", \"on_screen\": \"...\"}}"
 
-POSTING_SYSTEM = POSTING_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + HASHTAG_STRATEGY + "\n\n" + READ_THE_CLIP + f"\n\nYour job right now: {POSTING_RULES}\n\nRespond ONLY with JSON: {{\"angle_read\": \"...\", \"caption\": \"...\", \"hashtags\": [\"#...\"]}}"
+POSTING_SYSTEM = "You write the simple core caption for the @wokevision_ page.\n\n" + STANCE_GUIDE + "\n\n" + HASHTAG_STRATEGY + "\n\n" + READ_THE_CLIP + f"\n\nYour job right now: {POSTING_RULES}\n\nRespond ONLY with JSON: {{\"angle_read\": \"...\", \"caption\": \"...\", \"hashtags\": [\"#...\"]}}"
 
 # Fallback emoji, confirmed present in the local emoji_pack/ so the on-screen
 # caption always renders a real image instead of silently dropping a
 # character the pack doesn't have. Used only when the model's own line
 # somehow comes back with no emoji at all.
-FALLBACK_EMOJI = ["\U0001F525", "\U0001F921", "\U0001F480", "\U0001F6A8", "\U0001F62D",
-                   "\U0001F644", "\U0001F62F", "\U0001F60F", "\U0001F914", "\U0001F4AF"]
+FALLBACK_EMOJI = ["\U0001F633", "\U0001F62E", "\U0001F62F", "\U0001F92F", "\U0001F62C"]
 
 # Mirrors render.py's own emoji matcher closely enough to detect "is there
 # an emoji in this text at all" without importing render.py (keeps caption.py
@@ -267,10 +244,38 @@ def _enforce_single_trailing_emoji(text: str) -> str:
     # Clean up leftover punctuation/whitespace left dangling where an emoji
     # used to sit (e.g. "Libs are shaking. " -> "Libs are shaking").
     stripped = re.sub(r"\s+", " ", stripped).strip()
-    stripped = stripped.rstrip(" .!?,;:").strip()
+    stripped = stripped.rstrip(" .,;:").strip()
 
     emoji = found[0] if found else random.choice(FALLBACK_EMOJI)
     return f"{stripped} {emoji}"
+
+
+
+QUESTION_EMOJI = ["\U0001F447", "\U0001F914", "\U0001F928", "\U0001F605", "\U0001F440"]
+STATEMENT_EMOJI = ["\U0001F633", "\U0001F92F", "\U0001F62E", "\U0001F4AF", "\U0001F440"]
+FALLBACK_QUESTIONS = ["What do you think about this?", "Is this valid?", "Do you agree with this?",
+                      "How would you react?", "What would you do in this situation?"]
+FALLBACK_TOP = ["Wait, is this actually happening?", "Did that really just happen?", "I can't believe what I just watched"]
+
+
+def _core_line(text: str, default: str = "") -> str:
+    """Forces the core caption into its fixed shape: ONE line, ending in
+    exactly ONE emoji (a question gets a comment-prompting one). Anything
+    else the model wrote -- extra lines, hashtags, extra emoji, a full stop
+    before the emoji -- is stripped."""
+    text = _HASHTAG_RE.sub("", text or "")
+    lines = [l.strip() for l in text.replace("\r", "").split("\n") if l.strip()]
+    line = lines[0] if lines else (default or "")
+    found = _EMOJI_RE.findall(line)
+    body = re.sub(r"\s+", " ", _EMOJI_RE.sub("", line)).strip()
+    body = body.strip('"\u201c\u201d ').rstrip(" .,;:-").strip()
+    if not body:
+        body = random.choice(FALLBACK_QUESTIONS)
+    if re.match(r"(?i)^(do|does|did|is|are|was|were|have|has|had|would|could|should|can|will|what|how|who|why|where|which|am)\\b", body) and not body.endswith(("?", "!")):
+        body += "?"
+    is_q = body.endswith("?")
+    emoji = found[0] if found else random.choice(QUESTION_EMOJI if is_q else STATEMENT_EMOJI)
+    return f"{body} {emoji}"
 
 
 def _trim_to_chars(text: str, limit: int) -> str:
@@ -291,7 +296,7 @@ def _assemble_posting_caption(body: str, hashtags: list) -> str:
     fits POSTING_CAPTION_MAX_CHARS and carries exactly POSTING_HASHTAG_COUNT
     hashtags -- regardless of what the model actually returned -- so the
     same caption is always safe to post unedited on every platform."""
-    body = (body or "").strip()
+    body = _core_line(body)
     tags = [h.strip() for h in (hashtags or []) if h and h.strip()]
     if tags:
         mixed = enforce_tag_mix(" ".join(tags), body, POSTING_HASHTAG_COUNT)
@@ -619,77 +624,93 @@ def _call_openai(system_prompt: str, user_content: str, temperature: float = 0.9
             system_prompt = system_prompt + "\n\n" + ex
     except Exception:
         pass
-    resp = requests.post(
-        CHAT_URL,
-        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
-        json={
-            "model": os.environ.get("CAPTION_MODEL", "gpt-4o"),
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            "response_format": {"type": "json_object"},
-            # A little temperature so "regenerate" calls actually come back
-            # different rather than near-identical rewordings.
-            "temperature": temperature,
-        },
-        timeout=60,
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    u = body.get("usage") or {}
-    db.record_ai_usage(kind, os.environ.get("CAPTION_MODEL", "gpt-4o"), u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
-    return json.loads(body["choices"][0]["message"]["content"])
+    import time as _t
+    last = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                CHAT_URL,
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": os.environ.get("CAPTION_MODEL", "gpt-4o"),
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
+                    ],
+                    "response_format": {"type": "json_object"},
+                    # A little temperature so "regenerate" calls actually come back
+                    # different rather than near-identical rewordings.
+                    "temperature": temperature,
+                },
+                timeout=60,
+            )
+            if resp.status_code in (429, 500, 502, 503, 504):
+                raise RuntimeError(f"OpenAI HTTP {resp.status_code}: {resp.text[:200]}")
+            resp.raise_for_status()
+            body = resp.json()
+            u = body.get("usage") or {}
+            db.record_ai_usage(kind, os.environ.get("CAPTION_MODEL", "gpt-4o"), u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
+            return json.loads(body["choices"][0]["message"]["content"])
+        except Exception as e:
+            last = e
+            print(f"OPENAI CALL FAILED (attempt {attempt + 1}/3, {kind}): {e}", flush=True)
+            if attempt < 2:
+                _t.sleep(1.5 * (attempt + 1))
+    raise last
 
 
 def generate_captions(transcript: str, meta: dict) -> tuple:
-    """Generates BOTH captions (on-screen hook + posting caption/hashtags)
-    in a single OpenAI call instead of two serial ones -- used for the main
-    pipeline where speed matters and there's nothing to "avoid" yet. Falls
-    back to the video's own title/description when no OPENAI_API_KEY is set
-    or the call fails. Returns (on_screen_caption, posting_caption)."""
-    title = (meta or {}).get("title") or "Watch this"
-    description = (meta or {}).get("description") or ""
-    fallback_posting = title or (description[:80] if description else "") or "Watch this"
+    """Generates BOTH captions (on-screen line + core posting caption/hashtags)
+    in a single OpenAI call. If the AI is unavailable it falls back to a plain
+    generic question -- never the source post's own title. Returns
+    (on_screen_caption, posting_caption)."""
+    fallback_top = _enforce_single_trailing_emoji(random.choice(FALLBACK_TOP))
+    fallback_posting = _assemble_posting_caption("", [])
     if not OPENAI_API_KEY:
-        return title, fallback_posting
-
+        return fallback_top, fallback_posting
     try:
         data = _call_openai(COMBINED_SYSTEM, _build_context(transcript, meta))
-        on_screen = _enforce_single_trailing_emoji((data.get("on_screen") or "").strip() or title)
+        on_screen = _enforce_single_trailing_emoji((data.get("on_screen") or "").strip() or random.choice(FALLBACK_TOP))
         posting = _assemble_posting_caption(data.get("caption"), data.get("hashtags")) or fallback_posting
         return on_screen, posting
     except Exception as e:
         print(f"CAPTION GEN FAILED: {e}", flush=True)
-        return title, fallback_posting
+        return fallback_top, fallback_posting
 
 
-def generate_on_screen_caption(transcript: str, meta: dict, avoid: str = None) -> str:
+def generate_on_screen_caption(transcript: str, meta: dict, avoid: str = None, strict: bool = False) -> str:
     """The short line overlaid on the video itself, generated alone -- used
-    by the "change video caption" regenerate button. Falls back to the
-    video's own title when no OPENAI_API_KEY is set or the call fails."""
-    title = (meta or {}).get("title") or "Watch this"
+    by the "change video caption" regenerate button. With strict=True a
+    failure raises (so the caller can keep the old caption and say so) instead
+    of quietly substituting something else."""
     if not OPENAI_API_KEY:
-        return title
+        if strict:
+            raise RuntimeError("No OPENAI_API_KEY is set, so captions can't be regenerated.")
+        return _enforce_single_trailing_emoji(random.choice(FALLBACK_TOP))
 
     note = f'A previous version was: "{avoid}" -- write a genuinely different one, not a light rewording.' if avoid else ""
     try:
         data = _call_openai(ON_SCREEN_SYSTEM, _build_context(transcript, meta, note))
-        return _enforce_single_trailing_emoji((data.get("on_screen") or "").strip() or title)
+        line = (data.get("on_screen") or "").strip()
+        if not line:
+            raise ValueError("empty on-screen caption")
+        return _enforce_single_trailing_emoji(line)
     except Exception as e:
         print(f"ON-SCREEN CAPTION GEN FAILED: {e}", flush=True)
-        return title
+        if strict:
+            raise
+        return _enforce_single_trailing_emoji(random.choice(FALLBACK_TOP))
 
 
-HOOKS_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"""
+HOOKS_SYSTEM = STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"""
 
-Your job right now: write THREE different on-screen hooks for this clip, each built on a different tactic:
-1. "question" - a sharp question that makes the viewer need the answer.
-2. "claim" - a bold, specific statement that takes a clear side.
-3. "curiosity" - an open loop that withholds the payoff.
-Each must follow these rules: {ON_SCREEN_RULES}
+Your job right now: write THREE different on-screen lines for this clip. All three follow these rules: {ON_SCREEN_RULES}
+Make them differ in wording and in which moment of the clip they react to:
+1. "reaction" - shocked at the main thing that happens.
+2. "moment" - shocked at one specific detail or moment.
+3. "disbelief" - disbelief that it is actually happening.
 
-Respond ONLY with JSON: {{"hooks": [{{"style": "question", "text": "..."}}, {{"style": "claim", "text": "..."}}, {{"style": "curiosity", "text": "..."}}]}}"""
+Respond ONLY with JSON: {{"hooks": [{{"style": "reaction", "text": "..."}}, {{"style": "moment", "text": "..."}}, {{"style": "disbelief", "text": "..."}}]}}"""
 
 
 def generate_hook_options(transcript: str, meta: dict, current: str = "") -> list:
@@ -741,29 +762,34 @@ def translate_lines(lines: list, language: str) -> list:
     return out
 
 
-def generate_posting_caption(transcript: str, meta: dict, on_screen_caption: str = "", avoid: str = None) -> str:
-    """The longer caption for the actual social posts (Instagram, YouTube,
-    X, TikTok, Threads, Facebook), hashtags included. Falls back to the
-    video's own title/description when no OPENAI_API_KEY is set or the call
-    fails."""
-    title = (meta or {}).get("title") or ""
-    description = (meta or {}).get("description") or ""
-    fallback = title or (description[:80] if description else "") or "Watch this"
+def generate_posting_caption(transcript: str, meta: dict, on_screen_caption: str = "", avoid: str = None, strict: bool = False) -> str:
+    """The core caption for the actual social posts (one short line + one
+    emoji, then hashtags). With strict=True a failure raises so the caller can
+    keep the existing caption and tell the user; otherwise it falls back to a
+    generic question (never the source post's title)."""
     if not OPENAI_API_KEY:
-        return fallback
+        if strict:
+            raise RuntimeError("No OPENAI_API_KEY is set, so captions can't be regenerated.")
+        return _assemble_posting_caption("", [])
 
     note = ""
     if on_screen_caption:
-        note += f'The on-screen hook text on the video is: "{on_screen_caption}". Build on it, don\'t just restate it.'
+        note += f'The on-screen line on the video is: "{on_screen_caption}". The core caption is separate: a question or one-line statement, do not repeat it.'
     if avoid:
-        note += f' A previous caption was: "{avoid}" -- write a genuinely different take, not a light rewording.'
+        first = (avoid.strip().splitlines() or [""])[0]
+        note += f' The previous core caption was: "{first}" -- choose a DIFFERENT question or statement.'
 
     try:
         data = _call_openai(POSTING_SYSTEM, _build_context(transcript, meta, note))
-        return _assemble_posting_caption(data.get("caption"), data.get("hashtags")) or fallback
+        cap = (data.get("caption") or "").strip()
+        if not cap:
+            raise ValueError("empty caption")
+        return _assemble_posting_caption(cap, data.get("hashtags"))
     except Exception as e:
         print(f"POSTING CAPTION GEN FAILED: {e}", flush=True)
-        return fallback
+        if strict:
+            raise
+        return _assemble_posting_caption("", [])
 
 
 # ---------------------------------------------------------------------------
@@ -807,6 +833,21 @@ def _split_master(master: str):
     body = re.sub(r"[ \t]+\n", "\n", body)
     body = re.sub(r"[ \t]{2,}", " ", body).strip()
     return body, tags
+
+
+_EMOJI_ONLY_LINE = re.compile(r"(?m)^[ \t]*((?:" + _EMOJI_RE.pattern + r"[ \t]*)+)$")
+
+
+def fix_emoji_runts(text: str) -> str:
+    """An emoji sitting alone on its own line looks like a typo: pull it up onto the end of the line above."""
+    if not text:
+        return text
+    prev = None
+    while prev != text:
+        prev = text
+        text = re.sub(r"([^\s])[ \t]*\n[ \t]*((?:" + _EMOJI_RE.pattern + r")(?:[ \t]*(?:" + _EMOJI_RE.pattern + r"))*)[ \t]*(?=\n|$)", r"\1 \2", text)
+    return text
+
 
 
 def _limit_hashtags(text: str, n: int) -> str:
@@ -860,7 +901,7 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
 
     ig = g("instagram", "caption")
     ig = base["instagram"]["caption"] if ig is None else str(ig)
-    out["instagram"] = {"caption": _trim_to_chars(_limit_hashtags(ig, LIM["ig_tags"]).strip(), LIM["ig_caption"])}
+    out["instagram"] = {"caption": _trim_to_chars(fix_emoji_runts(_limit_hashtags(ig, LIM["ig_tags"]).strip()), LIM["ig_caption"])}
     out["instagram"]["story"] = bool((raw.get("instagram") or {}).get("story")) if isinstance(raw.get("instagram"), dict) else False
     _ib = (raw.get("instagram") or {}).get("story_black") if isinstance(raw.get("instagram"), dict) else None
     out["instagram"]["story_black"] = True if _ib is None else bool(_ib)
@@ -872,7 +913,7 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     th = base["threads"]["text"] if th is None else str(th)
     tt = g("threads", "topic_tag")
     tt = base["threads"]["topic_tag"] if tt is None else str(tt)
-    out["threads"] = {"text": _trim_to_chars(_limit_hashtags(th, 5).strip(), LIM["threads_text"]), "topic_tag": _clean_topic_tag(tt, master)}
+    out["threads"] = {"text": _trim_to_chars(fix_emoji_runts(_limit_hashtags(th, 5).strip()), LIM["threads_text"]), "topic_tag": _clean_topic_tag(tt, master)}
 
     yt_title = g("youtube", "title")
     yt_title = base["youtube"]["title"] if yt_title is None else str(yt_title)
@@ -883,14 +924,14 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     cat = str(g("youtube", "category") or YT_DEFAULT_CATEGORY)
     out["youtube"] = {
         "title": _trim_to_chars(_strip_hashtags(yt_title).strip(), LIM["yt_title"]),
-        "description": _trim_to_chars(_limit_hashtags(yt_desc, LIM["yt_hashtags"]).strip(), LIM["yt_desc"]),
+        "description": _trim_to_chars(fix_emoji_runts(_limit_hashtags(yt_desc, LIM["yt_hashtags"]).strip()), LIM["yt_desc"]),
         "tags": _clean_yt_tags(yt_tags),
         "category": cat if cat.isdigit() else YT_DEFAULT_CATEGORY,
     }
 
     xt = g("x", "text")
     xt = base["x"]["text"] if xt is None else str(xt)
-    out["x"] = {"text": _trim_to_chars(_limit_hashtags(xt, LIM["x_tags"]).strip(), LIM["x_text"])}
+    out["x"] = {"text": _trim_to_chars(fix_emoji_runts(_limit_hashtags(xt, LIM["x_tags"]).strip()), LIM["x_text"])}
 
     tk = g("tiktok", "caption")
     tk = base["tiktok"]["caption"] if tk is None else str(tk)
@@ -900,7 +941,7 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     flag = lambda k: bool(tkd.get(k)) if k in tkd else False
     _priv = str(tkd.get("privacy_level") or "")
     out["tiktok"] = {
-        "caption": _trim_to_chars(_limit_hashtags(tk, LIM["tiktok_tags"]).strip(), LIM["tiktok_caption"]),
+        "caption": _trim_to_chars(fix_emoji_runts(_limit_hashtags(tk, LIM["tiktok_tags"]).strip()), LIM["tiktok_caption"]),
         "allow_comments": flag("allow_comments"), "allow_duet": flag("allow_duet"), "allow_stitch": flag("allow_stitch"),
         "privacy_level": _priv if _priv in ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY") else "",
         "disclose": flag("disclose"), "your_brand": flag("your_brand"), "branded_content": flag("branded_content"),
@@ -908,7 +949,7 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
 
     fb = g("facebook", "description")
     fb = base["facebook"]["description"] if fb is None else str(fb)
-    out["facebook"] = {"description": _trim_to_chars(_limit_hashtags(fb, LIM["fb_tags"]).strip(), LIM["fb_desc"])}
+    out["facebook"] = {"description": _trim_to_chars(fix_emoji_runts(_limit_hashtags(fb, LIM["fb_tags"]).strip()), LIM["fb_desc"])}
     out["facebook"]["story"] = bool((raw.get("facebook") or {}).get("story")) if isinstance(raw.get("facebook"), dict) else False
     _fbb = (raw.get("facebook") or {}).get("story_black") if isinstance(raw.get("facebook"), dict) else None
     out["facebook"]["story_black"] = True if _fbb is None else bool(_fbb)
@@ -941,64 +982,49 @@ def default_platform_posts(master: str) -> dict:
 
 PLATFORM_SYSTEM = BRAND_VOICE + "\n\n" + STANCE_GUIDE + "\n\n" + HASHTAG_STRATEGY + """
 
-You are adapting ONE core caption into six platform-native versions of the \
-same post, to maximise reach and engagement on each platform. Keep the \
-same take, jabs and voice everywhere -- but each version must read as if it \
-was written natively for that platform, not copy-pasted. Do not invent \
-facts beyond what the transcript and caption support. The final engagement \
-line should be a question or a punchy statement; vary it per platform.
+You are adapting ONE core caption into six platform versions of the same \
+post. The core caption is deliberately SIMPLE -- ONE short line (a question such \
+as "Do you agree with her?" or a one-line statement) followed by ONE emoji. \
+Keep every version equally simple: the visible text of each post is that one \
+line + one emoji (you may reword the question slightly per platform, but it \
+stays one short question or statement with exactly one trailing emoji). NO \
+paragraphs, NO extra context sentences, NO jokes, NO essays. Then add only what \
+the platform needs: the credit line (where listed below) and the hashtags. \
+YouTube is the only exception: its title is a short keyword-first headline and \
+its description is the same one line, the credit line and hashtags.
 
 PLATFORM RULES (hard limits in brackets):
 
-instagram -- "caption" [max 2,200 chars; EXACTLY 3-5 hashtags in total]. Only \
-the first ~125 characters show before "more", so open with the sharpest hook \
-line. Length follows the clip's CAPTION MODE (quick reaction = 1 short line; \
-rant = a full punchy paragraph, up to ~700 chars). Line breaks for rhythm. \
-Weave 1-2 searchable topic keywords into the sentence itself. End with an \
-engagement line, then the credit line if one is supplied, then the \
-hashtags on their own line at the very end -- exactly 5: 2-3 clip-specific \
-tags and 2-3 popular pool tags (#WokeVision is optional, not required).
+instagram -- "caption" [max 2,200 chars]. The one core line + one emoji, then \
+the credit line if one is supplied, then the hashtags on their own line at the \
+very end -- exactly 5: 2-3 clip-specific tags and 2-3 popular pool tags \
+(#WokeVision is optional, not required).
 
 threads -- "text" [max 500 chars] and "topic_tag" [1-50 chars, no "." or "&", \
-no leading #]. Conversational, like talking to followers, ends with a \
-genuine question to start replies (Threads rewards replies), then EXACTLY 5 \
-hashtags on their own line at the very end (same mix as Instagram: clip-specific \
-plus popular pool tags; keep the whole text under 500 chars). "topic_tag" is separate \
-from those and must be ONE of these exact approved topics, whichever fits the clip best: {THREADS_TOPIC_LIST}.
+no leading #]. The one core line + one emoji (a question works best on Threads), \
+then EXACTLY 5 hashtags on their own line. "topic_tag" is separate from those and \
+must be ONE of these exact approved topics, whichever fits the clip best: {THREADS_TOPIC_LIST}.
 
-youtube -- "title" [max 100 chars, no hashtags]: front-load the keyword and \
-hook in the first 40-50 characters (only ~50 show in the feed), curiosity or \
-conflict, no clickbait lies, no ALL CAPS shouting. "description" [max 5,000]: \
-the first line (~100 chars) is a hook that does NOT just repeat the title; \
-then 1-2 short lines of context and an engagement question, then the credit \
-line if supplied; end with 3-5 \
-hashtags on their own line (the first three show above the title; include \
-#Shorts as one of them). "tags": 8-12 search keywords/phrases (no #, total \
-under 400 characters) people would actually search for this topic.
+youtube -- "title" [max 100 chars, no hashtags]: a short plain headline of what \
+happens, keyword first (only ~50 chars show), no clickbait lies, no ALL CAPS. \
+"description" [max 5,000]: the one core line + one emoji, then the credit line if \
+supplied, then 3-5 hashtags on their own line (include #Shorts as one of them). \
+"tags": 8-12 search keywords/phrases (no #, total under 400 characters).
 
-x -- "text" [max 280 chars INCLUDING the hashtags]. One sharp, tight take. \
-End with exactly 2 hashtags (X's own guidance is two at most): one specific to the clip, one popular reach tag. Lead with the punch, finish with a question or hot line \
-that invites replies and quote-posts. No emoji spam.
+x -- "text" [max 280 chars INCLUDING the hashtags]. The one core line + one emoji, \
+then exactly 2 hashtags (one specific to the clip, one popular reach tag).
 
-tiktok -- "caption" [max 2,200 chars; EXACTLY 3-5 hashtags -- only the \
-first five count]. First line is a hook with the topic's keywords (TikTok \
-search reads captions). Length follows the CAPTION MODE but stays tighter than \
-Instagram (max ~3 lines). End with a prompt that drives comments ("Agree or \
-nah?"), then the credit line if supplied. Hashtags at the end: exactly 5, \
-the same mix as Instagram (no #WokeVision required), no #fyp/#foryou.
+tiktok -- "caption" [max 2,200 chars]. The one core line + one emoji, then the credit \
+line if supplied, then exactly 5 hashtags (same mix as Instagram), no #fyp/#foryou.
 
-facebook -- "description" [max 2,200 chars]. End with exactly 3 hashtags \
-(Facebook's useful maximum): clip-specific plus a popular reach tag. Slightly warmer and more explanatory \
-than the others, 2-4 short lines (or one line for a quick reaction), a hook \
-first line, a closing question that drives comments and shares, then the \
-credit line if supplied.
+facebook -- "description" [max 2,200 chars]. The one core line + one emoji, then the \
+credit line if supplied, then exactly 3 hashtags (clip-specific plus a popular reach tag).
 
 If the context gives a "Credit handle", the instagram, tiktok, facebook \
 and youtube versions each include one line "Credit: @handle" before the \
 hashtags (you may leave it out of threads/x).
 
-Never attack people over protected traits; target ideas, hypocrisy and \
-public figures' actions.
+Never attack people over protected traits.
 
 Respond ONLY with JSON in exactly this shape:
 {"instagram": {"caption": "..."},

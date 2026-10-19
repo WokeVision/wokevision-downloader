@@ -981,6 +981,7 @@
 
       if (job.status === "done") {
         showResult(job.result, jobId);
+        if (job.notice) { try { alert(job.notice); } catch (_) {} }
         return;
       }
 

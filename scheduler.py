@@ -86,7 +86,7 @@ def _publish_one(modules: dict, item: dict) -> dict:
 
 def run_due(modules: dict) -> int:
     """Publishes everything that is due. Returns how many it picked up."""
-    if not db.configured():
+    if not db.configured() or not db.sched_check_due():
         return 0
     # No global lock: db.sched_claim_due() claims rows atomically, so two
     # overlapping ticks never take the same post, and a slow upload on one

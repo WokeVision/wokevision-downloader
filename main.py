@@ -727,8 +727,17 @@ def _run_regenerate_video(job_id: str):
 
     try:
         _set_stage(job_id, "captioning")
-        on_screen_caption = generate_on_screen_caption(transcript, meta, avoid=prev_on_screen)
-        posting_caption = generate_posting_caption(transcript, meta, on_screen_caption)
+        try:
+            on_screen_caption = generate_on_screen_caption(transcript, meta, avoid=prev_on_screen, strict=True)
+            posting_caption = generate_posting_caption(transcript, meta, on_screen_caption, avoid=job.get("posting_caption", ""), strict=True)
+        except Exception as ai_err:
+            # The AI didn't answer: keep everything exactly as it was (never swap in the source post's
+            # caption) and tell the user so they can just press the button again.
+            print(f"REGENERATE VIDEO: AI FAILED, keeping current captions: {ai_err}", flush=True)
+            _set_job(job_id, stage="done", stage_label="Done", progress=1.0, status="done", eta_seconds=0,
+                     notice="The caption AI didn't respond, so nothing was changed. Press the button again.")
+            return
+        _set_job(job_id, notice="")
         platform_posts = generate_platform_posts(transcript, meta, on_screen_caption, posting_caption)
         _render_with_caption(job_id, on_screen_caption, posting_caption, platform_posts)
     except Exception as e:
@@ -768,7 +777,7 @@ def _run_regenerate_caption(job_id: str):
 
     try:
         posting_caption = generate_posting_caption(
-            transcript, meta, on_screen_caption, avoid=prev_posting
+            transcript, meta, on_screen_caption, avoid=prev_posting, strict=True
         )
         platform_posts = generate_platform_posts(transcript, meta, on_screen_caption, posting_caption)
         _set_job(
@@ -785,7 +794,7 @@ def _run_regenerate_caption(job_id: str):
     except Exception as e:
         tb = traceback.format_exc()
         print("REGENERATE CAPTION FAILED:", tb, flush=True)
-        _set_job(job_id, stage="error", stage_label="Error", status="error", error=str(e))
+        raise
 
 
 def _run_download_then_pipeline(job_id: str, url: str, final_source_path: str):
@@ -1843,11 +1852,12 @@ def regenerate_caption(job_id: str):
             raise HTTPException(status_code=404, detail="Unknown job id")
         if job.get("status") != "done":
             raise HTTPException(status_code=409, detail="Job isn't finished yet.")
-    _run_regenerate_caption(job_id)
+    try:
+        _run_regenerate_caption(job_id)
+    except Exception:
+        raise HTTPException(status_code=502, detail="The caption AI didn't respond, so your current caption is unchanged. Press the button again.")
     with JOBS_LOCK:
         job = JOBS.get(job_id)
-    if job.get("stage") == "error":
-        raise HTTPException(status_code=500, detail=job.get("error", "Something went wrong."))
     return {"posting_caption": job.get("posting_caption", ""), "platform_posts": job.get("platform_posts") or {},
             "result": job.get("result")}
 
@@ -4038,12 +4048,12 @@ def _explore_quiet_now() -> bool:
     return h >= 23 or h < 8
 
 
-def _explore_notify_new():
-    if not notify.configured() or _explore_quiet_now():
-        return
+def _explore_notify_new(force: bool = False):
+    if not notify.configured() or (_explore_quiet_now() and not force):
+        return 0
     base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
     if not base:
-        return
+        return 0
     per = int(os.environ.get("EXPLORE_PUSH_COUNT", "3"))
     items = explore.unnotified(per, float(explore.get_cfg().get("push_min_score", 35)))
     for it in items:
@@ -4058,6 +4068,17 @@ def _explore_notify_new():
         notify.notify("Clip to edit? " + (it.get("topic") or ""), (it.get("title") or "")[:160], review, acts, thumb)
         time.sleep(1)
     explore.mark_notified([i["id"] for i in items])
+    return len(items)
+
+
+@app.post("/api/explore/push-now")
+def explore_push_now():
+    """Sends the best not-yet-pinged suggestions to the phone right now (ignores quiet hours)."""
+    try:
+        n = _explore_notify_new(force=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)[:200])
+    return {"sent": n, "push": notify.configured(), "public_base_url_set": bool(os.environ.get("PUBLIC_BASE_URL"))}
 
 
 def _explore_scan_and_notify(notify_phone: bool = True):
@@ -4277,6 +4298,7 @@ def api_jobs_active():
 
 
 _LAST_TICK = {"at": None}
+_LAST_HOUSEKEEPING = {"at": 0.0}
 
 
 def _maybe_weekly_digest():
@@ -4319,11 +4341,18 @@ def cron_tick(request: Request, key: str = ""):
     if not _hmac.compare_digest(given.encode(), secret.encode()):
         raise HTTPException(status_code=403, detail="Bad key.")
     _LAST_TICK["at"] = time.time()
-    _maybe_weekly_digest()
-    threading.Thread(target=_maybe_daily_backup, daemon=True).start()
-    threading.Thread(target=_check_watched, daemon=True).start()
-    threading.Thread(target=_maybe_explore_scan, daemon=True).start()
-    threading.Thread(target=_auto_hide_comments, daemon=True).start()
+    # Housekeeping touches the database, and every database touch keeps the Neon compute awake
+    # (billed in CU-hours). So it runs as ONE batch every HOUSEKEEPING_MINUTES instead of on every
+    # one-minute ping; only scheduled posts that are actually due are checked each minute (and that
+    # check is skipped without a query until the next post is due -- see db.sched_check_due).
+    every = float(os.environ.get("HOUSEKEEPING_MINUTES", "30")) * 60
+    if time.time() - _LAST_HOUSEKEEPING["at"] >= every:
+        _LAST_HOUSEKEEPING["at"] = time.time()
+        _maybe_weekly_digest()
+        threading.Thread(target=_maybe_daily_backup, daemon=True).start()
+        threading.Thread(target=_check_watched, daemon=True).start()
+        threading.Thread(target=_maybe_explore_scan, daemon=True).start()
+        threading.Thread(target=_auto_hide_comments, daemon=True).start()
     threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
     return {"ok": True}
 

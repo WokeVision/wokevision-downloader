@@ -32,6 +32,15 @@ def _send(title: str, message: str, url: str = None, actions: list = None, attac
             r = requests.post(f"{os.environ.get('NTFY_SERVER', 'https://ntfy.sh').rstrip('/')}/{topic}",
                               data=message.encode("utf-8"), headers=headers, timeout=10)
             print(f"NTFY sent: HTTP {r.status_code}", flush=True)
+            if r.status_code >= 400 and (actions or attach):
+                # ntfy refused the fancy version (buttons / picture) -- send it plain so the alert still arrives.
+                print(f"NTFY rejected rich message ({r.text[:200]}); retrying plain", flush=True)
+                plain = {"Title": title.encode("utf-8")}
+                if url:
+                    plain["Click"] = url
+                r = requests.post(f"{os.environ.get('NTFY_SERVER', 'https://ntfy.sh').rstrip('/')}/{topic}",
+                                  data=message.encode("utf-8"), headers=plain, timeout=10)
+                print(f"NTFY plain retry: HTTP {r.status_code}", flush=True)
         except Exception as e:
             print(f"NTFY FAILED: {e}", flush=True)
     tok, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")

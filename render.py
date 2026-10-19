@@ -153,33 +153,72 @@ def token_width(token, font, font_size):
     return font.getlength(token)
 
 
+def _units(tokens):
+    """Groups tokens so an emoji always stays attached to the word before it
+    (an emoji must never be pushed onto a line of its own)."""
+    units = []
+    for tok in tokens:
+        if EMOJI_PATTERN.fullmatch(tok) and units:
+            units[-1].append(tok)
+        else:
+            units.append([tok])
+    return units
+
+
 def measure_and_wrap_tokens(tokens, font_path, max_width_px, max_font, min_font, max_lines):
-    def wrap_with(font, font_size):
+    units = _units(tokens)
+
+    def unit_w(u, font, font_size, space_w):
+        return sum(token_width(t, font, font_size) for t in u) + space_w * (len(u) - 1)
+
+    def wrap_units(font, font_size, limit):
         space_w = font.getlength(" ")
         lines, current, current_w = [], [], 0
-        for tok in tokens:
-            w = token_width(tok, font, font_size)
+        for u in units:
+            w = unit_w(u, font, font_size, space_w)
             add_w = w + (space_w if current else 0)
-            if current and current_w + add_w > max_width_px:
+            if current and current_w + add_w > limit:
                 lines.append(current)
-                current, current_w = [tok], w
+                current, current_w = [u], w
             else:
-                current.append(tok)
+                current.append(u)
                 current_w += add_w
         if current:
             lines.append(current)
         return lines
 
+    def balanced(font, font_size):
+        """Greedy wrap, then narrow the line width as far as the same number of
+        lines allows, so the lines come out even and no line is left holding a
+        single stray word (a 'runt')."""
+        lines = wrap_units(font, font_size, max_width_px)
+        n = len(lines)
+        if n > 1:
+            space_w = font.getlength(" ")
+            lo = int(max(unit_w(u, font, font_size, space_w) for u in units))
+            hi = int(max_width_px)
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if len(wrap_units(font, font_size, mid)) <= n:
+                    hi = mid
+                else:
+                    lo = mid + 1
+            lines = wrap_units(font, font_size, hi)
+            # Last line is one lonely word while the line above has spare words: pull one down.
+            while len(lines) > 1 and len(lines[-1]) == 1 and len(lines[-2]) >= 3:
+                lines[-1].insert(0, lines[-2].pop())
+        return [[t for u in line for t in u] for line in lines]
+
     for font_size in range(max_font, min_font - 1, -2):
         font = ImageFont.truetype(font_path, font_size)
-        lines = wrap_with(font, font_size)
+        lines = balanced(font, font_size)
         if len(lines) <= max_lines:
             ascent, descent = font.getmetrics()
             line_height = int((ascent + descent) * 1.25)
             return font_size, lines, line_height, font
 
     font = ImageFont.truetype(font_path, min_font)
-    lines = wrap_with(font, min_font)[:max_lines]
+    lines = balanced(font, min_font)[:max_lines]
     ascent, descent = font.getmetrics()
     line_height = int((ascent + descent) * 1.25)
     return min_font, lines, line_height, font

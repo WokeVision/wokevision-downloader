@@ -13,6 +13,7 @@ working access to your accounts.
 import os
 import json
 import contextlib
+import time
 import psycopg2
 import psycopg2.extras
 from cryptography.fernet import Fernet, InvalidToken
@@ -644,6 +645,25 @@ def _row(r):
     return r
 
 
+# --- Scheduler wake-up gate --------------------------------------------------
+# The outside timer pings the app every minute. Asking Postgres "is anything
+# due?" on every ping kept the Neon compute awake 24/7 and burned the monthly
+# compute allowance, so the app remembers (in memory) when the next scheduled
+# post is due and only touches the database then, plus a slow heartbeat.
+_SCHED_WAKE = [0.0]
+SCHED_HEARTBEAT = 25 * 60
+
+
+def sched_wake_now():
+    """Call after anything that changes the schedule so the next tick re-checks immediately."""
+    _SCHED_WAKE[0] = 0.0
+
+
+def sched_check_due() -> bool:
+    return time.time() >= _SCHED_WAKE[0]
+
+
+
 def sched_upsert(history_id: str, platform: str, run_at):
     """Schedules (or re-schedules) one platform of one edit. An existing
     not-yet-posted row for the same edit+platform is updated rather than
@@ -661,6 +681,7 @@ def sched_upsert(history_id: str, platform: str, run_at):
             else:
                 cur.execute("""INSERT INTO scheduled_posts (id, history_id, platform, run_at) VALUES (%s, %s, %s, %s) RETURNING *""",
                             (str(uuid.uuid4()), history_id, platform, run_at))
+            sched_wake_now()
             return _row(cur.fetchone())
 
 
@@ -671,6 +692,7 @@ def sched_repost(history_id: str, platform: str, run_at):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("INSERT INTO scheduled_posts (id, history_id, platform, run_at) VALUES (%s, %s, %s, %s) RETURNING *",
                         (str(uuid.uuid4()), history_id, platform, run_at))
+            sched_wake_now()
             return _row(cur.fetchone())
 
 
@@ -706,6 +728,7 @@ def sched_set_time(sid: str, run_at):
             cur.execute("""UPDATE scheduled_posts SET run_at = %s, status = 'scheduled', attempts = 0, started_at = NULL, result = NULL
                            WHERE id = %s AND status <> 'publishing' RETURNING *""", (run_at, sid))
             r = cur.fetchone()
+    sched_wake_now()
     return _row(r) if r else None
 
 
@@ -733,7 +756,14 @@ def sched_claim_due(missed_after_minutes: int = 180, limit: int = 12):
             cur.execute("""UPDATE scheduled_posts SET status = 'publishing', attempts = attempts + 1, started_at = now()
                            WHERE id IN (SELECT id FROM scheduled_posts WHERE status = 'scheduled' AND run_at <= now()
                                         ORDER BY run_at FOR UPDATE SKIP LOCKED LIMIT %s) RETURNING *""", (limit,))
-            return [_row(r) for r in cur.fetchall()]
+            rows = [_row(r) for r in cur.fetchall()]
+            if rows:
+                _SCHED_WAKE[0] = 0.0
+            else:
+                cur.execute("SELECT EXTRACT(EPOCH FROM min(run_at)) AS t FROM scheduled_posts WHERE status = 'scheduled'")
+                nxt = (cur.fetchone() or {}).get("t")
+                _SCHED_WAKE[0] = min(float(nxt), time.time() + SCHED_HEARTBEAT) if nxt else time.time() + SCHED_HEARTBEAT
+            return rows
 
 
 def sched_finish(sid: str, status: str, result: dict, retry_in_minutes: int = None):
@@ -745,6 +775,7 @@ def sched_finish(sid: str, status: str, result: dict, retry_in_minutes: int = No
             else:
                 cur.execute("UPDATE scheduled_posts SET status = %s, result = %s WHERE id = %s",
                             (status, json.dumps(result or {}), sid))
+    sched_wake_now()
 
 
 # --- Account profile drafts (bio, display name, link -- per platform) -------

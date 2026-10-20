@@ -3504,6 +3504,8 @@ def schedule_post_now(sid: str):
     r = db.sched_set_time(sid, _dt.datetime.now(_dt.timezone.utc))
     if not r:
         raise HTTPException(status_code=409, detail="That post can't be changed right now (it may be posting).")
+    if _explore_push_slot_due():
+        threading.Thread(target=_explore_push_slot, daemon=True).start()
     threading.Thread(target=scheduler.run_due, args=(PLATFORM_MODULES,), daemon=True).start()
     return {"ok": True}
 
@@ -4081,6 +4083,42 @@ def explore_push_now():
     return {"sent": n, "push": notify.configured(), "public_base_url_set": bool(os.environ.get("PUBLIC_BASE_URL"))}
 
 
+# Phone suggestions go out at fixed times only (London time), not after every scan.
+EXPLORE_PUSH_SLOTS = [(11, 55), (18, 55)]
+_PUSHED_SLOTS = set()
+
+
+def _explore_push_slot_due():
+    """Slot key like '2026-10-20-1155' if we are inside a push window and haven't sent it yet, else None.
+    Pure in-memory check, so the one-minute timer never wakes the database for it."""
+    try:
+        from zoneinfo import ZoneInfo
+        now = _dt.datetime.now(ZoneInfo("Europe/London"))
+    except Exception:
+        return None
+    for h, m in EXPLORE_PUSH_SLOTS:
+        start = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if 0 <= (now - start).total_seconds() < 3600:
+            key = f"{now:%Y-%m-%d}-{h:02d}{m:02d}"
+            return None if key in _PUSHED_SLOTS else key
+    return None
+
+
+def _explore_push_slot():
+    key = _explore_push_slot_due()
+    if not key:
+        return
+    _PUSHED_SLOTS.add(key)
+    try:
+        if insights.kv_get("explore_push_slot") == key:
+            return
+        insights.kv_set("explore_push_slot", key)
+        _explore_notify_new(force=True)
+    except Exception as e:
+        print(f"EXPLORE SLOT PUSH FAILED: {e}", flush=True)
+
+
+
 def _explore_scan_and_notify(notify_phone: bool = True):
     try:
         explore.scan()
@@ -4098,11 +4136,9 @@ def _maybe_explore_scan():
         every = float(os.environ.get("EXPLORE_EVERY_HOURS", "4")) * 3600
         last = float(insights.kv_get("explore_last") or 0)
         if time.time() - last < every:
-            # Items found while it was quiet hours (or by a manual scan) still get their ping later.
-            _explore_notify_new()
             return
         insights.kv_set("explore_last", str(time.time()))
-        _explore_scan_and_notify(True)
+        _explore_scan_and_notify(False)
     except Exception as e:
         print(f"EXPLORE TICK FAILED: {e}", flush=True)
 

@@ -1108,6 +1108,32 @@ def dump_all():
     return out
 
 
+def dump_to_file(fileobj, taken_at: str) -> dict:
+    """Streams every public table as JSON into an open (gzip) file, a few hundred rows at a time,
+    so a big database never has to sit in memory at once. Returns {table: row_count}."""
+    counts = {}
+    w = lambda t: fileobj.write(t.encode("utf-8"))
+    with _conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY 1")
+        tables = [r[0] for r in cur.fetchall()]
+        w('{"taken_at": ' + json.dumps(taken_at) + ', "tables": {')
+        for i, t in enumerate(tables):
+            w(("," if i else "") + json.dumps(t) + ": [")
+            n = 0
+            sc = conn.cursor(name=f"bk_{i}")
+            sc.itersize = 300
+            sc.execute(f'SELECT row_to_json(x) FROM "{t}" x')
+            for r in sc:
+                w(("," if n else "") + json.dumps(r[0], default=str))
+                n += 1
+            sc.close()
+            w("]")
+            counts[t] = n
+        w("}}")
+    return counts
+
+
 def _watch_init(cur):
     cur.execute("""CREATE TABLE IF NOT EXISTS clip_watch (
         id TEXT PRIMARY KEY, url TEXT NOT NULL, title TEXT, focus TEXT DEFAULT '', last_seen TEXT,

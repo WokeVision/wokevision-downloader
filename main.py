@@ -4150,36 +4150,64 @@ _BACKUP_KEEP = 14
 
 
 def run_backup() -> dict:
-    """Dumps every table to a gzipped JSON file in R2 (backups/db-<time>.json.gz) and prunes old ones."""
+    """Streams every table into a gzipped JSON file (on disk, not in memory), uploads it to R2 as
+    backups/db-<time>.json.gz (3 tries), and prunes all but the newest _BACKUP_KEEP."""
     if not (db.configured() and storage.configured()):
         raise RuntimeError("Backups need both the database and R2 storage to be configured.")
-    data = db.dump_all()
-    raw = json.dumps({"taken_at": _dt.datetime.now(_dt.timezone.utc).isoformat(), "tables": data}, default=str).encode()
-    blob = _gzip.compress(raw)
-    key = "backups/db-" + _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M") + ".json.gz"
-    if not storage.put_bytes(key, blob, "application/gzip"):
-        raise RuntimeError("Couldn't write the backup to storage.")
+    import tempfile
+    now = _dt.datetime.now(_dt.timezone.utc)
+    key = "backups/db-" + now.strftime("%Y%m%d-%H%M") + ".json.gz"
+    tmp = tempfile.NamedTemporaryFile(suffix=".json.gz", delete=False)
+    tmp.close()
+    try:
+        with _gzip.open(tmp.name, "wb", compresslevel=6) as gz:
+            counts = db.dump_to_file(gz, now.isoformat())
+        size = os.path.getsize(tmp.name)
+        ok = False
+        for attempt in range(3):
+            if storage.upload_file(tmp.name, key):
+                ok = True
+                break
+            time.sleep(2 * (attempt + 1))
+        if not ok:
+            raise RuntimeError("Couldn't write the backup to storage (R2 upload failed 3 times -- check the R2 keys/bucket).")
+    finally:
+        try:
+            os.remove(tmp.name)
+        except Exception:
+            pass
     for old in storage.list_objects("backups/db-")[_BACKUP_KEEP:]:
         storage.delete_key(old["key"])
-    return {"key": key, "size": len(blob), "rows": sum(len(v) for v in data.values()), "tables": len(data)}
+    return {"key": key, "size": size, "rows": sum(counts.values()), "tables": len(counts)}
+
+
+_BACKUP_STATE = {"last_fail": 0.0, "last_alert_day": ""}
 
 
 def _maybe_daily_backup():
+    """At most one backup per UTC day. A failure is retried no sooner than 3 hours later and only
+    alerts your phone once per day (with the real reason), instead of on every attempt."""
     try:
         if not (db.configured() and storage.configured()):
+            return
+        if time.time() - _BACKUP_STATE["last_fail"] < 3 * 3600:
             return
         today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
         if insights.kv_get("backup_day") == today:
             return
-        insights.kv_set("backup_day", today)
         r = run_backup()
+        insights.kv_set("backup_day", today)      # only marked done once it actually worked
         print(f"BACKUP OK {r}", flush=True)
     except Exception as e:
+        _BACKUP_STATE["last_fail"] = time.time()
         print(f"BACKUP FAILED: {e}", flush=True)
-        try:
-            notify.notify("Database backup failed", str(e)[:200])
-        except Exception:
-            pass
+        today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+        if _BACKUP_STATE["last_alert_day"] != today:
+            _BACKUP_STATE["last_alert_day"] = today
+            try:
+                notify.notify("Database backup failed", (str(e) or type(e).__name__)[:200] + " (will retry; one alert per day)")
+            except Exception:
+                pass
 
 
 @app.post("/api/backup/run")

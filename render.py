@@ -475,7 +475,7 @@ def render_staged(source_path: str, output_path: str, progress_cb=None, crop=Non
         "-filter_complex", filter_complex,
         "-map", f"[{last_label}]",
         "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-profile:v", "high",
         "-c:a", "aac",
         "-movflags", "+faststart",
         "-shortest",
@@ -552,7 +552,7 @@ def apply_caption(staged_path: str, caption_text: str, output_path: str, progres
         "-filter_complex", filter_complex,
         "-map", f"[{last}]",
         "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-profile:v", "high",
         "-c:a", "aac",
         "-movflags", "+faststart",
         "-shortest",
@@ -663,7 +663,7 @@ def post_process(path: str, opts: dict) -> None:
         cmd += ["-map", "0:v", "-map", "0:a?"]
         if loud:
             cmd += ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
-    cmd += (["-c:v", "libx264", "-preset", "ultrafast", "-crf", "21"] if reencode else ["-c:v", "copy"])
+    cmd += (["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p"] if reencode else ["-c:v", "copy"])
     cmd += ["-c:a", "aac", "-movflags", "+faststart", tmp]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     if r.returncode != 0 or not os.path.exists(tmp) or os.path.getsize(tmp) == 0:

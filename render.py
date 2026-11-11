@@ -63,10 +63,28 @@ EMOJI_PATTERN = re.compile(
 )
 
 
+# One emoji at a time (EMOJI_PATTERN above groups a whole run, which used to turn
+# two emoji typed together into a single unknown "emoji" that rendered as a gap).
+SINGLE_EMOJI_PATTERN = re.compile(
+    "((?:[\U0001F1E6-\U0001F1FF]{2})"
+    "|(?:[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002190-\U000021FF\U00002B00-\U00002BFF]"
+    "[\U0000FE0F\U0000200D\U0001F3FB-\U0001F3FF]*))"
+)
+
+
+def _is_emoji(tok) -> bool:
+    return bool(SINGLE_EMOJI_PATTERN.fullmatch(tok))
+
+
+def _gap(prev, tok, space_w):
+    """Space between two tokens; emoji sit directly against each other."""
+    return 0 if (prev is not None and _is_emoji(prev) and _is_emoji(tok)) else space_w
+
+
 def strip_hashtags(text: str) -> str:
+    # Quotation marks are kept: a top line may legitimately open (or close) with one.
     text = HASHTAG_PATTERN.sub("", text)
-    text = text.strip().strip(QUOTE_STRIP_CHARS).strip()
-    return re.sub(r"\s+", " ", text)
+    return re.sub(r"\s+", " ", text.strip())
 
 
 def codepoints_for(emoji: str) -> str:
@@ -148,7 +166,7 @@ def get_scaled_height(image_path, target_w):
 
 
 def token_width(token, font, font_size):
-    if EMOJI_PATTERN.fullmatch(token):
+    if _is_emoji(token):
         return font_size
     return font.getlength(token)
 
@@ -158,18 +176,35 @@ def _units(tokens):
     (an emoji must never be pushed onto a line of its own)."""
     units = []
     for tok in tokens:
-        if EMOJI_PATTERN.fullmatch(tok) and units:
+        if _is_emoji(tok) and units:
             units[-1].append(tok)
         else:
             units.append([tok])
     return units
 
 
+def _fit_forced_lines(line_token_lists, font_path, max_width_px, max_font, min_font):
+    """Manual line breaks: every typed line stays exactly one line; the font shrinks
+    until the widest one fits."""
+    for font_size in range(max_font, min_font - 1, -2):
+        font = ImageFont.truetype(font_path, font_size)
+        space_w = font.getlength(" ")
+        widest = 0
+        for toks in line_token_lists:
+            w = sum(token_width(t, font, font_size) for t in toks) + sum(
+                _gap(toks[i - 1], toks[i], space_w) for i in range(1, len(toks)))
+            widest = max(widest, w)
+        if widest <= max_width_px:
+            break
+    ascent, descent = font.getmetrics()
+    return font_size, line_token_lists, int((ascent + descent) * 1.25), font
+
+
 def measure_and_wrap_tokens(tokens, font_path, max_width_px, max_font, min_font, max_lines):
     units = _units(tokens)
 
     def unit_w(u, font, font_size, space_w):
-        return sum(token_width(t, font, font_size) for t in u) + space_w * (len(u) - 1)
+        return sum(token_width(t, font, font_size) for t in u) + sum(_gap(u[i - 1], u[i], space_w) for i in range(1, len(u)))
 
     def wrap_units(font, font_size, limit):
         space_w = font.getlength(" ")
@@ -224,17 +259,45 @@ def measure_and_wrap_tokens(tokens, font_path, max_width_px, max_font, min_font,
     return min_font, lines, line_height, font
 
 
-def build_caption_image(caption_text):
-    caption_text = strip_hashtags(caption_text)
-    spaced = EMOJI_PATTERN.sub(lambda m: f" {m.group(0)} ", caption_text)
-    spaced = re.sub(r"\s+", " ", spaced).strip()
-    tokens = [t for t in spaced.split(" ") if t]
+def clean_layout(layout):
+    """Normalises the user's caption layout ({scale, dy}) to safe ranges."""
+    layout = layout if isinstance(layout, dict) else {}
+    try:
+        scale = float(layout.get("scale", 1.0))
+    except (TypeError, ValueError):
+        scale = 1.0
+    try:
+        dy = int(round(float(layout.get("dy", 0))))
+    except (TypeError, ValueError):
+        dy = 0
+    return {"scale": max(0.5, min(1.5, scale)), "dy": max(-120, min(120, dy))}
 
+
+def _caption_tokens(line):
+    line = strip_hashtags(line)
+    # Separate each emoji into its own token (spaces are only layout hints, the gaps
+    # between two emoji are dropped again below so they stay glued together).
+    spaced = SINGLE_EMOJI_PATTERN.sub(lambda m: f" {m.group(0)} ", line)
+    spaced = re.sub(r"\s+", " ", spaced).strip()
+    return [t for t in spaced.split(" ") if t]
+
+
+def build_caption_image(caption_text, layout=None):
+    layout = clean_layout(layout)
+    max_font = max(CAPTION_MIN_FONT, round(CAPTION_MAX_FONT * layout["scale"]))
+    min_font = max(12, round(CAPTION_MIN_FONT * min(1.0, layout["scale"])))
+    manual = [ln for ln in str(caption_text or "").replace("\r", "").split("\n") if ln.strip()]
     max_width_px = VIDEO_W - 2 * CAPTION_SIDE_PADDING
-    font_size, lines_tokens, line_height, font = measure_and_wrap_tokens(
-        tokens, CAPTION_FONT_PATH, max_width_px,
-        CAPTION_MAX_FONT, CAPTION_MIN_FONT, CAPTION_MAX_LINES,
-    )
+    if len(manual) > 1:
+        forced = [t for t in (_caption_tokens(ln) for ln in manual) if t]
+        font_size, lines_tokens, line_height, font = _fit_forced_lines(
+            forced, CAPTION_FONT_PATH, max_width_px, max_font, min_font)
+    else:
+        tokens = _caption_tokens(" ".join(manual) if manual else "")
+        font_size, lines_tokens, line_height, font = measure_and_wrap_tokens(
+            tokens, CAPTION_FONT_PATH, max_width_px,
+            max_font, min_font, CAPTION_MAX_LINES,
+        )
     space_w = font.getlength(" ")
     ascent, _descent = font.getmetrics()
     canvas_h = line_height * len(lines_tokens)
@@ -244,13 +307,13 @@ def build_caption_image(caption_text):
 
     for line_idx, line_tokens in enumerate(lines_tokens):
         widths = [token_width(t, font, font_size) for t in line_tokens]
-        gap_total = space_w * (len(line_tokens) - 1) if len(line_tokens) > 1 else 0
+        gap_total = sum(_gap(line_tokens[i - 1], line_tokens[i], space_w) for i in range(1, len(line_tokens)))
         total_w = sum(widths) + gap_total
         cur_x = (VIDEO_W - total_w) / 2
         baseline_y = line_idx * line_height + ascent
 
-        for tok, w in zip(line_tokens, widths):
-            if EMOJI_PATTERN.fullmatch(tok):
+        for i, (tok, w) in enumerate(zip(line_tokens, widths)):
+            if _is_emoji(tok):
                 img_path = get_emoji_image(tok)
                 if img_path:
                     try:
@@ -262,12 +325,34 @@ def build_caption_image(caption_text):
                         pass
             else:
                 draw.text((cur_x, baseline_y), tok, font=font, fill=CAPTION_COLOR, anchor="ls")
-            cur_x += w + space_w
+            if i + 1 < len(line_tokens):
+                cur_x += w + _gap(tok, line_tokens[i + 1], space_w)
 
     os.makedirs(TMP_DIR, exist_ok=True)
     path = os.path.join(TMP_DIR, f"caption_{uuid.uuid4()}.png")
     canvas.save(path)
     return path, VIDEO_W, canvas_h
+
+
+def caption_preview_png(caption_text, layout=None, scale=0.5):
+    """Exact preview of the top of the final canvas (real font, wrapping, emoji):
+    white canvas, grey stand-in for the video, the caption where it will land."""
+    layout = clean_layout(layout)
+    path, _w, cap_h = build_caption_image(caption_text, layout)
+    try:
+        canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), (255, 255, 255, 255))
+        ImageDraw.Draw(canvas).rectangle(
+            [VIDEO_X, VIDEO_Y, VIDEO_X + VIDEO_W, VIDEO_Y + VIDEO_H], fill=(205, 208, 214, 255))
+        cap = Image.open(path).convert("RGBA")
+        canvas.alpha_composite(cap, (VIDEO_X, max(0, VIDEO_Y - CAPTION_GAP - cap_h + layout["dy"])))
+        canvas = canvas.convert("RGB").resize((round(CANVAS_W * scale), round(CANVAS_H * scale)), Image.LANCZOS)
+        import io
+        buf = io.BytesIO()
+        canvas.save(buf, "PNG")
+        return buf.getvalue()
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
 
 
 def _probe_duration(path: str):
@@ -508,14 +593,15 @@ def _watermark_geometry(wm_path, pos):
 
 
 def apply_caption(staged_path: str, caption_text: str, output_path: str, progress_cb=None,
-                  cues=None, watermark=None, cue_style="classic"):
+                  cues=None, watermark=None, cue_style="classic", layout=None):
     """The fast path: overlays the on-screen caption, the optional campaign
     watermark ({"path","pos"}) and the optional burned-in speech captions
     (cues: [{start,end,text}]) onto an already-staged video and re-encodes.
     None of these need the original source re-decoded or re-cropped."""
-    caption_img_path, cap_w, cap_h = build_caption_image(caption_text)
+    layout = clean_layout(layout)
+    caption_img_path, cap_w, cap_h = build_caption_image(caption_text, layout)
     caption_x = VIDEO_X
-    caption_y = VIDEO_Y - CAPTION_GAP - cap_h
+    caption_y = max(0, VIDEO_Y - CAPTION_GAP - cap_h + layout["dy"])
 
     inputs = ["-i", staged_path, "-i", caption_img_path]
     chain = [f"[1:v]format=rgba[capimg]", f"[0:v][capimg]overlay={caption_x}:{caption_y}[v1]"]

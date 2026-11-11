@@ -91,11 +91,17 @@ This is crazy! \U0001f92f
 Mad props to this guy \U0001f44f
 He did well to stand up for himself like that \U0001f4af
 
-EXAMPLES OF THE ON-SCREEN TOP LINE (simple, shocked at what is literally happening):
-Wait, did she really just say that? \U0001f633
-He actually walked up and did it \U0001f62e
-The way he just stood there and took it \U0001f633
-She came in swinging with zero warning \U0001f62f"""
+EXAMPLES OF THE ON-SCREEN TOP LINE (simple, shocked, specific to what happens; note how different the shapes are):
+Did the teacher really just say that to a student? \U0001f633
+He actually walked up to the cop and did it \U0001f62e
+The way she shut him down in one sentence \U0001f92f
+Nobody in that room expected her to snap \U0001f62c
+That look on his face says everything \U0001f440
+Watch what happens when the crowd turns on him \U0001f62f
+The judge laughed in his face and kept going \U0001f633
+Her own mum let her walk straight into that \U0001f605
+He really thought nobody would notice \U0001f62e
+She said it live on air with a straight face \U0001f92f"""
 
 
 def style_examples() -> str:
@@ -124,18 +130,30 @@ Then write everything to match that read."""
 # combined (fast, single-call) generator and the standalone regenerate-only
 # one. Emoji placement is spelled out explicitly because this is the part
 # that was quietly getting dropped/misplaced before.
-ON_SCREEN_RULES = """Write ONE short line of text to overlay on top of a video. It must be \
-SIMPLE and plain: sound genuinely shocked, surprised or stunned at what is \
-literally happening in the video itself (e.g. "Wait, did she really just say that?", \
-"He actually walked up and did it", "The way he just took it"). Describe the \
-real moment on screen -- who did what -- using plain everyday words. No jokes, \
-no sarcasm, no politics, no clever wordplay, no opinions, no slogans. Do not \
-mention things that are not in the video. Under 10 words, no hashtags, no \
-quotation marks around the line.
+ON_SCREEN_RULES = """Write ONE short line of text to overlay at the top of a video. It must be \
+SIMPLE, plain and sound genuinely shocked, surprised or stunned -- but about the \
+SPECIFIC thing that actually happens in THIS video, so someone who has not heard the \
+audio still understands what the clip is about. Name the real moment: who did what \
+(use the person, object, place or quote that is actually in the clip, e.g. "the \
+teacher", "this driver", "the judge", "her own mum"). Use plain everyday words. No \
+jokes, no sarcasm, no politics, no slogans, no clever wordplay, no opinions. Never \
+mention anything that is not in the video, and never write a line that could be pasted \
+onto a different clip unchanged -- if it would fit any video, it is wrong.
 
-End the line with exactly ONE emoji that fits (😳 😮 😯 🤯 😬 are typical) -- it \
-must be the very last character. Do not put a full stop, period, or any other \
-punctuation between the last word and the emoji. Do not use more than one emoji."""
+VARY the sentence shape every time. Rotate between, for example: a question about the \
+moment ("Did he really just do that to a police officer?"), a flat statement of the \
+moment ("The judge actually laughed in his face"), a "the way..." line ("The way she \
+shut him down in one sentence"), a "nobody expected..." line, a "watch what happens \
+when..." line, a reaction to a detail ("That look on his face says everything"). Do NOT \
+start with "Wait," or "Did that really just happen" unless the clip truly calls for it, \
+and never reuse the opening words of a line from the recently-used list if one is given.
+
+Under 12 words, no hashtags. Do not wrap the line in quotation marks (only use quotation \
+marks if you are quoting words a person actually says in the clip).
+
+End the line with exactly ONE emoji that fits the feeling (😳 😮 😯 🤯 😬 😂 😤 👀 are typical) -- \
+it must be the very last character, with no full stop or other punctuation between the \
+last word and the emoji. Use only one emoji."""
 
 # Platform minimums the posting caption is built against, so ONE caption
 # works unedited on every platform it goes out to (Instagram, YouTube, X,
@@ -225,6 +243,44 @@ _EMOJI_RE = re.compile(
 )
 
 
+_WRAP_Q = {"\"": "\"", "\u201c": "\u201d", "'": "'", "\u2018": "\u2019"}
+
+
+def _unwrap_quotes(text: str) -> str:
+    """AI lines sometimes come back wrapped in one pair of quotes around the whole
+    line; remove just that wrapping (a line the owner types themselves is never touched)."""
+    t = (text or "").strip()
+    tail = ""
+    em = re.search(r"((?:\s*(?:" + _EMOJI_RE.pattern + r"))+)\s*$", t)
+    if em:
+        tail, t = em.group(1), t[:em.start()].rstrip()
+    if len(t) >= 2 and t[0] in _WRAP_Q and t[-1] == _WRAP_Q[t[0]] and t.count(t[0]) <= 2:
+        t = t[1:-1].strip()
+    return (t + (" " + tail.strip() if tail else "")).strip()
+
+
+def recent_top_lines(n: int = 14) -> list:
+    """The on-screen lines used on the most recent edits, so new ones don't repeat them."""
+    try:
+        out = []
+        for r in db.list_history(limit=n * 2):
+            t = (r.get("on_screen_caption") or "").strip()
+            if t and t not in out:
+                out.append(t)
+            if len(out) >= n:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def _recent_note() -> str:
+    r = recent_top_lines()
+    if not r:
+        return ""
+    return "RECENTLY USED top lines (do not reuse their wording, sentence shape or opening words):\n" + "\n".join("- " + x for x in r)
+
+
 def _enforce_single_trailing_emoji(text: str) -> str:
     """Guarantees the on-screen line ends in exactly one emoji with no
     punctuation in between, regardless of what the model actually returned:
@@ -234,7 +290,7 @@ def _enforce_single_trailing_emoji(text: str) -> str:
     - if no emoji is present at all, appends a fallback one
     - collapses multiple trailing emoji down to one
     """
-    text = (text or "").strip()
+    text = _unwrap_quotes(text)
     if not text:
         return text
 
@@ -255,7 +311,9 @@ QUESTION_EMOJI = ["\U0001F447", "\U0001F914", "\U0001F928", "\U0001F605", "\U000
 STATEMENT_EMOJI = ["\U0001F633", "\U0001F92F", "\U0001F62E", "\U0001F4AF", "\U0001F440"]
 FALLBACK_QUESTIONS = ["What do you think about this?", "Is this valid?", "Do you agree with this?",
                       "How would you react?", "What would you do in this situation?"]
-FALLBACK_TOP = ["Wait, is this actually happening?", "Did that really just happen?", "I can't believe what I just watched"]
+FALLBACK_TOP = ["Wait, is this actually happening?", "Did that really just happen?", "I can't believe what I just watched",
+                "Nobody saw that coming", "The way this just played out", "Watch what happens next",
+                "That escalated in seconds", "He really went there", "She did not hold back at all", "Look at the reaction in the room"]
 
 
 def _core_line(text: str, default: str = "") -> str:
@@ -669,7 +727,7 @@ def generate_captions(transcript: str, meta: dict) -> tuple:
     if not OPENAI_API_KEY:
         return fallback_top, fallback_posting
     try:
-        data = _call_openai(COMBINED_SYSTEM, _build_context(transcript, meta))
+        data = _call_openai(COMBINED_SYSTEM, _build_context(transcript, meta, _recent_note()))
         on_screen = _enforce_single_trailing_emoji((data.get("on_screen") or "").strip() or random.choice(FALLBACK_TOP))
         posting = _assemble_posting_caption(data.get("caption"), data.get("hashtags")) or fallback_posting
         return on_screen, posting
@@ -689,6 +747,7 @@ def generate_on_screen_caption(transcript: str, meta: dict, avoid: str = None, s
         return _enforce_single_trailing_emoji(random.choice(FALLBACK_TOP))
 
     note = f'A previous version was: "{avoid}" -- write a genuinely different one, not a light rewording.' if avoid else ""
+    note = (note + "\n\n" + _recent_note()).strip()
     try:
         data = _call_openai(ON_SCREEN_SYSTEM, _build_context(transcript, meta, note))
         line = (data.get("on_screen") or "").strip()
@@ -719,6 +778,7 @@ def generate_hook_options(transcript: str, meta: dict, current: str = "") -> lis
     if not OPENAI_API_KEY:
         return []
     note = f'The current hook is: "{current}" -- all three must be different from it.' if current else ""
+    note = (note + "\n\n" + _recent_note()).strip()
     try:
         data = _call_openai(HOOKS_SYSTEM, _build_context(transcript, meta, note))
         out = []
@@ -902,7 +962,9 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     ig = g("instagram", "caption")
     ig = base["instagram"]["caption"] if ig is None else str(ig)
     out["instagram"] = {"caption": _trim_to_chars(fix_emoji_runts(_limit_hashtags(ig, LIM["ig_tags"]).strip()), LIM["ig_caption"])}
-    out["instagram"]["story"] = bool((raw.get("instagram") or {}).get("story")) if isinstance(raw.get("instagram"), dict) else False
+    # "Also add to my Story" is ON by default everywhere it exists (an explicit saved False is respected).
+    _is = (raw.get("instagram") or {}).get("story") if isinstance(raw.get("instagram"), dict) else None
+    out["instagram"]["story"] = True if _is is None else bool(_is)
     _ib = (raw.get("instagram") or {}).get("story_black") if isinstance(raw.get("instagram"), dict) else None
     out["instagram"]["story_black"] = True if _ib is None else bool(_ib)
     _fc = g("instagram", "first_comment")
@@ -936,24 +998,108 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     tk = g("tiktok", "caption")
     tk = base["tiktok"]["caption"] if tk is None else str(tk)
     tkd = raw.get("tiktok") if isinstance(raw.get("tiktok"), dict) else {}
-    # TikTok's posting rules: interactions start OFF, privacy has no default, and the
-    # commercial-content disclosure starts OFF -- the user opts in to each.
+    # TikTok defaults (app audit is approved): everyone can view, comments/duets/stitches
+    # allowed. The commercial-content disclosure still starts OFF. Anything the user saved
+    # explicitly is kept as is.
     flag = lambda k: bool(tkd.get(k)) if k in tkd else False
+    iflag = lambda k: bool(tkd.get(k)) if k in tkd else True
     _priv = str(tkd.get("privacy_level") or "")
     out["tiktok"] = {
         "caption": _trim_to_chars(fix_emoji_runts(_limit_hashtags(tk, LIM["tiktok_tags"]).strip()), LIM["tiktok_caption"]),
-        "allow_comments": flag("allow_comments"), "allow_duet": flag("allow_duet"), "allow_stitch": flag("allow_stitch"),
-        "privacy_level": _priv if _priv in ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY") else "",
+        "allow_comments": iflag("allow_comments"), "allow_duet": iflag("allow_duet"), "allow_stitch": iflag("allow_stitch"),
+        "privacy_level": _priv if _priv in ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY") else "PUBLIC_TO_EVERYONE",
         "disclose": flag("disclose"), "your_brand": flag("your_brand"), "branded_content": flag("branded_content"),
     }
 
     fb = g("facebook", "description")
     fb = base["facebook"]["description"] if fb is None else str(fb)
     out["facebook"] = {"description": _trim_to_chars(fix_emoji_runts(_limit_hashtags(fb, LIM["fb_tags"]).strip()), LIM["fb_desc"])}
-    out["facebook"]["story"] = bool((raw.get("facebook") or {}).get("story")) if isinstance(raw.get("facebook"), dict) else False
+    _fs = (raw.get("facebook") or {}).get("story") if isinstance(raw.get("facebook"), dict) else None
+    out["facebook"]["story"] = True if _fs is None else bool(_fs)
     _fbb = (raw.get("facebook") or {}).get("story_black") if isinstance(raw.get("facebook"), dict) else None
     out["facebook"]["story_black"] = True if _fbb is None else bool(_fbb)
     return out
+
+
+_SYNC_FIELDS = {"instagram": "caption", "threads": "text", "youtube": "description",
+                "x": "text", "tiktok": "caption", "facebook": "description"}
+
+
+def _split_post(text: str):
+    """(prefix, body_lines, tail_lines) of a finished platform post: an optional paid-partnership
+    opener, the visible text, and the trailing 'Credit:' / hashtag lines."""
+    text = (text or "").replace("\r", "")
+    prefix = ""
+    low = text.lstrip()[:20].lower()
+    if low.startswith("#ad "):
+        prefix, text = "#ad ", text.lstrip()[4:]
+    elif low.startswith("paid partnership"):
+        first, _, rest = text.lstrip().partition("\n")
+        prefix, text = first.strip() + "\n\n", rest.lstrip("\n")
+    lines = text.split("\n")
+    cut = len(lines)
+    for i, l in enumerate(lines):
+        t = l.strip()
+        if t and (t.lower().startswith("credit:") or all(w.startswith("#") for w in t.split())):
+            cut = i
+            break
+    return prefix, lines[:cut], lines[cut:]
+
+
+def sync_posts_to_core(posts: dict, master: str) -> dict:
+    """Carries a (re)typed core caption into every platform version: each platform's
+    visible text is replaced by the core line, while its own credit line, hashtags
+    (unless the core caption brings its own) and everything that isn't text -- Story,
+    TikTok switches, YouTube title/tags, Threads topic -- stay as they are. YouTube's
+    longer description only has its opening line swapped."""
+    body, tags = _split_master(master)
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in (posts or {}).items()}
+    if not body:
+        return out
+    for pid, key in _SYNC_FIELDS.items():
+        post = out.get(pid)
+        if not isinstance(post, dict):
+            post = out[pid] = {}
+        prefix, blines, tail = _split_post(post.get(key) or "")
+        if pid == "youtube" and any(l.strip() for l in blines):
+            rest = blines[1:] if blines else []
+            while rest and not rest[0].strip():
+                rest = rest[1:]
+            text_body = body.split("\n")[0].strip() + ("\n\n" + "\n".join(rest).strip() if "\n".join(rest).strip() else "")
+        else:
+            text_body = body.strip()
+        credit = [l for l in tail if l.strip().lower().startswith("credit:")]
+        old_tags = [l for l in tail if l.strip() and not l.strip().lower().startswith("credit:")]
+        if tags:
+            use = list(tags)
+            if pid == "youtube" and not any(t.lower() == "#shorts" for t in use):
+                use = use[:max(0, LIM["yt_hashtags"] - 1)] + ["#Shorts"]
+            tag_line = " ".join(use)
+        else:
+            tag_line = "\n".join(old_tags).strip()
+        parts = [prefix + text_body]
+        if credit:
+            parts.append("\n".join(c.strip() for c in credit))
+        if tag_line:
+            parts.append(tag_line)
+        post[key] = "\n\n".join(parts)
+    return out
+
+
+def _yt_default_description(body: str, title: str, tags: list) -> str:
+    """Deterministic YouTube Shorts description (no AI): the core line, a short
+    follow/engage paragraph and hashtags -- never just a copy of the title."""
+    lines = [l.strip() for l in (body or "").splitlines() if l.strip()]
+    opening = lines[0] if lines else title
+    extra = lines[1:]
+    parts = [opening]
+    if extra:
+        parts.append(" ".join(extra))
+    parts.append("Watch to the end, then tell us what you think in the comments.")
+    parts.append("Follow @wokevision_ for more clips like this every day.")
+    tag_line = " ".join((list(tags[:4]) + ["#Shorts"])[:5])
+    parts.append(tag_line)
+    return "\n\n".join(p for p in parts if p).strip()
 
 
 def default_platform_posts(master: str) -> dict:
@@ -969,12 +1115,12 @@ def default_platform_posts(master: str) -> dict:
         "threads": {"text": (body + ("\n\n" + tags5 if tags5 else "")).strip(), "topic_tag": pick_topic_tag(tag_words[0] if tag_words else "", master)},
         "youtube": {
             "title": first_line[:100],
-            "description": (body + "\n\n" + " ".join((tags[:4] + ["#Shorts"])[:5])).strip(),
+            "description": _yt_default_description(body, first_line, tags),
             "tags": tag_words, "category": YT_DEFAULT_CATEGORY,
         },
         "x": {"text": fit_chars((body + ("\n\n" + " ".join(tags[:2]) if tags else "")).strip(), LIM["x_text"])},
         "tiktok": {"caption": (body + ("\n\n" + tags5 if tags5 else "")).strip(),
-                   "allow_comments": False, "allow_duet": False, "allow_stitch": False, "privacy_level": "",
+                   "allow_comments": True, "allow_duet": True, "allow_stitch": True, "privacy_level": "PUBLIC_TO_EVERYONE",
                    "disclose": False, "your_brand": False, "branded_content": False},
         "facebook": {"description": (body + ("\n\n" + " ".join(tags[:2]) if tags else "")).strip()},
     }
@@ -991,7 +1137,8 @@ stays one short question or statement with exactly one trailing emoji). NO \
 paragraphs, NO extra context sentences, NO jokes, NO essays. Then add only what \
 the platform needs: the credit line (where listed below) and the hashtags. \
 YouTube is the only exception: its title is a short keyword-first headline and \
-its description is the same one line, the credit line and hashtags.
+its description is a fuller, detailed write-up (see the youtube rules) -- it must \
+never just repeat the title or the core line on its own.
 
 PLATFORM RULES (hard limits in brackets):
 
@@ -1007,8 +1154,14 @@ must be ONE of these exact approved topics, whichever fits the clip best: {THREA
 
 youtube -- "title" [max 100 chars, no hashtags]: a short plain headline of what \
 happens, keyword first (only ~50 chars show), no clickbait lies, no ALL CAPS. \
-"description" [max 5,000]: the one core line + one emoji, then the credit line if \
-supplied, then 3-5 hashtags on their own line (include #Shorts as one of them). \
+"description" [max 5,000]: a DETAILED description that is clearly different from the \
+title, written for search and for viewers who read it: (1) the one core line + one \
+emoji as the opening line; (2) a blank line, then 2-4 sentences (about 300-700 characters) \
+saying what happens in the clip, the context behind it and why people are talking \
+about it, using only what the transcript/original post/context supports -- never \
+invent facts, names or quotes; (3) a short line inviting a comment or follow \
+("Follow @wokevision_ for more"); (4) the credit line if supplied; (5) 3-5 hashtags \
+on their own line (include #Shorts as one of them). Do NOT repeat the title as the description. \
 "tags": 8-12 search keywords/phrases (no #, total under 400 characters).
 
 x -- "text" [max 280 chars INCLUDING the hashtags]. The one core line + one emoji, \

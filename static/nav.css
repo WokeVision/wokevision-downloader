@@ -1,3 +1,8 @@
+/* App-like framing on phones: no sideways scroll or pinch-resize, so the page
+   (and the top bar) stay put. Every page that loads nav.css gets this. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overflow-x: hidden; max-width: 100%; overscroll-behavior-x: none; touch-action: pan-x pan-y; }
+body { overflow-x: hidden; max-width: 100%; position: relative; }
+@media (max-width: 700px) { input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea { font-size: max(16px, 1em); } }
 /* Shared top menu bar for every WokeVision page. Same tokens as the editor
    (--bg, --text, --accent, ...) with fallbacks so any page can use it. */
 .wvNav {

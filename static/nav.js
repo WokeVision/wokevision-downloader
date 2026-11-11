@@ -6,6 +6,10 @@
     var ml = document.createElement("link"); ml.rel = "manifest"; ml.href = "/manifest.webmanifest"; document.head.appendChild(ml);
     var tc = document.createElement("meta"); tc.name = "theme-color"; tc.content = "#0b0d12"; document.head.appendChild(tc);
     var ai = document.createElement("link"); ai.rel = "apple-touch-icon"; ai.href = "/static/assets/icon-192.png"; document.head.appendChild(ai);
+    // Fixed framing: block pinch-resize (iOS ignores user-scalable=no) and keep the viewport meta locked.
+    var vp = document.querySelector('meta[name="viewport"]');
+    if (vp && vp.content.indexOf("maximum-scale") < 0) vp.content += ", maximum-scale=1, user-scalable=no";
+    ["gesturestart", "gesturechange", "gestureend"].forEach(function (ev) { document.addEventListener(ev, function (e) { e.preventDefault(); }, { passive: false }); });
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function () {});
   } catch (e) {}
   var path = location.pathname.replace(/\/+$/, "") || "/";

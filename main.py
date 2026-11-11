@@ -12,6 +12,7 @@ import subprocess
 import threading
 import traceback
 
+from typing import Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -23,8 +24,8 @@ import speech
 import notify
 from caption import (risk_check, translate_lines, generate_hook_options, generate_captions, generate_on_screen_caption, generate_posting_caption,
                      generate_platform_posts, normalize_platform_posts, PLATFORM_IDS, decide_credit, apply_disclosure,
-                     credit_handle as caption_credit_handle, set_credit_in_posts)
-from render import render_staged, apply_caption
+                     credit_handle as caption_credit_handle, set_credit_in_posts, sync_posts_to_core)
+from render import render_staged, apply_caption, caption_preview_png, clean_layout
 import db
 import auth
 import storage
@@ -107,6 +108,18 @@ async def _require_passkey_session(request: Request, call_next):
     if request.method == "GET" and "text/html" in (request.headers.get("accept") or ""):
         return RedirectResponse(url="/login?next=" + _url_quote(path))
     return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+
+@app.middleware("http")
+async def _no_store_for_data(request: Request, call_next):
+    """Job/history/API JSON is live state: never let a phone browser serve a stale copy
+    (that is what made a saved caption look unchanged until it was reopened from History)."""
+    resp = await call_next(request)
+    p = request.url.path
+    if request.method == "GET" and (p.startswith("/jobs/") or p.startswith("/history") or p.startswith("/api/")) \
+            and "application/json" in (resp.headers.get("content-type") or ""):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # Platforms that are wired up for real vs. still placeholders in the UI.
@@ -334,6 +347,7 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
         "captions_on": bool(meta.get("captions_on", False)),
         "paid_promo": bool(meta.get("paid_promo", False)),
         "captions_style": meta.get("captions_style", "classic"),
+        "caption_layout": clean_layout((meta or {}).get("caption_layout")),
         "credit": caption_credit_handle(meta),
         "campaign_id": (meta or {}).get("campaign_id", ""),
         "post": (meta or {}).get("post") or {},
@@ -583,6 +597,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
             output_path=output_path,
             progress_cb=lambda frac: _set_stage(job_id, "rendering", 0.5 + frac * 0.5),
             cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
+            layout=(meta or {}).get("caption_layout"),
         )
         _post_process(output_path, (meta or {}).get("post"))
         with JOBS_LOCK:
@@ -681,6 +696,7 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
         staged_path=staged_path, caption_text=on_screen_caption, output_path=output_path,
         progress_cb=lambda frac: _set_stage(job_id, "rendering", progress_base + frac * (1 - progress_base)),
         cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
+            layout=(meta or {}).get("caption_layout"),
     )
     _post_process(output_path, (meta or {}).get("post"))
     with JOBS_LOCK:
@@ -1864,6 +1880,7 @@ def regenerate_caption(job_id: str):
 
 class PostingCaptionRequest(BaseModel):
     caption: str
+    sync: bool = False      # also carry this core caption into every platform version
 
 
 class PlatformPostsRequest(BaseModel):
@@ -1893,20 +1910,27 @@ def _done_job(job_id: str) -> dict:
 
 @app.put("/jobs/{job_id}/posting-caption")
 def save_posting_caption(job_id: str, req: PostingCaptionRequest):
-    """Saves the user's edit of the master posting caption (on the job and in
-    History) so it survives a reload, a redeploy and a device switch."""
+    """Saves the user's edit of the master (core) posting caption on the job and in
+    History, so it survives a reload, a redeploy and a device switch. With sync=true the
+    new core caption is also carried into every platform version (their own credit lines,
+    hashtags and non-text settings are kept) and the updated versions are returned."""
     job = _done_job(job_id)
     caption = req.caption or ""
     meta = job.get("meta", {})
-    _set_job(
-        job_id, posting_caption=caption,
-        result=_result_for(job_id, meta, job.get("on_screen_caption", ""), caption, job.get("platform_posts")),
-    )
+    posts = job.get("platform_posts")
+    if req.sync and caption.strip():
+        posts = normalize_platform_posts(sync_posts_to_core(normalize_platform_posts(posts or {}, caption), caption), caption)
+    _set_job(job_id, posting_caption=caption,
+             result=_result_for(job_id, meta, job.get("on_screen_caption", ""), caption, posts))
+    if posts is not None and req.sync:
+        _set_job(job_id, platform_posts=posts)
     try:
         db.update_history_caption(job_id, posting_caption=caption)
     except Exception as e:
         print(f"HISTORY UPDATE FAILED ({job_id}): {e}", flush=True)
-    return {"ok": True}
+    if req.sync and posts:
+        _save_platform_posts(job_id, posts)
+    return {"ok": True, "platform_posts": posts if req.sync else None}
 
 
 @app.put("/jobs/{job_id}/platform-posts")
@@ -2015,6 +2039,21 @@ def set_angle(job_id: str, req: AngleRequest):
 
 class OnScreenCaptionRequest(BaseModel):
     on_screen_caption: str
+    layout: Optional[dict] = None   # {scale: 0.5-1.5, dy: -120..120} -- size and vertical nudge
+
+
+class CaptionPreviewRequest(BaseModel):
+    text: str = ""
+    layout: Optional[dict] = None
+
+
+@app.post("/caption-preview")
+def caption_preview(req: CaptionPreviewRequest):
+    """Exact (real font / wrapping / emoji) PNG of how the on-screen caption will sit,
+    so size, spacing and line breaks can be tuned live without re-rendering the video."""
+    text = (req.text or "").strip()[:300] or "Your caption here"
+    return Response(content=caption_preview_png(text, req.layout), media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.post("/jobs/{job_id}/set-on-screen-caption")
@@ -2033,6 +2072,13 @@ def set_on_screen_caption(job_id: str, req: OnScreenCaptionRequest):
             raise HTTPException(status_code=404, detail="Unknown job id")
         if job.get("status") != "done":
             raise HTTPException(status_code=409, detail="Job isn't finished yet.")
+        if req.layout is not None:
+            _m = job.setdefault("meta", {})
+            _m["caption_layout"] = clean_layout(req.layout)
+            try:
+                db.update_history_meta(job_id, _m)
+            except Exception as e:
+                print("LAYOUT SAVE FAILED:", e, flush=True)
         job["status"] = "running"
         job["stage"] = "rendering"
         job["stage_label"] = "Updating caption"
@@ -2377,7 +2423,7 @@ def get_history(entry_id: str):
         "publish_results": e.get("publish_results") or {},
         "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
         **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
-           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief", "crop", "video_read", "finished_edit", "warnings")},
+           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief", "crop", "video_read", "finished_edit", "warnings", "caption_layout")},
     }
 
 
@@ -2642,6 +2688,40 @@ def set_closed_captions(job_id: str, req: ClosedCaptionsRequest):
                                                    "captions_style": req.style if req.style in ("classic", "highlight") else "classic"}
     threading.Thread(target=_run_set_on_screen_caption,
                      args=(job_id, job.get("on_screen_caption", "")), daemon=True).start()
+    return {"ok": True}
+
+
+def _run_retranscribe(job_id: str):
+    """Re-listens to the kept source video, rebuilds the closed-caption lines and re-renders with them on."""
+    try:
+        _set_job(job_id, notice="")
+        with JOBS_LOCK:
+            job = JOBS.get(job_id) or {}
+        source_path = job.get("source_path") or os.path.join(DOWNLOAD_DIR, f"{job_id}_source.mp4")
+        if not storage.fetch_to(source_path, os.path.basename(source_path)):
+            raise RuntimeError("The original video has expired, so it can't be transcribed again.")
+        _st = app_settings()
+        sp = speech.transcribe_words(source_path, vocab=_st.get("vocab", ""))
+        cues = speech.build_cues(sp.get("words") or [])
+        if _st.get("mask_profanity"):
+            cues = speech.mask_cues(cues, (_st.get("mask_words") or "").replace("\n", ",").split(","))
+        if not cues:
+            raise RuntimeError("Still couldn't pick up any speech in this video, so there is nothing to caption.")
+        with JOBS_LOCK:
+            j = JOBS[job_id]
+            j["meta"] = {**(j.get("meta") or {}), "cues": cues, "captions_on": True,
+                         "captions_style": (j.get("meta") or {}).get("captions_style") or _st.get("caption_style", "classic")}
+        _run_set_on_screen_caption(job_id, job.get("on_screen_caption", ""))
+    except Exception as e:
+        print("RETRANSCRIBE FAILED:", traceback.format_exc(), flush=True)
+        # Nothing was changed, so put the edit back as it was and just say why.
+        _set_job(job_id, stage="done", stage_label="Done", progress=1.0, status="done", eta_seconds=0, notice=str(e))
+
+
+@app.post("/jobs/{job_id}/retranscribe")
+def retranscribe(job_id: str):
+    _begin_rerender(job_id, "Listening for speech")
+    threading.Thread(target=_run_retranscribe, args=(job_id,), daemon=True).start()
     return {"ok": True}
 
 

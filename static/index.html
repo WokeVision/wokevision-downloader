@@ -39,7 +39,9 @@
   body {
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
     margin: 0;
-    padding: calc(28px + var(--safe-top)) 18px calc(48px + var(--safe-bottom));
+    /* Side/top padding lives on .page (not body) so the shared top bar spans
+       the full width, exactly like every other page. */
+    padding: 0 0 calc(48px + var(--safe-bottom));
     min-height: 100vh;
     background:
       radial-gradient(circle at 50% 0%, rgba(255, 43, 60, 0.10), transparent 55%),
@@ -49,6 +51,7 @@
   .page {
     max-width: 480px;
     margin: 0 auto;
+    padding: 22px 18px 0;
   }
 
   /* ---- Studio layout ------------------------------------------------
@@ -83,8 +86,7 @@
        row 2: on-screen caption | complete edit (video) | posting caption
        row 3: platform captions (wide)       |  post to */
   @media (min-width: 900px) {
-    body { padding-left: 28px; padding-right: 28px; }
-    .page { max-width: 1480px; }
+    .page { max-width: 1480px; padding-left: 28px; padding-right: 28px; }
     .studio {
       display: grid; gap: 14px 18px; align-items: stretch;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) minmax(0, 1fr);
@@ -720,6 +722,19 @@
         <details class="moreOpts osOnly" id="seenBox" style="display:none"><summary>What the AI saw in the video</summary><div id="seenText" style="font-size:13px;line-height:1.55;white-space:pre-wrap;opacity:.85"></div><div style="font-size:12px;opacity:.6;margin-top:6px">Got it wrong? Put the right context in &ldquo;What&rsquo;s this clip about?&rdquo; at the top and change the caption.</div></details>
         <h3 class="capSub osOnly">On-screen caption</h3>
         <textarea id="onScreenBox" class="osOnly"></textarea>
+        <details class="moreOpts osOnly" id="layoutBox"><summary>Size, position &amp; line breaks (live preview)</summary>
+          <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;margin-top:8px">
+            <img id="layoutPrev" alt="Caption preview" width="180" height="320" style="border:1px solid rgba(128,128,128,.35);border-radius:8px;background:#fff" />
+            <div style="flex:1;min-width:200px;font-size:13px;line-height:1.5">
+              <label style="display:block">Text size <span id="layoutScaleV">100%</span>
+                <input type="range" id="layoutScale" min="50" max="150" step="5" value="100" style="width:100%"></label>
+              <label style="display:block;margin-top:8px">Position (up / down) <span id="layoutDyV">0</span>
+                <input type="range" id="layoutDy" min="-120" max="120" step="2" value="0" style="width:100%"></label>
+              <div style="opacity:.7;margin-top:8px">Press Enter in the caption box to choose where the line breaks. The preview is exact; click &ldquo;Save caption&rdquo; to apply it to the video.</div>
+              <button type="button" class="secondary" id="layoutReset" style="margin-top:8px">Reset</button>
+            </div>
+          </div>
+        </details>
         <div class="actionRow osOnly">
           <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
           <button class="secondary" id="saveOnScreenCaptionBtn" type="button">Save caption</button>
@@ -732,6 +747,7 @@
         <textarea id="captionBox"></textarea>
         <div class="charCount" id="captionCharCount"></div>
         <div class="actionRow">
+          <button class="secondary" id="coreSaveBtn" type="button">Save &amp; update platforms</button>
           <button class="secondary" id="copyBtn" type="button">Copy caption</button>
           <button class="secondary" id="changePostingCaptionBtn" type="button">Change caption</button>
           <span class="inlineSpinner" id="postingCaptionSpinner">Rewriting...</span>
@@ -764,7 +780,11 @@
             <label class="ccToggle"><input type="checkbox" id="ccOn" checked /> On video</label>
           </span>
         </div>
+        <div id="ccStatus" class="saveState" style="margin:0 0 8px;font-size:12.5px"></div>
         <div id="ccList"></div>
+        <div class="actionRow">
+          <button class="secondary" id="ccRetry" type="button" style="display:none">Listen again &amp; add captions</button>
+        </div>
         <div class="actionRow">
           <select id="ccLang" class="ccSel" title="Translate subtitles"><option value="">Translate to…</option><option>Spanish</option><option>French</option><option>German</option><option>Portuguese</option><option>Italian</option><option>Arabic</option><option>Hindi</option><option>Turkish</option><option>Indonesian</option><option>Japanese</option><option>Korean</option><option>English</option></select>
           <button class="secondary" id="ccRestore" type="button" style="display:none">Restore original</button>
@@ -839,6 +859,7 @@
 </div>
 
 <script>
+  let postsDirty = false, masterDirty = false, saveTimer = null, lastCore = "";
   let currentSchedules = {};   // platform -> {id, run_at, status, ...} for the loaded edit
   const statusCard = document.getElementById("statusCard");
   const setResult = (on) => document.body.classList.toggle("has-result", !!on);
@@ -918,7 +939,9 @@
     preview.src = data.video_url + (data.video_url.includes("?") ? "&" : "?") + "t=" + Date.now();
     document.getElementById("downloadLink").href = data.video_url + "?dl=1";
     document.getElementById("onScreenBox").value = data.on_screen_caption || "";
+    if (typeof setLayout === "function") setLayout(data.caption_layout);
     document.getElementById("captionBox").value = data.caption || "";
+    lastCore = data.caption || "";
     document.getElementById("angleBox").value = data.angle || document.getElementById("angleBox").value || "";
     updateCaptionCharCount();
     fillCues(data.cues, data.captions_on); showSeen(data.video_read); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; campSel.value = (data.campaign_id || ''); fillPolish(data.post, data.cover_ms); setJobWm(data.watermark); setJobCrop(data.crop); paidPromo.checked = !!data.paid_promo;
@@ -964,7 +987,7 @@
     while (true) {
       let job;
       try {
-        const resp = await fetch(`/jobs/${jobId}`);
+        const resp = await fetch(`/jobs/${jobId}`, { cache: "no-store" });
         job = JSON.parse(await resp.text());
         pollMisses = 0;
       } catch (err) {
@@ -1057,6 +1080,7 @@
     if (!currentJobId) return;
     changeVideoCaptionBtn.disabled = true;
     document.getElementById("changePostingCaptionBtn").disabled = true;
+    try { await flushAllSaves(); } catch (_) {}
     resetUI();
     stageLabel.textContent = "Writing new caption";
     try {
@@ -1079,6 +1103,39 @@
   // inline spinner rather than the full progress bar, same as the posting
   // caption's "Change caption" button below.
   const onScreenBox = document.getElementById("onScreenBox");
+  // --- Live on-screen caption layout (size / position / manual line breaks) ---
+  const layoutScale = document.getElementById("layoutScale"), layoutDy = document.getElementById("layoutDy");
+  const layoutPrev = document.getElementById("layoutPrev");
+  let layoutTimer = null, layoutUrl = null, layoutSeq = 0;
+  function getLayout() { return { scale: (+layoutScale.value || 100) / 100, dy: +layoutDy.value || 0 }; }
+  function setLayout(l) {
+    l = l || {};
+    layoutScale.value = Math.round((l.scale || 1) * 100); layoutDy.value = l.dy || 0;
+    refreshLayoutLabels(); refreshLayoutPreview();
+  }
+  function refreshLayoutLabels() {
+    document.getElementById("layoutScaleV").textContent = layoutScale.value + "%";
+    document.getElementById("layoutDyV").textContent = layoutDy.value;
+  }
+  function refreshLayoutPreview() {
+    clearTimeout(layoutTimer);
+    layoutTimer = setTimeout(async () => {
+      if (!document.getElementById("layoutBox").open) return;
+      const seq = ++layoutSeq;
+      try {
+        const r = await fetch("/caption-preview", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: onScreenBox.value, layout: getLayout() }) });
+        if (!r.ok || seq !== layoutSeq) return;
+        const url = URL.createObjectURL(await r.blob());
+        if (layoutUrl) URL.revokeObjectURL(layoutUrl);
+        layoutUrl = url; layoutPrev.src = url;
+      } catch (e) {}
+    }, 120);
+  }
+  [layoutScale, layoutDy].forEach(el => el.addEventListener("input", () => { refreshLayoutLabels(); refreshLayoutPreview(); }));
+  onScreenBox.addEventListener("input", refreshLayoutPreview);
+  document.getElementById("layoutBox").addEventListener("toggle", refreshLayoutPreview);
+  document.getElementById("layoutReset").addEventListener("click", () => setLayout({ scale: 1, dy: 0 }));
   const saveOnScreenCaptionBtn = document.getElementById("saveOnScreenCaptionBtn");
   const onScreenCaptionSpinner = document.getElementById("onScreenCaptionSpinner");
   saveOnScreenCaptionBtn.addEventListener("click", async () => {
@@ -1093,10 +1150,11 @@
     changePostingCaptionBtn.disabled = true;
     onScreenCaptionSpinner.style.display = "inline";
     try {
+      await flushAllSaves();   // any pending edit to the core caption / platform versions goes first, so the refresh can't overwrite it
       const resp = await fetch(`/jobs/${currentJobId}/set-on-screen-caption`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ on_screen_caption: text }),
+        body: JSON.stringify({ on_screen_caption: text, layout: getLayout() }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
@@ -1126,6 +1184,7 @@
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
       document.getElementById("captionBox").value = data.posting_caption || "";
+      lastCore = data.posting_caption || "";
       updateCaptionCharCount();
       fillPosts(data.platform_posts);
       setSaveState("");
@@ -1365,8 +1424,17 @@
   function fmtT(t) { t = Math.max(0, t || 0); return Math.floor(t / 60) + ":" + String(Math.floor(t % 60)).padStart(2, "0"); }
   function fillCues(cues, on) {
     ccList.innerHTML = "";
-    document.getElementById("ccOn").checked = !!on || !(cues && cues.length);
-    if (!cues || !cues.length) {
+    const hasCues = !!(cues && cues.length);
+    // The box now tells the truth: ticked only when the captions really are burned into the video.
+    document.getElementById("ccOn").checked = hasCues && !!on;
+    const st = document.getElementById("ccStatus");
+    if (st) {
+      st.textContent = !hasCues ? "No speech has been picked up for this video yet, so there is nothing to show."
+        : on ? "Captions are burned into the video above." : "Captions are OFF in the video above. Tick \u201cOn video\u201d and press Apply captions to burn them in.";
+      st.style.color = hasCues && on ? "" : "#ffb454";
+    }
+    const rt = document.getElementById("ccRetry"); if (rt) rt.style.display = hasCues ? "none" : "";
+    if (!hasCues) {
       ccList.innerHTML = '<div class="ccEmpty">No speech was picked up in this video, so there are no captions yet.</div>';
       return;
     }
@@ -1432,8 +1500,22 @@
     } catch (e) { m.textContent = "Couldn't check: " + e.message; }
     b.disabled = false;
   });
+  document.getElementById("ccRetry").addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const btn = document.getElementById("ccRetry"), sp = document.getElementById("ccSpinner");
+    btn.disabled = true; sp.style.display = "inline";
+    try {
+      await flushAllSaves();
+      const r = await fetch(`/jobs/${currentJobId}/retranscribe`, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || "Couldn't start.");
+      await pollJob(currentJobId);
+    } catch (err) { alert("Error: " + err.message); }
+    finally { btn.disabled = false; sp.style.display = "none"; }
+  });
   document.getElementById("ccApplyBtn").addEventListener("click", async () => {
     if (!currentJobId) return;
+    await flushAllSaves();
     const cues = [...ccList.querySelectorAll(".ccRow")].map((r) => { const text = r.querySelector("textarea").value; let words = []; try { words = JSON.parse(r.dataset.words || "[]"); } catch (e) {} return { start: +r.querySelector(".cs").value, end: +r.querySelector(".ce").value, text, words: text === r.dataset.orig ? words : [] }; });
     const btn = document.getElementById("ccApplyBtn"), sp = document.getElementById("ccSpinner");
     btn.disabled = true; sp.style.display = "inline";
@@ -1560,7 +1642,7 @@
         hint: "Only the first ~125 characters show before “more”, so lead with the hook. Instagram allows at most 5 hashtags." },
       { k: "first_comment", type: "area", label: "First comment (optional)", max: 2200, tags: 0,
         hint: "Posted automatically right after the Reel goes live, e.g. extra hashtags or a link. Needs one Instagram reconnect to grant comment permission." },
-      { k: "story", type: "switch", label: "Also add to my Story" },
+      { k: "story", type: "switch", label: "Also add to my Story", def: true },
       { k: "story_black", type: "switch", label: "Story: video on a plain black background", def: true },
     ],
     threads: [
@@ -1583,9 +1665,9 @@
       { k: "caption", type: "area", label: "Title", max: 2200, tags: 5,
         hint: "Hook and keywords in the first line (TikTok search reads captions). Only the first 5 hashtags count. You can edit this before posting." },
       { k: "privacy_level", type: "ttprivacy", label: "Who can view this video" },
-      { k: "allow_comments", type: "switch", label: "Allow comments" },
-      { k: "allow_duet", type: "switch", label: "Allow duets" },
-      { k: "allow_stitch", type: "switch", label: "Allow stitches" },
+      { k: "allow_comments", type: "switch", label: "Allow comments", def: true },
+      { k: "allow_duet", type: "switch", label: "Allow duets", def: true },
+      { k: "allow_stitch", type: "switch", label: "Allow stitches", def: true },
       { k: "disclose", type: "switch", label: "Disclose commercial content", tt: "disclose" },
       { k: "your_brand", type: "switch", label: "Your brand", tt: "sub" },
       { k: "branded_content", type: "switch", label: "Branded content", tt: "sub" },
@@ -1598,7 +1680,7 @@
     facebook: [
       { k: "description", type: "area", label: "Description", max: 2200, tags: 3,
         hint: "Three hashtags: the most that tends to help on Facebook. A hook first line and a closing question work best." },
-      { k: "story", type: "switch", label: "Also add to my Page Story" },
+      { k: "story", type: "switch", label: "Also add to my Page Story", def: true },
       { k: "story_black", type: "switch", label: "Story: video on a plain black background", def: true },
     ],
   };
@@ -1627,10 +1709,6 @@
           box.style.cssText = "font-size:13px;margin:0 0 8px;opacity:.85";
           box.textContent = "Checking which TikTok account will receive this\u2026";
           panel.appendChild(box);
-          const pv = document.createElement("video");
-          pv.id = "tt_prev"; pv.controls = true; pv.playsInline = true; pv.muted = true;
-          pv.style.cssText = "width:100%;max-height:260px;border-radius:12px;background:#000;margin:0 0 10px;display:none";
-          panel.appendChild(pv);
           return;
         }
         if (f.type === "ttprivacy") {
@@ -1733,15 +1811,14 @@
     box.innerHTML = "Posting to TikTok as <b></b>"; box.querySelector("b").textContent = "@" + (ttInfo.username || ttInfo.nickname);
     const want = priv.dataset.want || priv.value;
     priv.innerHTML = '<option value="">Select who can view\u2026</option>' + (ttInfo.privacy_level_options || []).map((o) => `<option value="${o}">${TT_LABEL[o] || o}</option>`).join("");
-    priv.value = (ttInfo.privacy_level_options || []).includes(want) ? want : "";
+    const opts = ttInfo.privacy_level_options || [];
+    priv.value = opts.includes(want) ? want : (opts.includes("PUBLIC_TO_EVERYONE") ? "PUBLIC_TO_EVERYONE" : "");
     [["allow_comments", "comment_disabled"], ["allow_duet", "duet_disabled"], ["allow_stitch", "stitch_disabled"]].forEach(([k, flag]) => {
       const el = ttEl(k); if (!el) return;
       el.disabled = !!ttInfo[flag]; el.parentElement.parentElement.style.opacity = ttInfo[flag] ? ".45" : "";
       el.parentElement.parentElement.title = ttInfo[flag] ? "Turned off in your TikTok settings." : "";
       if (ttInfo[flag]) el.checked = false;
     });
-    const pv = document.getElementById("tt_prev"), src = document.getElementById("preview");
-    if (pv && src && src.src) { if (pv.src !== src.src) pv.src = src.src; pv.style.display = ""; }
     ttSync();
   }
   async function loadTtCreator() {
@@ -1876,7 +1953,7 @@
         const el = document.getElementById(`pp_${p.id}_${f.k}`);
         if (!el) return;
         if (f.type === "switch") el.checked = d[f.k] === undefined ? !!f.def : !!d[f.k];
-        else if (f.type === "ttprivacy") { el.dataset.want = d[f.k] || ""; el.value = d[f.k] || ""; }
+        else if (f.type === "ttprivacy") { el.dataset.want = d[f.k] || "PUBLIC_TO_EVERYONE"; el.value = d[f.k] || "PUBLIC_TO_EVERYONE"; }
         else if (f.type === "tags") el.value = (d[f.k] || []).join(", ");
         else if (f.type === "select") el.value = String(d[f.k] || "25");
         else if (f.type === "topic") { if (d[f.k] && !Array.from(el.options).some((o) => o.value === d[f.k])) el.add(new Option(d[f.k], d[f.k])); el.value = d[f.k] || "Memes"; }
@@ -1905,7 +1982,6 @@
 
   // Autosave: every edit (platform versions and the core caption) is written
   // to the server a moment after typing stops, and flushed before publishing.
-  let postsDirty = false, masterDirty = false, saveTimer = null;
   function setSaveState(text, isErr) { saveStateEl.textContent = text; saveStateEl.classList.toggle("err", !!isErr); }
   function scheduleSave() {
     if (!currentJobId) return;
@@ -1931,22 +2007,31 @@
     masterDirty = true; setSaveState("Editing…");
     clearTimeout(saveTimer); saveTimer = setTimeout(flushAllSaves, 700);
   }
-  async function flushAllSaves() {
+  // The core caption last carried into the platform versions (so only a real change triggers a sync).
+  async function flushAllSaves(forceSync) {
     clearTimeout(saveTimer);
-    if (!currentJobId || (!postsDirty && !masterDirty)) return true;
-    const jid = currentJobId, doPosts = postsDirty, doMaster = masterDirty;
+    if (!currentJobId || (!postsDirty && !masterDirty && !forceSync)) return true;
+    const jid = currentJobId, doPosts = postsDirty, doMaster = masterDirty || !!forceSync;
     postsDirty = false; masterDirty = false;
     setSaveState("Saving…");
     try {
-      if (doMaster) {
-        const r = await fetch(`/jobs/${jid}/posting-caption`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ caption: document.getElementById("captionBox").value }) });
-        if (!r.ok) throw new Error("save failed");
-      }
+      // Platform edits first, then the core caption, so a newer core caption wins and flows into every platform.
       if (doPosts) {
         const r = await fetch(`/jobs/${jid}/platform-posts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ posts: collectPosts() }) });
         if (!r.ok) throw new Error("save failed");
       }
-      setSaveState("Saved ✓");
+      if (doMaster) {
+        const core = document.getElementById("captionBox").value;
+        const sync = core.trim() !== "" && core !== lastCore;
+        const r = await fetch(`/jobs/${jid}/posting-caption`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ caption: core, sync }) });
+        if (!r.ok) throw new Error("save failed");
+        const d = await r.json().catch(() => ({}));
+        if (sync) {
+          lastCore = core;
+          if (d.platform_posts && jid === currentJobId && !postsDirty) fillPosts(d.platform_posts);
+        }
+      }
+      setSaveState(doMaster ? "Saved ✓ · platform versions updated" : "Saved ✓");
       return true;
     } catch (e) {
       postsDirty = postsDirty || doPosts; masterDirty = masterDirty || doMaster;
@@ -1979,6 +2064,13 @@
   }
   document.getElementById("rewriteAllBtn").addEventListener("click", () => rewritePosts(null, null));
   captionBox.addEventListener("input", scheduleMasterSave);
+  document.getElementById("coreSaveBtn").addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const b = document.getElementById("coreSaveBtn"); b.disabled = true;
+    lastCore = "";   // force the platform versions to follow the core caption right now
+    await flushAllSaves(true);
+    b.disabled = false;
+  });
   buildPlatformPanels();
 
 
@@ -2507,7 +2599,9 @@
 
       setFinished(e);
       document.getElementById("onScreenBox").value = e.on_screen_caption || "";
+      setLayout(e.caption_layout);
       document.getElementById("captionBox").value = e.posting_caption || "";
+      lastCore = e.posting_caption || "";
       document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";
       updateCaptionCharCount();
       fillCues(e.cues, e.captions_on); showSeen(e.video_read); document.getElementById('ccStyle').value = e.captions_style || 'classic'; document.getElementById('creditHandle').value = e.credit ? '@' + e.credit : ''; campSel.value = (e.campaign_id || ''); fillPolish(e.post, e.cover_ms); setJobWm(e.watermark); setJobCrop(e.crop); paidPromo.checked = !!e.paid_promo;

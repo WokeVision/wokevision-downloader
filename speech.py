@@ -8,6 +8,7 @@ import re
 import subprocess
 import uuid
 import requests
+import ai_status
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions"
@@ -38,18 +39,39 @@ def _probe_duration(path):
         return None
 
 
+def _has_audio(path):
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+                            "-of", "csv=p=0", path], capture_output=True, text=True, timeout=30)
+        return bool(r.stdout.strip())
+    except Exception:
+        return True   # can't tell -- assume yes and let Whisper decide
+
+
 def _whisper_verbose(audio_path, prompt=""):
-    with open(audio_path, "rb") as f:
-        resp = requests.post(
-            WHISPER_URL,
-            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-            files={"file": (os.path.basename(audio_path), f, "audio/mpeg")},
-            data=[("model", "whisper-1"), ("response_format", "verbose_json"),
-                  ("timestamp_granularities[]", "word"),
-                  ("timestamp_granularities[]", "segment")] + ([("prompt", prompt[:800])] if prompt else []),
-            timeout=300,
-        )
-    resp.raise_for_status()
+    import time as _t
+    last = None
+    for attempt in range(3):
+        with open(audio_path, "rb") as f:
+            resp = requests.post(
+                WHISPER_URL,
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                files={"file": (os.path.basename(audio_path), f, "audio/mpeg")},
+                data=[("model", "whisper-1"), ("response_format", "verbose_json"),
+                      ("timestamp_granularities[]", "word"),
+                      ("timestamp_granularities[]", "segment")] + ([("prompt", prompt[:800])] if prompt else []),
+                timeout=300,
+            )
+        if resp.status_code == 200:
+            ai_status.record_ok()
+            break
+        ai_status.record_fail(resp.status_code, resp.text)
+        last = RuntimeError(f"Whisper HTTP {resp.status_code}: {resp.text[:200]}")
+        if resp.status_code not in (429, 500, 502, 503, 504) or ai_status.get().get("kind") in ("quota", "key"):
+            raise last
+        _t.sleep(2 * (attempt + 1))
+    else:
+        raise last
     j = resp.json()
     try:
         import db
@@ -65,11 +87,16 @@ def transcribe_words(video_path, progress_cb=None, vocab=""):
     there is no key or Whisper fails (callers treat that as "no captions")."""
     empty = {"text": "", "words": [], "segments": [], "duration": _probe_duration(video_path) or 0}
     if not OPENAI_API_KEY:
+        empty["error"] = "No OpenAI key is set, so there is no transcript or closed captions."
+        return empty
+    if not _has_audio(video_path):
+        empty["error"] = "This video has no audio track, so there is nothing to transcribe."
         return empty
     os.makedirs(TMP_DIR, exist_ok=True)
     duration = empty["duration"] or 0
     n_chunks = max(1, int(-(-duration // CHUNK_SECONDS))) if duration else 1
     words, segments, texts = [], [], []
+    err = ""
     for i in range(n_chunks):
         offset = i * CHUNK_SECONDS
         audio = os.path.join(TMP_DIR, f"sp_{uuid.uuid4()}.mp3")
@@ -88,14 +115,18 @@ def transcribe_words(video_path, progress_cb=None, vocab=""):
                                  "text": str(s.get("text", "")).strip()})
         except Exception as e:
             print(f"TRANSCRIBE_WORDS chunk {i} failed: {e}", flush=True)
+            err = ai_status.get().get("message") or f"Transcription failed: {str(e)[:120]}"
         finally:
             if os.path.exists(audio):
                 os.remove(audio)
         if progress_cb:
             progress_cb((i + 1) / n_chunks)
     words = [w for w in words if w["w"]]
-    return {"text": " ".join(t for t in texts if t), "words": words,
-            "segments": segments, "duration": duration}
+    out = {"text": " ".join(t for t in texts if t), "words": words,
+           "segments": segments, "duration": duration}
+    if not words and not out["text"]:
+        out["error"] = err or "No speech was found in the audio (music-only or silent clip)."
+    return out
 
 
 # -------------------------------------------------------------- cue builder

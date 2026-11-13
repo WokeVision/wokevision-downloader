@@ -325,6 +325,8 @@ def _result_for(job_id: str, meta: dict, on_screen_caption: str, posting_caption
     return {
         "platform_posts": platform_posts or {},
         "video_url": f"{base_url}/files/{job_id}_final.mp4",
+        "staged_url": f"{base_url}/files/{job_id}_staged.mp4",
+        "caption_adj": (meta or {}).get("caption_adj") or {},
         "on_screen_caption": on_screen_caption,
         "caption": posting_caption,
         "download_method": meta.get("method", ""),
@@ -535,6 +537,8 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
         if _st.get("mask_profanity"):
             cues = speech.mask_cues(cues, (_st.get("mask_words") or "").replace("\n", ",").split(","))
         meta = {**meta, "cues": cues, "captions_on": bool(cues), "captions_style": _st.get("caption_style", "classic")}
+        if sp.get("error"):
+            meta["warnings"] = list(dict.fromkeys(list(meta.get("warnings") or []) + ["Closed captions: " + sp["error"]]))
         _set_job(job_id, transcript=transcript, meta=meta, source_path=final_source_path)
 
         _set_stage(job_id, "captioning")
@@ -583,6 +587,7 @@ def _run_pipeline(job_id: str, final_source_path: str, meta: dict, pre_speech: d
             output_path=output_path,
             progress_cb=lambda frac: _set_stage(job_id, "rendering", 0.5 + frac * 0.5),
             cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
+            caption_adj=(meta or {}).get("caption_adj"),
         )
         _post_process(output_path, (meta or {}).get("post"))
         with JOBS_LOCK:
@@ -681,6 +686,7 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
         staged_path=staged_path, caption_text=on_screen_caption, output_path=output_path,
         progress_cb=lambda frac: _set_stage(job_id, "rendering", progress_base + frac * (1 - progress_base)),
         cues=_cues_args(meta), watermark=_wm_args(meta), cue_style=(meta or {}).get("captions_style", "classic"),
+        caption_adj=(meta or {}).get("caption_adj"),
     )
     _post_process(output_path, (meta or {}).get("post"))
     with JOBS_LOCK:
@@ -690,6 +696,12 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
         raise RuntimeError("Render finished but no output file was produced.")
 
     _cleanup_later(output_path, delay=KEEP_ALIVE_SECONDS)
+    # Upload the NEW final BEFORE reporting done: /files/ redirects to the stored copy, so an
+    # async upload let the editor reload the OLD video (the "had to reopen from history" bug).
+    try:
+        storage.upload_file(output_path, os.path.basename(output_path))
+    except Exception as _ue:
+        print(f"FINAL UPLOAD FAILED ({job_id}): {_ue}", flush=True)
     if platform_posts is None:
         platform_posts = job.get("platform_posts") or {}
     _set_job(
@@ -702,12 +714,8 @@ def _render_with_caption(job_id: str, on_screen_caption: str, posting_caption: s
     )
     _save_history(job_id, meta, on_screen_caption, posting_caption, transcript)
     _save_platform_posts(job_id, platform_posts)
-    # The re-rendered final replaces the stored one; staged is re-uploaded
-    # too in case it had to be rebuilt.
-    storage.upload_many_async([
-        (output_path, os.path.basename(output_path)),
-        (staged_path, os.path.basename(staged_path)),
-    ])
+    # staged is re-uploaded in case it had to be rebuilt.
+    storage.upload_many_async([(staged_path, os.path.basename(staged_path))])
 
 
 def _run_regenerate_video(job_id: str):
@@ -1527,6 +1535,13 @@ def api_goals_put(req: GoalsModel):
     return {"ok": True}
 
 
+@app.get("/api/ai-status")
+def api_ai_status():
+    import ai_status
+    st = ai_status.get()
+    return {"ok": bool(st["ok"]), "kind": st["kind"], "message": st["message"], "at": st["at"]}
+
+
 @app.get("/api/ai-usage")
 def api_ai_usage():
     return db.ai_usage_summary()
@@ -1864,6 +1879,7 @@ def regenerate_caption(job_id: str):
 
 class PostingCaptionRequest(BaseModel):
     caption: str
+    sync: bool = False        # also push the new core line into every platform version (no AI)
 
 
 class PlatformPostsRequest(BaseModel):
@@ -1884,6 +1900,14 @@ class HashtagRerollRequest(BaseModel):
 def _done_job(job_id: str) -> dict:
     with JOBS_LOCK:
         job = JOBS.get(job_id)
+    if not job:
+        # After a restart/redeploy the in-memory job is gone: rebuild it from History.
+        try:
+            reopen_history(job_id)
+        except HTTPException:
+            pass
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Unknown job id")
         if job.get("status") != "done":
@@ -1898,15 +1922,25 @@ def save_posting_caption(job_id: str, req: PostingCaptionRequest):
     job = _done_job(job_id)
     caption = req.caption or ""
     meta = job.get("meta", {})
+    posts = job.get("platform_posts")
+    if req.sync and caption.strip():
+        from caption import sync_posts_with_master
+        posts = normalize_platform_posts(
+            sync_posts_with_master(posts or {}, job.get("posting_caption", ""), caption), caption)
     _set_job(
-        job_id, posting_caption=caption,
-        result=_result_for(job_id, meta, job.get("on_screen_caption", ""), caption, job.get("platform_posts")),
+        job_id, posting_caption=caption, platform_posts=posts,
+        result=_result_for(job_id, meta, job.get("on_screen_caption", ""), caption, posts),
     )
     try:
         db.update_history_caption(job_id, posting_caption=caption)
     except Exception as e:
         print(f"HISTORY UPDATE FAILED ({job_id}): {e}", flush=True)
-    return {"ok": True}
+    if req.sync and posts:
+        try:
+            _save_platform_posts(job_id, posts)
+        except Exception as e:
+            print(f"PLATFORM POSTS SAVE FAILED ({job_id}): {e}", flush=True)
+    return {"ok": True, "platform_posts": posts if req.sync else None}
 
 
 @app.put("/jobs/{job_id}/platform-posts")
@@ -2015,6 +2049,9 @@ def set_angle(job_id: str, req: AngleRequest):
 
 class OnScreenCaptionRequest(BaseModel):
     on_screen_caption: str
+    dx: float | None = None       # caption position/size from the live editor (canvas px / multiplier)
+    dy: float | None = None
+    scale: float | None = None
 
 
 @app.post("/jobs/{job_id}/set-on-screen-caption")
@@ -2027,12 +2064,17 @@ def set_on_screen_caption(job_id: str, req: OnScreenCaptionRequest):
     text = (req.on_screen_caption or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="On-screen caption can't be empty.")
+    _done_job(job_id)   # re-seeds from History after a restart
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Unknown job id")
         if job.get("status") != "done":
             raise HTTPException(status_code=409, detail="Job isn't finished yet.")
+        if req.dx is not None or req.dy is not None or req.scale is not None:
+            job["meta"] = {**(job.get("meta") or {}), "caption_adj": {
+                "dx": round(req.dx or 0, 1), "dy": round(req.dy or 0, 1),
+                "scale": round(min(2.0, max(0.5, req.scale or 1.0)), 3)}}
         job["status"] = "running"
         job["stage"] = "rendering"
         job["stage_label"] = "Updating caption"
@@ -2377,7 +2419,7 @@ def get_history(entry_id: str):
         "publish_results": e.get("publish_results") or {},
         "meta": {"angle": (e.get("meta") or {}).get("angle", "")},
         **{k: v for k, v in _result_for(str(e["id"]), e.get("meta") or {}, "", "").items()
-           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief", "crop", "video_read", "finished_edit", "warnings")},
+           if k in ("cues", "captions_on", "watermark", "paid_promo", "captions_style", "credit", "campaign_id", "post", "cover_ms", "campaign_brief", "crop", "video_read", "finished_edit", "warnings", "caption_adj", "staged_url")},
     }
 
 

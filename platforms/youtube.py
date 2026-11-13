@@ -223,6 +223,9 @@ def publish_video(video_url: str, caption: str, post: dict = None) -> dict:
         # Written/edited in the editor: separate title + description, tags, category.
         title = (post.get("title") or "").strip() or "WokeVision"
         description = (post.get("description") or "").strip()
+        _cap = (post.get("caption") or "").strip()
+        if _cap and _cap.lower() not in description.lower():
+            description = (_cap + "\n\n" + description).strip()
         tags = [t for t in (post.get("tags") or []) if t]
         category_id = str(post.get("category") or "25")
     else:

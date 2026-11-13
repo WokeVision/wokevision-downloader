@@ -27,7 +27,7 @@ def _writable_cookies():
 def _attempt_ytdlp(url, raw_path, opts_extra, progress_cb=None):
     ydl_opts = {
         "outtmpl": raw_path,
-        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]/best",
+        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080][ext=mp4]/best[height<=1080]/best",
         "merge_output_format": "mp4",
         "quiet": True,
         "noplaylist": True,

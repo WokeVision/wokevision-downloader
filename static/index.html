@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0A0A0C" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -39,7 +39,7 @@
   body {
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
     margin: 0;
-    padding: calc(28px + var(--safe-top)) 18px calc(48px + var(--safe-bottom));
+    padding: 0;
     min-height: 100vh;
     background:
       radial-gradient(circle at 50% 0%, rgba(255, 43, 60, 0.10), transparent 55%),
@@ -49,6 +49,8 @@
   .page {
     max-width: 480px;
     margin: 0 auto;
+    /* side padding lives here (not on <body>) so the shared top bar is full width, like every other page */
+    padding: 28px 18px calc(48px + var(--safe-bottom));
   }
 
   /* ---- Studio layout ------------------------------------------------
@@ -71,6 +73,17 @@
   body.finished-edit .osOnly, body.finished-edit #ccCard, body.finished-edit #polish, body.finished-edit #frApply, body.finished-edit #wmApply { display: none !important; }
   body:not(.has-video) #preview, body:not(.has-video) #downloadLink { display: none; }
   #statusCard { display: block; }
+  #aiBanner { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.45; background: rgba(255,160,0,.14); border: 1px solid rgba(255,160,0,.5); }
+  #vidWrap { position: relative; display: block; width: 100%; max-width: min(280px, 29vh); margin: 0 auto 14px; line-height: 0; }
+  #vidWrap video { display: block; width: 100%; max-width: 100%; max-height: none; margin: 0; }
+  #capOv { position: absolute; left: 0; top: 0; width: 82%; line-height: 1.25; transform-origin: 50% 100%; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; outline: 1.5px dashed rgba(255,255,255,.85); border-radius: 4px; background: rgba(255,255,255,.12); }
+  #capOv.drag { cursor: grabbing; }
+  #capTxt { color: #000; text-align: center; font-weight: 700; padding: 0 3%; user-select: text; -webkit-user-select: text; touch-action: none; outline: none; word-break: break-word; font-family: -apple-system, "SF Pro Text", Roboto, sans-serif; white-space: pre-wrap; }
+  #capHandle { position: absolute; right: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; cursor: nwse-resize; touch-action: none; }
+  #liveBar { display: flex; gap: 10px; align-items: center; justify-content: center; margin: 10px 0 0; font-size: 13px; }
+  #liveBar[hidden], #liveNote[hidden], #capOv[hidden], #aiBanner[hidden] { display: none; }
+  #liveBar input[type=range] { width: 130px; vertical-align: middle; }
+  #liveNote { font-size: 12px; color: var(--text-dim); margin: 6px 0 0; line-height: 1.4; text-align: left; }
   #statusCard .progressFill { transition: width .3s ease; }
   .studio > .card { margin-bottom: 14px; }
 
@@ -698,6 +711,7 @@
       </form>
     </div>
   </div>
+  <div id="aiBanner" hidden></div>
   <div class="card" id="statusCard">
     <div class="progressHead">
       <span class="label" id="stageLabel">Ready</span>
@@ -722,6 +736,7 @@
         <textarea id="onScreenBox" class="osOnly"></textarea>
         <div class="actionRow osOnly">
           <button class="secondary" id="changeVideoCaptionBtn" type="button">Change video caption</button>
+          <button class="secondary" id="liveEditBtn" type="button">Edit on video</button>
           <button class="secondary" id="saveOnScreenCaptionBtn" type="button">Save caption</button>
           <button class="secondary" id="hookOptsBtn" type="button">3 hook options</button>
           <span class="inlineSpinner" id="onScreenCaptionSpinner">Updating...</span>
@@ -740,7 +755,13 @@
   <div class="card resultPart" id="videoCard" style="text-align:center;"><h3 style="margin:0 0 10px;font-size:14.5px;font-weight:700;text-align:left">Complete edit</h3>
       <div id="finWarn" style="display:none;text-align:left;font-size:12.5px;line-height:1.5;padding:8px 10px;margin:0 0 10px;border-radius:8px;background:rgba(255,160,0,.12);border:1px solid rgba(255,160,0,.45)"></div>
       <div class="vidEmpty" id="vidEmpty">Your edited video appears here</div>
-      <video id="preview" controls playsinline hidden></video>
+      <div id="vidWrap"><video id="preview" controls playsinline hidden></video>
+        <div id="capOv" hidden><div id="capTxt" contenteditable="true" spellcheck="false" aria-label="On-screen caption"></div><span id="capHandle" title="Drag to resize"></span></div></div>
+      <div id="liveBar" hidden>
+        <label>Size <input type="range" id="capSize" min="50" max="200" value="100" /></label>
+        <button class="secondary" id="capReset" type="button">Reset position</button>
+      </div>
+      <div id="liveNote" hidden>Live edit: drag the caption to move it, drag the corner or use Size to resize, tap it to type. Closed captions show after you save.</div>
       <a class="dl" id="downloadLink" download="wokevision.mp4">Download video</a>
       <details class="polish" id="polish"><summary>Trim &amp; polish · cover frame</summary>
         <div class="polRow">Trim from <input type="number" id="trimS" min="0" step="0.1" placeholder="0" /> to <input type="number" id="trimE" min="0" step="0.1" placeholder="end" /> s
@@ -924,7 +945,9 @@
     fillCues(data.cues, data.captions_on); showSeen(data.video_read); document.getElementById('ccStyle').value = data.captions_style || 'classic'; document.getElementById('creditHandle').value = data.credit ? '@' + data.credit : ''; campSel.value = (data.campaign_id || ''); fillPolish(data.post, data.cover_ms); setJobWm(data.watermark); setJobCrop(data.crop); paidPromo.checked = !!data.paid_promo;
     fillPosts(data.platform_posts);
     setSaveState("");
+    if (typeof liveReset === "function") liveReset(data);
     setResult(true); autoGrowAll();
+    if (typeof refreshAiStatus === "function") refreshAiStatus();
     if (typeof loadSchedules === "function") loadSchedules(); else if (typeof loadConnections === "function") loadConnections();
   }
 
@@ -1096,7 +1119,7 @@
       const resp = await fetch(`/jobs/${currentJobId}/set-on-screen-caption`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ on_screen_caption: text }),
+        body: JSON.stringify({ on_screen_caption: text, dx: live.dx, dy: live.dy, scale: live.scale }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || "Something went wrong.");
@@ -1181,7 +1204,7 @@
   function setFinished(d) {
     document.body.classList.toggle("finished-edit", !!(d && d.finished_edit));
     const w = document.getElementById("finWarn");
-    const list = (d && d.finished_edit && d.warnings) || [];
+    const list = (d && d.warnings) || [];
     w.style.display = list.length ? "" : "none";
     w.textContent = list.join(" ");
   }
@@ -1560,7 +1583,7 @@
         hint: "Only the first ~125 characters show before “more”, so lead with the hook. Instagram allows at most 5 hashtags." },
       { k: "first_comment", type: "area", label: "First comment (optional)", max: 2200, tags: 0,
         hint: "Posted automatically right after the Reel goes live, e.g. extra hashtags or a link. Needs one Instagram reconnect to grant comment permission." },
-      { k: "story", type: "switch", label: "Also add to my Story" },
+      { k: "story", type: "switch", label: "Also add to my Story", def: true },
       { k: "story_black", type: "switch", label: "Story: video on a plain black background", def: true },
     ],
     threads: [
@@ -1572,8 +1595,10 @@
     youtube: [
       { k: "title", type: "line", label: "Title", max: 100, soft: 50,
         hint: "Only the first ~50 characters show in the feed, so put the keyword and the hook first. No hashtags in the title." },
+      { k: "caption", type: "area", label: "Caption", max: 300,
+        hint: "Same style as your other platform captions. It goes at the very top of the description when you post." },
       { k: "description", type: "area", label: "Description", max: 5000, tags: 5,
-        hint: "The first line (~100 characters) is your hook. End with 3–5 hashtags; the first three show above the title." },
+        hint: "A detailed, keyword-rich description to help Shorts reach: what happens, who is in it, the topic’s search terms. End with 3–5 hashtags; the first three show above the title." },
       { k: "tags", type: "tags", label: "Tags", max: 500,
         hint: "Comma-separated search keywords. Viewers don’t see these, but YouTube uses them for search and suggestions." },
       { k: "category", type: "select", label: "Category" },
@@ -1598,7 +1623,7 @@
     facebook: [
       { k: "description", type: "area", label: "Description", max: 2200, tags: 3,
         hint: "Three hashtags: the most that tends to help on Facebook. A hook first line and a closing question work best." },
-      { k: "story", type: "switch", label: "Also add to my Page Story" },
+      { k: "story", type: "switch", label: "Also add to my Page Story", def: true },
       { k: "story_black", type: "switch", label: "Story: video on a plain black background", def: true },
     ],
   };
@@ -1627,10 +1652,6 @@
           box.style.cssText = "font-size:13px;margin:0 0 8px;opacity:.85";
           box.textContent = "Checking which TikTok account will receive this\u2026";
           panel.appendChild(box);
-          const pv = document.createElement("video");
-          pv.id = "tt_prev"; pv.controls = true; pv.playsInline = true; pv.muted = true;
-          pv.style.cssText = "width:100%;max-height:260px;border-radius:12px;background:#000;margin:0 0 10px;display:none";
-          panel.appendChild(pv);
           return;
         }
         if (f.type === "ttprivacy") {
@@ -1731,7 +1752,7 @@
     if (!ttInfo) return;
     if (ttInfo.error) { box.textContent = ttInfo.error; return; }
     box.innerHTML = "Posting to TikTok as <b></b>"; box.querySelector("b").textContent = "@" + (ttInfo.username || ttInfo.nickname);
-    const want = priv.dataset.want || priv.value;
+    const want = priv.dataset.want || priv.value || "PUBLIC_TO_EVERYONE";
     priv.innerHTML = '<option value="">Select who can view\u2026</option>' + (ttInfo.privacy_level_options || []).map((o) => `<option value="${o}">${TT_LABEL[o] || o}</option>`).join("");
     priv.value = (ttInfo.privacy_level_options || []).includes(want) ? want : "";
     [["allow_comments", "comment_disabled"], ["allow_duet", "duet_disabled"], ["allow_stitch", "stitch_disabled"]].forEach(([k, flag]) => {
@@ -1740,8 +1761,6 @@
       el.parentElement.parentElement.title = ttInfo[flag] ? "Turned off in your TikTok settings." : "";
       if (ttInfo[flag]) el.checked = false;
     });
-    const pv = document.getElementById("tt_prev"), src = document.getElementById("preview");
-    if (pv && src && src.src) { if (pv.src !== src.src) pv.src = src.src; pv.style.display = ""; }
     ttSync();
   }
   async function loadTtCreator() {
@@ -1876,7 +1895,7 @@
         const el = document.getElementById(`pp_${p.id}_${f.k}`);
         if (!el) return;
         if (f.type === "switch") el.checked = d[f.k] === undefined ? !!f.def : !!d[f.k];
-        else if (f.type === "ttprivacy") { el.dataset.want = d[f.k] || ""; el.value = d[f.k] || ""; }
+        else if (f.type === "ttprivacy") { el.dataset.want = d[f.k] || "PUBLIC_TO_EVERYONE"; el.value = d[f.k] || "PUBLIC_TO_EVERYONE"; }
         else if (f.type === "tags") el.value = (d[f.k] || []).join(", ");
         else if (f.type === "select") el.value = String(d[f.k] || "25");
         else if (f.type === "topic") { if (d[f.k] && !Array.from(el.options).some((o) => o.value === d[f.k])) el.add(new Option(d[f.k], d[f.k])); el.value = d[f.k] || "Memes"; }
@@ -1939,8 +1958,13 @@
     setSaveState("Saving…");
     try {
       if (doMaster) {
-        const r = await fetch(`/jobs/${jid}/posting-caption`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ caption: document.getElementById("captionBox").value }) });
-        if (!r.ok) throw new Error("save failed");
+        const r = await fetch(`/jobs/${jid}/posting-caption`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ caption: document.getElementById("captionBox").value, sync: true }) });
+        if (!r.ok) { let m = ""; try { m = (await r.json()).detail || ""; } catch (_) {} throw new Error(m || ("save failed (" + r.status + ")")); }
+        try {
+          const j = await r.json();
+          // Platform captions follow the core caption; skip the refresh if the user is mid-edit in one of them.
+          if (j && j.platform_posts && !doPosts && !postsDirty && !(document.activeElement && document.activeElement.closest && document.activeElement.closest(".platPanel"))) fillPosts(j.platform_posts);
+        } catch (_) {}
       }
       if (doPosts) {
         const r = await fetch(`/jobs/${jid}/platform-posts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ posts: collectPosts() }) });
@@ -1950,7 +1974,7 @@
       return true;
     } catch (e) {
       postsDirty = postsDirty || doPosts; masterDirty = masterDirty || doMaster;
-      setSaveState("Couldn’t save — will retry", true);
+      setSaveState("Couldn’t save: " + ((e && e.message) || "error") + " — retrying", true);
       clearTimeout(saveTimer); saveTimer = setTimeout(flushAllSaves, 4000);
       return false;
     }
@@ -1981,6 +2005,98 @@
   captionBox.addEventListener("input", scheduleMasterSave);
   buildPlatformPanels();
 
+
+  // --- AI status banner ---------------------------------------------------
+  const aiBanner = document.getElementById("aiBanner");
+  function refreshAiStatus() {
+    fetch("/api/ai-status").then((r) => r.json()).then((d) => {
+      if (d && d.ok === false && d.message) { aiBanner.textContent = "⚠ " + d.message; aiBanner.hidden = false; }
+      else aiBanner.hidden = true;
+    }).catch(() => {});
+  }
+  refreshAiStatus();
+
+  // --- Live on-screen caption editor -----------------------------------------
+  // Canvas is 720x1280; the caption box defaults to x=65..655 with its bottom at y=236
+  // (render.py). dx/dy are canvas-pixel offsets and scale a size multiplier, sent to the
+  // server on Save so the render matches what you see here.
+  const live = { on: false, dx: 0, dy: 0, scale: 1, staged: "", final: "" };
+  const CV_W = 720, CV_H = 1280, CAP_X = 65, CAP_W = 590, CAP_BOTTOM = 236;
+  const vidWrap = document.getElementById("vidWrap"), capOv = document.getElementById("capOv"), capTxt = document.getElementById("capTxt");
+  const capHandle = document.getElementById("capHandle"), liveBar = document.getElementById("liveBar"), liveNote = document.getElementById("liveNote");
+  const capSize = document.getElementById("capSize"), liveEditBtn = document.getElementById("liveEditBtn");
+  function liveLayout() {
+    const W = vidWrap.clientWidth || 1; const k = W / CV_W;
+    capOv.style.width = (CAP_W * k) + "px";
+    capOv.style.left = ((CAP_X + live.dx) * k) + "px";
+    capOv.style.top = "auto";
+    capOv.style.bottom = (vidWrap.clientHeight - (CAP_BOTTOM + live.dy) * k) + "px";
+    capOv.style.transform = "scale(" + live.scale + ")";
+    let fs = 50 * k; capTxt.style.fontSize = fs + "px";
+    while (fs > 24 * k && capTxt.scrollHeight > fs * 1.25 * 2.1) { fs -= 2 * k; capTxt.style.fontSize = fs + "px"; }
+    capSize.value = Math.round(live.scale * 100);
+  }
+  function liveReset(d) {
+    d = d || {}; const a = d.caption_adj || {};
+    live.dx = +a.dx || 0; live.dy = +a.dy || 0; live.scale = +a.scale || 1;
+    live.final = d.video_url || ""; live.staged = d.staged_url || "";
+    if (live.on) liveStop(false);
+  }
+  function liveStart() {
+    if (!currentJobId || !live.staged) return;
+    const pv = document.getElementById("preview");
+    const t = pv.currentTime || 0;
+    let failed = false;
+    pv.onerror = () => { if (failed || !live.on) return; failed = true; liveStop(true); alert("Live editing isn’t available for this clip (the unedited copy has expired). You can still change the text and press Save caption."); };
+    pv.onloadedmetadata = () => { try { pv.currentTime = t; } catch (_) {} liveLayout(); };
+    live.on = true;
+    pv.src = live.staged + (live.staged.includes("?") ? "&" : "?") + "t=" + Date.now();
+    capTxt.textContent = onScreenBox.value;
+    capOv.hidden = liveBar.hidden = liveNote.hidden = false;
+    liveEditBtn.textContent = "Done editing";
+    liveLayout();
+  }
+  function liveStop(restore) {
+    live.on = false;
+    capOv.hidden = liveBar.hidden = liveNote.hidden = true;
+    liveEditBtn.textContent = "Edit on video";
+    const pv = document.getElementById("preview"); pv.onerror = null;
+    if (restore && live.final) pv.src = live.final + (live.final.includes("?") ? "&" : "?") + "t=" + Date.now();
+  }
+  liveEditBtn.addEventListener("click", () => (live.on ? liveStop(true) : liveStart()));
+  onScreenBox.addEventListener("input", () => { if (live.on) { capTxt.textContent = onScreenBox.value; liveLayout(); } });
+  capTxt.addEventListener("input", () => { onScreenBox.value = capTxt.innerText.replace(/\n$/, ""); autoGrow(onScreenBox); liveLayout(); });
+  capTxt.addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); e.stopPropagation(); });
+  capTxt.addEventListener("paste", (e) => { e.preventDefault(); document.execCommand("insertText", false, (e.clipboardData.getData("text/plain") || "").replace(/\s+/g, " ")); });
+  capSize.addEventListener("input", () => { live.scale = capSize.value / 100; liveLayout(); });
+  document.getElementById("capReset").addEventListener("click", () => { live.dx = 0; live.dy = 0; live.scale = 1; liveLayout(); });
+  // drag to move (anywhere except the text itself is a handle too: press-and-move on the box edge/padding; text tap focuses)
+  let drag = null;
+  capOv.addEventListener("pointerdown", (e) => {
+    if (e.target === capHandle) return;
+    drag = { x: e.clientX, y: e.clientY, dx: live.dx, dy: live.dy, moved: false, id: e.pointerId };
+    capOv.setPointerCapture(e.pointerId); capOv.classList.add("drag");
+  });
+  capOv.addEventListener("pointermove", (e) => {
+    if (!drag || e.target === capHandle) return;
+    const k = CV_W / (vidWrap.clientWidth || 1);
+    const mx = e.clientX - drag.x, my = e.clientY - drag.y;
+    if (!drag.moved && Math.abs(mx) + Math.abs(my) < 5) return;
+    drag.moved = true;
+    live.dx = Math.round(Math.min(CV_W - CAP_X - 20, Math.max(-CAP_X, drag.dx + mx * k)));
+    live.dy = Math.round(Math.min(CV_H - CAP_BOTTOM, Math.max(-CAP_BOTTOM + 40, drag.dy + my * k)));
+    liveLayout();
+  });
+  const endDrag = (e) => { if (drag && !drag.moved) { try { capTxt.focus(); } catch (_) {} } drag = null; capOv.classList.remove("drag"); };
+  capOv.addEventListener("pointerup", endDrag); capOv.addEventListener("pointercancel", endDrag);
+  let rs = null;
+  capHandle.addEventListener("pointerdown", (e) => { e.stopPropagation(); rs = { x: e.clientX, s: live.scale }; capHandle.setPointerCapture(e.pointerId); });
+  capHandle.addEventListener("pointermove", (e) => {
+    if (!rs) return;
+    live.scale = Math.min(2, Math.max(0.5, rs.s + (e.clientX - rs.x) / (vidWrap.clientWidth || 1))); liveLayout();
+  });
+  capHandle.addEventListener("pointerup", () => { rs = null; });
+  window.addEventListener("resize", () => { if (live.on) liveLayout(); });
 
   // --- Platforms: single permanent section, connections + toggles -------
 
@@ -2506,6 +2622,7 @@
       }
 
       setFinished(e);
+      if (typeof liveReset === "function") liveReset(e);
       document.getElementById("onScreenBox").value = e.on_screen_caption || "";
       document.getElementById("captionBox").value = e.posting_caption || "";
       document.getElementById("angleBox").value = (e.meta && e.meta.angle) || "";

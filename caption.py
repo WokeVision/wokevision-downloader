@@ -3,6 +3,7 @@ import re
 import json
 import random
 import requests
+import ai_status
 import db
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -130,12 +131,24 @@ literally happening in the video itself (e.g. "Wait, did she really just say tha
 "He actually walked up and did it", "The way he just took it"). Describe the \
 real moment on screen -- who did what -- using plain everyday words. No jokes, \
 no sarcasm, no politics, no clever wordplay, no opinions, no slogans. Do not \
-mention things that are not in the video. Under 10 words, no hashtags, no \
-quotation marks around the line.
+mention things that are not in the video. Under 10 words, no hashtags.
 
-End the line with exactly ONE emoji that fits (😳 😮 😯 🤯 😬 are typical) -- it \
-must be the very last character. Do not put a full stop, period, or any other \
-punctuation between the last word and the emoji. Do not use more than one emoji."""
+THE LINE MUST BE ABOUT THIS SPECIFIC CLIP. Take a real detail from the spoken \
+transcript, the visual read or the operator note (a thing someone said, did or \
+wore, the place, the object, the exact moment) and react to THAT. A line that \
+could be pasted under any other video is wrong. Never reuse a stock line.
+
+VARY THE SHAPE every time -- pick a different one from this list and invent \
+more: a disbelieving question; "He really just..."; "Not her..."; "The way \
+she..."; "Nobody:" style setups; quoting the funniest spoken words; naming the \
+exact thing that happened; "Imagine..."; "POV: ..."; "Wait for it..."; \
+"Bro actually..."; "She had NO idea..."; "This is where it goes wrong".
+
+End the line with one or two emoji that fit (😳 😮 😯 🤯 😬 💀 😭 👀 are typical) -- \
+they must be the very last characters, written side by side with no space \
+between them (e.g. 😳😳). No full stop, period or other punctuation between the \
+last word and the emoji. Quotation marks around words or the whole line are \
+allowed when they suit it. Never more than two emoji."""
 
 # Platform minimums the posting caption is built against, so ONE caption
 # works unedited on every platform it goes out to (Instagram, YouTube, X,
@@ -185,10 +198,10 @@ B) Only if no question fits the clip: ONE short statement about what is happenin
 screen, for example "This is crazy!", "Mad props to this guy", "He did well to stand \
 up for himself like that". Plain and punchy, not a joke.
 
-The line is followed by exactly ONE emoji, the very last character, with no \
+The line is followed by one or two emoji, the very last characters, with no \
 punctuation between the line and the emoji besides the ? or ! that belongs to it. For \
 questions use a comment-prompting emoji such as 👇 🤔 🤨 😅 👀 ; for statements use one \
-that matches the feeling. Never more than one emoji.
+that matches the feeling. Two emoji go side by side with no space. Never more than two.
 
 Give exactly {POSTING_HASHTAG_COUNT} hashtags in the separate "hashtags" field (not inside \
 "caption"). The caption line itself must be under 100 characters."""
@@ -225,57 +238,122 @@ _EMOJI_RE = re.compile(
 )
 
 
+MAX_TRAILING_EMOJI = 3
+
+
+def _emoji_tail(found: list, pool: list) -> str:
+    """The emoji the model/user chose (up to MAX_TRAILING_EMOJI, glued together
+    with no space between them), or one random fallback if there were none."""
+    if found:
+        return "".join(found[:MAX_TRAILING_EMOJI])
+    return random.choice(pool)
+
+
 def _enforce_single_trailing_emoji(text: str) -> str:
-    """Guarantees the on-screen line ends in exactly one emoji with no
-    punctuation in between, regardless of what the model actually returned:
-    - strips a period/other punctuation sitting right before an emoji
-    - if an emoji is present but buried mid-sentence rather than at the end,
-      moves one to the end
-    - if no emoji is present at all, appends a fallback one
-    - collapses multiple trailing emoji down to one
-    """
+    """Guarantees the on-screen line ends in emoji with no punctuation in
+    between (one fallback emoji is added if there were none). Two or three
+    emoji side by side are kept as typed -- no space is needed between them.
+    Quotation marks (including a leading one) are left alone."""
     text = (text or "").strip()
     if not text:
         return text
-
     found = _EMOJI_RE.findall(text)
-    # Strip every emoji out of the body so we can cleanly re-append one.
     stripped = _EMOJI_RE.sub("", text)
-    # Clean up leftover punctuation/whitespace left dangling where an emoji
-    # used to sit (e.g. "Libs are shaking. " -> "Libs are shaking").
     stripped = re.sub(r"\s+", " ", stripped).strip()
     stripped = stripped.rstrip(" .,;:").strip()
-
-    emoji = found[0] if found else random.choice(FALLBACK_EMOJI)
-    return f"{stripped} {emoji}"
-
+    return f"{stripped} {_emoji_tail(found, FALLBACK_EMOJI)}"
 
 
 QUESTION_EMOJI = ["\U0001F447", "\U0001F914", "\U0001F928", "\U0001F605", "\U0001F440"]
 STATEMENT_EMOJI = ["\U0001F633", "\U0001F92F", "\U0001F62E", "\U0001F4AF", "\U0001F440"]
 FALLBACK_QUESTIONS = ["What do you think about this?", "Is this valid?", "Do you agree with this?",
                       "How would you react?", "What would you do in this situation?"]
-FALLBACK_TOP = ["Wait, is this actually happening?", "Did that really just happen?", "I can't believe what I just watched"]
+FALLBACK_TOP = [
+    "Wait, is this actually happening?", "Did that really just happen?", "I can't believe what I just watched",
+    "Nobody was ready for this", "Bro actually did that", "She had no idea what was coming",
+    "The way this just unfolded", "Hold on, rewind that", "Tell me that did not just happen",
+    "Not him doing that on camera", "This is where it all goes wrong", "Wait for it...",
+    "How is this even real?", "I need someone to explain this", "Did they really just say that?",
+    "POV: you walk into this", "Imagine being there for this", "The confidence is unreal",
+    "He really thought that would work",
+    "She said it with a straight face", "I watched this three times", "No way that just happened",
+    "This got out of hand fast", "The audacity of this moment", "Everyone just froze",
+    "Something is very wrong here", "Wait, what did I just see?", "It escalated so quickly",
+    "That reaction says everything", "They really let this air", "How did it come to this?",
+    "Pause. Look at their face", "This is actually unbelievable", "Why is nobody stopping this?",
+    "The silence after that says it all", "Did anyone else catch that?", "Not the plot twist at the end",
+    "Zero hesitation, full commitment", "I was not expecting that ending",
+]
+FALLBACK_EMOJI_SETS = ["\U0001F633", "\U0001F92F", "\U0001F62E", "\U0001F480", "\U0001F440", "\U0001F62C",
+                       "\U0001F633\U0001F633", "\U0001F602\U0001F480", "\U0001F92F\U0001F92F", "\U0001F62E\U0001F440"]
+_STOP = set("""the a an and or but if so to of in on at for with from by is are was were be been being it its this that these those
+i you he she we they them his her their our your my me him us not no yes do does did done have has had having will would can could
+should just really very more most some any all out up down over under again then than too also about into after before there here
+what when where who why how which while because like dont cant wont gonna gotta got get going went make made said say says know
+think thing things people guy video clip post reel""".split())
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _keywords(text: str, n: int = 6) -> list:
+    counts = {}
+    for w in re.findall(r"[A-Za-z][A-Za-z']{3,}", text or ""):
+        lw = w.lower().strip("'")
+        if lw in _STOP or len(lw) < 4:
+            continue
+        counts[lw] = counts.get(lw, 0) + 1
+    return [w for w, _ in sorted(counts.items(), key=lambda kv: (-kv[1], -len(kv[0])))][:n]
+
+
+def fallback_on_screen(transcript: str = "", meta: dict = None, avoid: str = "") -> str:
+    """Used only when the AI is unavailable. Builds a line from the clip's own
+    words where possible (a snippet of what is said, or its key subject) and
+    otherwise picks from a large pool, so it never lands on the same line
+    for every clip."""
+    meta = meta or {}
+    avoid_l = (avoid or "").lower()
+    emo = lambda: random.choice(FALLBACK_EMOJI_SETS)
+    cands = []
+    text = re.sub(r"\s+", " ", (transcript or "")).strip()
+    sents = [x.strip(" \"'") for x in _SENT_SPLIT.split(text) if len(x.split()) >= 4]
+    if sents:
+        sn = random.choice(sents[:8])
+        words = sn.split()
+        words = words[:7]
+        while len(words) > 3 and words[-1].lower().strip(",.") in _STOP:
+            words.pop()
+        snip = " ".join(words).rstrip(" ,;:.!?")
+        for t in ('He really just said "{s}"', 'Wait, "{s}"?', '"{s}" and nobody stopped him', 'Not her saying "{s}"',
+                  'The way they said "{s}"', 'Did they just say "{s}"?', 'Hearing "{s}" live is something else'):
+            cands.append(t.format(s=snip))
+    kws = [k for k in _keywords(f"{meta.get('angle','')} {meta.get('title','')} {meta.get('video_read','')}", 4) if len(k) >= 5 and not k.endswith(("ed", "ing"))][:3]
+    if kws:
+        k = random.choice(kws)
+        for t in ("Nobody expected this {k} moment", "The {k} part is what gets me", "Wait, this is all about the {k}?",
+                  "The way the {k} just played out", "I did not see the {k} thing coming", "This {k} situation got wild fast"):
+            cands.append(t.format(k=k))
+    pool = [c for c in cands if c.lower() not in avoid_l] or cands
+    if not pool or random.random() < 0.2:
+        pool = [c for c in FALLBACK_TOP if c.lower() not in avoid_l] or FALLBACK_TOP
+    return _enforce_single_trailing_emoji(f"{random.choice(pool)} {emo()}")
 
 
 def _core_line(text: str, default: str = "") -> str:
-    """Forces the core caption into its fixed shape: ONE line, ending in
-    exactly ONE emoji (a question gets a comment-prompting one). Anything
-    else the model wrote -- extra lines, hashtags, extra emoji, a full stop
-    before the emoji -- is stripped."""
+    """Forces the core caption into its fixed shape: ONE line ending in
+    emoji (a question gets a comment-prompting one by default). Extra lines
+    and hashtags are stripped; quotation marks and several emoji side by
+    side are kept."""
     text = _HASHTAG_RE.sub("", text or "")
     lines = [l.strip() for l in text.replace("\r", "").split("\n") if l.strip()]
     line = lines[0] if lines else (default or "")
     found = _EMOJI_RE.findall(line)
     body = re.sub(r"\s+", " ", _EMOJI_RE.sub("", line)).strip()
-    body = body.strip('"\u201c\u201d ').rstrip(" .,;:-").strip()
+    body = body.rstrip(" .,;:-").strip()
     if not body:
         body = random.choice(FALLBACK_QUESTIONS)
-    if re.match(r"(?i)^(do|does|did|is|are|was|were|have|has|had|would|could|should|can|will|what|how|who|why|where|which|am)\\b", body) and not body.endswith(("?", "!")):
+    if re.match(r"(?i)^(do|does|did|is|are|was|were|have|has|had|would|could|should|can|will|what|how|who|why|where|which|am)\b", body) and not body.endswith(("?", "!")):
         body += "?"
     is_q = body.endswith("?")
-    emoji = found[0] if found else random.choice(QUESTION_EMOJI if is_q else STATEMENT_EMOJI)
-    return f"{body} {emoji}"
+    return f"{body} {_emoji_tail(found, QUESTION_EMOJI if is_q else STATEMENT_EMOJI)}"
 
 
 def _trim_to_chars(text: str, limit: int) -> str:
@@ -327,16 +405,16 @@ def _assemble_posting_caption(body: str, hashtags: list) -> str:
 
 # Popular reach tags, grouped by theme, used both in the prompt and to
 # enforce the mix in code (the model likes to invent #RoastBattle-style tags).
-POOL_HUMOUR = ["#funny", "#funnymeme", "#lol", "#lolmeme", "#memesdaily", "#memepage", "#comedy", "#viral", "#viralvideo"]
-POOL_POLITICS = ["#politics", "#USA", "#drama", "#beef", "#crazy", "#viral"]
-POOL_CULTURE = ["#woke", "#antiwoke", "#wokememes", "#satire", "#darkhumour", "#clownworld", "#memepage"]
-_POOL_ALL = {t.lower() for t in POOL_HUMOUR + POOL_POLITICS + POOL_CULTURE + ["#lgbtmemes", "#transmemes", "#wokeculture", "#news"]}
+POOL_HUMOUR = ["#funny", "#funnymeme", "#lol", "#lolmeme", "#memesdaily", "#memepage", "#comedy", "#viral", "#viralvideo", "#relatable", "#humor", "#hilarious", "#dankmemes", "#memes2026", "#comedyvideo", "#funnyvideos", "#fyp", "#laughing", "#cringe", "#unbelievable", "#savage", "#roast"]
+POOL_POLITICS = ["#politics", "#USA", "#drama", "#beef", "#crazy", "#viral", "#breakingnews", "#debate", "#americanpolitics", "#political", "#election", "#freespeech", "#publicopinion", "#newsupdate", "#uspolitics", "#politicalhumor", "#currentevents"]
+POOL_CULTURE = ["#woke", "#antiwoke", "#wokememes", "#satire", "#darkhumour", "#clownworld", "#memepage", "#culturewar", "#wokeness", "#modernworld", "#socialcommentary", "#peakwoke", "#cancelculture", "#wokemind", "#society"]
+_POOL_ALL = {t.lower() for t in POOL_HUMOUR + POOL_POLITICS + POOL_CULTURE + ["#lgbtmemes", "#transmemes", "#wokeculture", "#news", "#viral", "#trending", "#memes", "#funny", "#politics", "#explore", "#reels", "#trendingnow", "#shorts"]}
 _POLITICS_WORDS = re.compile(r"politic|trump|biden|harris|election|vote|congress|senate|government|police|cop\b|ice\b|immigra|border|president|democrat|republican|court|law\b|military|war\b|tax", re.I)
 _CULTURE_WORDS = re.compile(r"woke|trans\b|lgbt|dei\b|feminis|activist|liberal|gender|onlyfans|degenera|pronoun|leftist|protest|brainwash", re.I)
 
 
 # Extra high-traffic tags used only to top up a set that is still short.
-POOL_REACH = ["#viral", "#trending", "#memes", "#funny", "#news", "#politics"]
+POOL_REACH = ["#viral", "#trending", "#memes", "#funny", "#news", "#politics", "#explore", "#reels", "#trendingnow", "#shorts", "#foryoupage", "#mustwatch", "#insane"]
 
 # Most hashtags each platform will actually honour (see the research notes
 # further down). Threads takes ONE topic tag (set separately, not in the text).
@@ -350,7 +428,22 @@ def _theme_pool(probe: str) -> list:
     if _POLITICS_WORDS.search(probe):
         theme += POOL_POLITICS
     theme += POOL_HUMOUR
+    theme = list(dict.fromkeys(theme))
+    random.shuffle(theme)       # a different mix every time, not the same first five
     return theme
+
+
+def keyword_tags(probe: str, n: int = 3) -> list:
+    """#Tags built from the clip's own subject words (title, what the AI saw,
+    what is said), so the set differs from clip to clip."""
+    out = []
+    for w in _keywords(probe, n + 3):
+        t = "#" + w.replace("'", "")
+        if len(t) <= 22 and t.lower() not in _POOL_ALL:
+            out.append(t)
+        if len(out) >= n:
+            break
+    return out
 
 
 def enforce_tag_mix(text: str, theme_text: str = "", total: int = 5, keep=None, exclude=None) -> str:
@@ -379,6 +472,11 @@ def enforce_tag_mix(text: str, theme_text: str = "", total: int = 5, keep=None, 
     theme = _theme_pool(probe)
     pool_have = [t for t in tags if t.lower() in _POOL_ALL]
     specific = [t for t in tags if t.lower() not in _POOL_ALL]
+    if len(specific) < 2:
+        have_s = {x.lower() for x in specific}
+        for kt in keyword_tags(probe, 3):
+            if kt.lower() not in have_s and len(specific) < 3:
+                specific.append(kt)
     need = max(0, min(2, total // 2) - pool_have.__len__())
     taken = held_l | seen | excl
     adds = []
@@ -645,14 +743,24 @@ def _call_openai(system_prompt: str, user_content: str, temperature: float = 0.9
                 timeout=60,
             )
             if resp.status_code in (429, 500, 502, 503, 504):
+                ai_status.record_fail(resp.status_code, resp.text)
+                if ai_status.get().get("kind") in ("quota", "key"):
+                    last = RuntimeError(f"OpenAI HTTP {resp.status_code}: {resp.text[:200]}")
+                    print(f"OPENAI CALL FAILED ({kind}): {last}", flush=True)
+                    raise last   # retrying can't fix an empty balance
                 raise RuntimeError(f"OpenAI HTTP {resp.status_code}: {resp.text[:200]}")
+            if resp.status_code == 401:
+                ai_status.record_fail(401, resp.text)
             resp.raise_for_status()
+            ai_status.record_ok()
             body = resp.json()
             u = body.get("usage") or {}
             db.record_ai_usage(kind, os.environ.get("CAPTION_MODEL", "gpt-4o"), u.get("prompt_tokens", 0), u.get("completion_tokens", 0))
             return json.loads(body["choices"][0]["message"]["content"])
         except Exception as e:
             last = e
+            if ai_status.get().get("kind") in ("quota", "key"):
+                break
             print(f"OPENAI CALL FAILED (attempt {attempt + 1}/3, {kind}): {e}", flush=True)
             if attempt < 2:
                 _t.sleep(1.5 * (attempt + 1))
@@ -664,13 +772,13 @@ def generate_captions(transcript: str, meta: dict) -> tuple:
     in a single OpenAI call. If the AI is unavailable it falls back to a plain
     generic question -- never the source post's own title. Returns
     (on_screen_caption, posting_caption)."""
-    fallback_top = _enforce_single_trailing_emoji(random.choice(FALLBACK_TOP))
+    fallback_top = fallback_on_screen(transcript, meta)
     fallback_posting = _assemble_posting_caption("", [])
     if not OPENAI_API_KEY:
         return fallback_top, fallback_posting
     try:
         data = _call_openai(COMBINED_SYSTEM, _build_context(transcript, meta))
-        on_screen = _enforce_single_trailing_emoji((data.get("on_screen") or "").strip() or random.choice(FALLBACK_TOP))
+        on_screen = _enforce_single_trailing_emoji((data.get("on_screen") or "").strip()) if (data.get("on_screen") or "").strip() else fallback_top
         posting = _assemble_posting_caption(data.get("caption"), data.get("hashtags")) or fallback_posting
         return on_screen, posting
     except Exception as e:
@@ -686,7 +794,7 @@ def generate_on_screen_caption(transcript: str, meta: dict, avoid: str = None, s
     if not OPENAI_API_KEY:
         if strict:
             raise RuntimeError("No OPENAI_API_KEY is set, so captions can't be regenerated.")
-        return _enforce_single_trailing_emoji(random.choice(FALLBACK_TOP))
+        return fallback_on_screen(transcript, meta, avoid or "")
 
     note = f'A previous version was: "{avoid}" -- write a genuinely different one, not a light rewording.' if avoid else ""
     try:
@@ -699,7 +807,7 @@ def generate_on_screen_caption(transcript: str, meta: dict, avoid: str = None, s
         print(f"ON-SCREEN CAPTION GEN FAILED: {e}", flush=True)
         if strict:
             raise
-        return _enforce_single_trailing_emoji(random.choice(FALLBACK_TOP))
+        return fallback_on_screen(transcript, meta, avoid or "")
 
 
 HOOKS_SYSTEM = STANCE_GUIDE + "\n\n" + READ_THE_CLIP + f"""
@@ -919,11 +1027,14 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     yt_title = base["youtube"]["title"] if yt_title is None else str(yt_title)
     yt_desc = g("youtube", "description")
     yt_desc = base["youtube"]["description"] if yt_desc is None else str(yt_desc)
+    yt_cap = g("youtube", "caption")
+    yt_cap = base["youtube"]["caption"] if yt_cap is None else str(yt_cap)
     yt_tags = g("youtube", "tags")
     yt_tags = base["youtube"]["tags"] if yt_tags is None else yt_tags
     cat = str(g("youtube", "category") or YT_DEFAULT_CATEGORY)
     out["youtube"] = {
         "title": _trim_to_chars(_strip_hashtags(yt_title).strip(), LIM["yt_title"]),
+        "caption": _trim_to_chars(fix_emoji_runts(_strip_hashtags(yt_cap).strip()), 300),
         "description": _trim_to_chars(fix_emoji_runts(_limit_hashtags(yt_desc, LIM["yt_hashtags"]).strip()), LIM["yt_desc"]),
         "tags": _clean_yt_tags(yt_tags),
         "category": cat if cat.isdigit() else YT_DEFAULT_CATEGORY,
@@ -943,7 +1054,7 @@ def normalize_platform_posts(raw: dict, master: str = "") -> dict:
     out["tiktok"] = {
         "caption": _trim_to_chars(fix_emoji_runts(_limit_hashtags(tk, LIM["tiktok_tags"]).strip()), LIM["tiktok_caption"]),
         "allow_comments": flag("allow_comments"), "allow_duet": flag("allow_duet"), "allow_stitch": flag("allow_stitch"),
-        "privacy_level": _priv if _priv in ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY") else "",
+        "privacy_level": _priv if _priv in ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY") else "PUBLIC_TO_EVERYONE",
         "disclose": flag("disclose"), "your_brand": flag("your_brand"), "branded_content": flag("branded_content"),
     }
 
@@ -969,12 +1080,13 @@ def default_platform_posts(master: str) -> dict:
         "threads": {"text": (body + ("\n\n" + tags5 if tags5 else "")).strip(), "topic_tag": pick_topic_tag(tag_words[0] if tag_words else "", master)},
         "youtube": {
             "title": first_line[:100],
+            "caption": body,
             "description": (body + "\n\n" + " ".join((tags[:4] + ["#Shorts"])[:5])).strip(),
             "tags": tag_words, "category": YT_DEFAULT_CATEGORY,
         },
         "x": {"text": fit_chars((body + ("\n\n" + " ".join(tags[:2]) if tags else "")).strip(), LIM["x_text"])},
         "tiktok": {"caption": (body + ("\n\n" + tags5 if tags5 else "")).strip(),
-                   "allow_comments": False, "allow_duet": False, "allow_stitch": False, "privacy_level": "",
+                   "allow_comments": False, "allow_duet": False, "allow_stitch": False, "privacy_level": "PUBLIC_TO_EVERYONE",
                    "disclose": False, "your_brand": False, "branded_content": False},
         "facebook": {"description": (body + ("\n\n" + " ".join(tags[:2]) if tags else "")).strip()},
     }
@@ -990,8 +1102,8 @@ line + one emoji (you may reword the question slightly per platform, but it \
 stays one short question or statement with exactly one trailing emoji). NO \
 paragraphs, NO extra context sentences, NO jokes, NO essays. Then add only what \
 the platform needs: the credit line (where listed below) and the hashtags. \
-YouTube is the only exception: its title is a short keyword-first headline and \
-its description is the same one line, the credit line and hashtags.
+YouTube is the only exception: it also gets a short keyword-first title and a \
+long, detailed keyword-rich description (see below).
 
 PLATFORM RULES (hard limits in brackets):
 
@@ -1007,9 +1119,15 @@ must be ONE of these exact approved topics, whichever fits the clip best: {THREA
 
 youtube -- "title" [max 100 chars, no hashtags]: a short plain headline of what \
 happens, keyword first (only ~50 chars show), no clickbait lies, no ALL CAPS. \
-"description" [max 5,000]: the one core line + one emoji, then the credit line if \
-supplied, then 3-5 hashtags on their own line (include #Shorts as one of them). \
-"tags": 8-12 search keywords/phrases (no #, total under 400 characters).
+"caption" [max 300 chars, no hashtags]: the SAME kind of caption as the other platforms -- the one core line + one or two emoji. \
+"description" [max 5,000]: a DETAILED, search-friendly description for YouTube Shorts. Start with the caption line. \
+Then 2-3 short paragraphs (about 80-160 words in total) describing exactly what happens in the clip and who is in it, \
+in natural sentences that work in the topic's real search terms: names, places, events, the issue being discussed and \
+related buzzwords people actually search for (e.g. viral, trending, reaction, debate, caught on camera, breaking, explained \
+as they genuinely apply -- never fake names or facts that are not in the clip). Add a line "Credit: @handle" if one is \
+supplied, a line of 2-3 questions or a call to comment/subscribe, then 3-5 hashtags on their own line \
+(include #Shorts as one of them). \
+"tags": 12-20 search keywords/phrases mixing the specific subject, names, the issue and broad terms (no #, total under 450 characters).
 
 x -- "text" [max 280 chars INCLUDING the hashtags]. The one core line + one emoji, \
 then exactly 2 hashtags (one specific to the clip, one popular reach tag).
@@ -1029,7 +1147,7 @@ Never attack people over protected traits.
 Respond ONLY with JSON in exactly this shape:
 {"instagram": {"caption": "..."},
  "threads": {"text": "...", "topic_tag": "..."},
- "youtube": {"title": "...", "description": "...", "tags": ["...", "..."]},
+ "youtube": {"title": "...", "caption": "...", "description": "...", "tags": ["...", "..."]},
  "x": {"text": "..."},
  "tiktok": {"caption": "..."},
  "facebook": {"description": "..."}}"""
@@ -1058,7 +1176,7 @@ def generate_platform_posts(transcript: str, meta: dict, on_screen_caption: str 
         except Exception as e:
             print(f"PLATFORM POSTS GEN FAILED: {e}", flush=True)
             generated = fallback
-    theme_all = f"{(meta or {}).get('title','')} {master_caption}"
+    theme_all = f"{(meta or {}).get('title','')} {(meta or {}).get('angle','')} {master_caption} {((meta or {}).get('video_read') or '')[:400]} {(transcript or '')[:600]}"
     keep_all = [str(k) for k in (keep or [])]
     for pid, key in (("instagram", "caption"), ("tiktok", "caption"), ("facebook", "description"), ("x", "text"), ("threads", "text")):
         if isinstance(generated.get(pid), dict) and generated[pid].get(key):
@@ -1118,3 +1236,51 @@ def set_credit_in_posts(posts: dict, handle: str) -> dict:
             post[key] = _ensure_credit(text, handle) if handle else text
         out[pid] = post
     return out
+
+
+# --- Core caption -> platform captions (no AI) --------------------------------
+_PLAT_TEXT_FIELD = {"instagram": "caption", "threads": "text", "tiktok": "caption",
+                    "facebook": "description", "x": "text", "youtube": "description"}
+
+
+def _core_text(master: str) -> str:
+    body, _ = _split_master(master)
+    return re.sub(r"\s+", " ", body).strip()
+
+
+def sync_posts_with_master(posts: dict, old_master: str, new_master: str) -> dict:
+    """Pushes an edited core caption into every platform version without any
+    AI call: the first line of each platform's text (the core line) is replaced
+    with the new one; hashtags, credit lines and everything else the user
+    edited stay exactly as they are. YouTube's separate caption is updated
+    too, and the start of its description if it still carries the old line."""
+    new_line = _core_text(new_master)
+    old_line = _core_text(old_master)
+    if not new_line:
+        return posts
+    posts = {k: dict(v) if isinstance(v, dict) else v for k, v in (posts or {}).items()}
+
+    def swap(text: str) -> str:
+        text = text or ""
+        lines = text.split("\n")
+        for i, ln in enumerate(lines):
+            if not ln.strip():
+                continue
+            only_tags = not _HASHTAG_RE.sub("", ln).strip()
+            if only_tags or ln.strip().lower().startswith("credit:"):
+                lines.insert(i, new_line + ("" if i else "\n"))
+            else:
+                lines[i] = new_line
+            return "\n".join(lines)
+        return new_line
+
+    for pid, key in _PLAT_TEXT_FIELD.items():
+        d = posts.get(pid)
+        if isinstance(d, dict):
+            d[key] = swap(d.get(key, ""))
+            if pid == "x":
+                d[key] = fit_chars(d[key], LIM["x_text"])
+    yt = posts.get("youtube")
+    if isinstance(yt, dict):
+        yt["caption"] = new_line
+    return posts

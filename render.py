@@ -54,19 +54,19 @@ WATERMARK_OPACITY = 0.5
 HASHTAG_PATTERN = re.compile(r"#\w+")
 QUOTE_STRIP_CHARS = "\"'\u2018\u2019\u201C\u201D"
 
+_EMO_BASE = "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002190-\U000021FF\U00002B00-\U00002BFF]"
+# ONE emoji (a ZWJ sequence like a family counts as one); side-by-side emoji are separate tokens.
 EMOJI_PATTERN = re.compile(
     "("
     "(?:[\U0001F1E6-\U0001F1FF]{2})"
-    "|(?:[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U00002190-\U000021FF\U00002B00-\U00002BFF]"
-    "[\U0000FE0F\U0000200D\U0001F3FB-\U0001F3FF]*)+"
+    "|(?:" + _EMO_BASE + "[\U0000FE0F\U0001F3FB-\U0001F3FF]*(?:\U0000200D" + _EMO_BASE + "[\U0000FE0F\U0001F3FB-\U0001F3FF]*)*)"
     ")"
 )
 
 
 def strip_hashtags(text: str) -> str:
     text = HASHTAG_PATTERN.sub("", text)
-    text = text.strip().strip(QUOTE_STRIP_CHARS).strip()
-    return re.sub(r"\s+", " ", text)
+    return re.sub(r"\s+", " ", text.strip())
 
 
 def codepoints_for(emoji: str) -> str:
@@ -508,7 +508,7 @@ def _watermark_geometry(wm_path, pos):
 
 
 def apply_caption(staged_path: str, caption_text: str, output_path: str, progress_cb=None,
-                  cues=None, watermark=None, cue_style="classic"):
+                  cues=None, watermark=None, cue_style="classic", caption_adj=None):
     """The fast path: overlays the on-screen caption, the optional campaign
     watermark ({"path","pos"}) and the optional burned-in speech captions
     (cues: [{start,end,text}]) onto an already-staged video and re-encodes.
@@ -516,6 +516,22 @@ def apply_caption(staged_path: str, caption_text: str, output_path: str, progres
     caption_img_path, cap_w, cap_h = build_caption_image(caption_text)
     caption_x = VIDEO_X
     caption_y = VIDEO_Y - CAPTION_GAP - cap_h
+    adj = caption_adj or {}
+    try:
+        scale = min(2.0, max(0.5, float(adj.get("scale", 1.0))))
+        dx, dy = float(adj.get("dx", 0)), float(adj.get("dy", 0))
+    except (TypeError, ValueError):
+        scale, dx, dy = 1.0, 0.0, 0.0
+    if scale != 1.0:
+        with Image.open(caption_img_path) as im:
+            nw, nh = max(1, round(cap_w * scale)), max(1, round(cap_h * scale))
+            im.convert("RGBA").resize((nw, nh), Image.LANCZOS).save(caption_img_path)
+        # grow/shrink around the caption's centre-bottom so it stays where it was
+        caption_x -= (nw - cap_w) / 2
+        caption_y -= (nh - cap_h)
+        cap_w, cap_h = nw, nh
+    caption_x = int(round(min(max(caption_x + dx, min(0, CANVAS_W - cap_w)), max(0, CANVAS_W - cap_w))))
+    caption_y = int(round(min(max(caption_y + dy, 0), CANVAS_H - cap_h)))
 
     inputs = ["-i", staged_path, "-i", caption_img_path]
     chain = [f"[1:v]format=rgba[capimg]", f"[0:v][capimg]overlay={caption_x}:{caption_y}[v1]"]

@@ -76,7 +76,7 @@ def _startup():
 # half-configured deploy (missing SETUP_CODE/SESSION_SECRET) would lock
 # everyone out including the owner, so auth.configured() gates the whole
 # thing -- if it's not set up yet, the app behaves exactly as before.
-PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/", "/c/", "/api/public/", "/go/")
+PUBLIC_PATH_PREFIXES = ("/static/", "/auth/", "/files/", "/c/", "/api/public/", "/go/", "/demo")
 PUBLIC_PATHS = {
     "/links/order", "/links/consult",
     "/links",               # public link-in-bio page
@@ -414,6 +414,45 @@ class SettingsModel(BaseModel):
     smart_crop: bool = True
     yt_visibility: str = "public"
     ig_collaborators: str = ""
+
+
+# --- Public interactive demo: the real pages, answered by static/demo-shim.js
+# with made-up data. The shim replaces fetch() in the browser, so a visitor's
+# clicks never reach the real API (which stays behind the passkey).
+_DEMO_PAGES = {
+    "editor": "index.html", "explore": "explore.html", "clipping": "clipping.html",
+    "ideas": "ideas.html", "schedule": "schedule.html", "requests": "requests.html",
+    "comments": "comments.html", "dashboards": "dashboards.html", "campaigns": "campaigns.html",
+    "settings": "settings.html", "accounts": "accounts.html", "bio": "bio.html", "sources": "sources.html",
+}
+
+
+@app.get("/demo")
+@app.get("/demo/")
+def demo_root(request: Request):
+    q = request.url.query
+    return RedirectResponse("/demo/editor" + ("?" + q if q else ""))
+
+
+@app.get("/demo/{page}")
+def demo_page(page: str, request: Request):
+    import re as _re
+    fn = _DEMO_PAGES.get(page.strip("/"))
+    if not fn:
+        return RedirectResponse("/demo/editor")
+    with open("static/" + fn, encoding="utf-8") as f:
+        html = f.read()
+    color = request.query_params.get("color") or request.cookies.get("wvdemo_color", "")
+    if _re.fullmatch(r"#?[0-9a-fA-F]{6}", color):
+        c = "#" + color.lstrip("#")
+        rgb = ",".join(str(int(c[i:i + 2], 16)) for i in (1, 3, 5))
+        html = html.replace("#FF2B3C", c).replace("255,43,60", rgb).replace("255, 43, 60", rgb)
+    shim = '<script src="/static/demo-shim.js?v=1"></script>'
+    html = html.replace("<head>", "<head>" + shim, 1) if "<head>" in html else shim + html
+    resp = Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
+    if _re.fullmatch(r"#?[0-9a-fA-F]{6}", request.query_params.get("color", "")):
+        resp.set_cookie("wvdemo_color", request.query_params["color"].lstrip("#"), max_age=86400 * 30, samesite="lax")
+    return resp
 
 
 @app.get("/settings")

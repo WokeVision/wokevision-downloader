@@ -8,7 +8,10 @@
     var ai = document.createElement("link"); ai.rel = "apple-touch-icon"; ai.href = "/static/assets/icon-192.png"; document.head.appendChild(ai);
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(function () {});
   } catch (e) {}
-  var path = location.pathname.replace(/\/+$/, "") || "/";
+  var path = location.pathname.replace(/^\/demo(?=\/|$)/, "").replace(/\/+$/, "") || "/";
+  if (path === "/") path = "/editor";
+  var DEMO = location.pathname.indexOf("/demo") === 0;
+  if (DEMO) { try { navigator.serviceWorker.register = function () { return Promise.reject(); }; } catch (e) {} }
   function active(p) { return p === "/" ? path === "/" : path === p || path.indexOf(p + "/") === 0; }
   // Five top-level sections; pages inside a section show as a second row of tabs.
   var GROUPS = [
@@ -138,7 +141,7 @@
 (function () {
   if (location.pathname.indexOf("/login") === 0 || location.pathname === "/" || location.pathname.indexOf("/links") === 0) return;
   var MAP = { e: ["/editor", "Editor"], c: ["/clipping", "Clipper"], r: ["/requests", "Requests"], b: ["/bio", "Bio link"], s: ["/schedule", "Schedule"], a: ["/dashboards", "Analytics"], i: ["/ideas", "Ideas"], x: ["/explore", "Explore"], p: ["/campaigns", "Campaigns"], o: ["/sources", "Sources"], m: ["/comments", "Comments"], t: ["/settings", "Settings"] };
-  var armed = 0, ov = null;
+  var armed = 0, ov = null, DEMO_NAV = location.pathname.indexOf("/demo") === 0;
   function typing(e) { var t = e.target, n = t && t.tagName; return n === "INPUT" || n === "TEXTAREA" || n === "SELECT" || (t && t.isContentEditable); }
   function help() {
     if (ov) { ov.remove(); ov = null; return; }
@@ -155,7 +158,7 @@
     if (e.key === "Escape" && ov) { help(); return; }
     if (typing(e)) return;
     if (e.key === "?") { e.preventDefault(); help(); return; }
-    if (armed && Date.now() - armed < 1500 && MAP[e.key.toLowerCase()]) { e.preventDefault(); location.href = MAP[e.key.toLowerCase()][0]; return; }
+    if (armed && Date.now() - armed < 1500 && MAP[e.key.toLowerCase()]) { e.preventDefault(); location.href = (DEMO_NAV ? "/demo" : "") + MAP[e.key.toLowerCase()][0]; return; }
     armed = e.key === "g" ? Date.now() : 0;
   });
 })();
